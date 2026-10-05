@@ -23,8 +23,8 @@ pub enum SystemKey {
 pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
     use SystemKey as K;
     vec![
-        ("↓ / ⌘N", K::NavDown),
-        ("↑ / ⌘P", K::NavUp),
+        ("↓ / ⌃N", K::NavDown),
+        ("↑ / ⌃P", K::NavUp),
         ("⏎", K::Apply),
         ("⌥⏎", K::SecondaryCopy),
         ("⌘K", K::ShowAllActions),

@@ -85,6 +85,26 @@ impl SummonListener for MacSummonListener {
     }
 }
 
+/// 让面板浮在别的全屏应用（独立虚拟屏）之上。
+///
+/// tao 的 `visible_on_all_workspaces` 只设了 `CanJoinAllSpaces`，不足以进入
+/// 全屏应用独占的 Space；这里补 `FullScreenAuxiliary`。
+/// 必须在主线程调用（调用方用 `run_on_main_thread` 保证）。
+pub fn enable_fullscreen_auxiliary(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+    // SAFETY: 指针来自 tauri 的 `ns_window()`，且调用方保证在主线程。
+    unsafe {
+        let window: &NSWindow = &*ns_window.cast::<NSWindow>();
+        let behavior = window.collectionBehavior()
+            | NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary;
+        window.setCollectionBehavior(behavior);
+    }
+}
+
 struct TapState {
     detector: DoubleTapDetector,
     flags: CGEventFlags,

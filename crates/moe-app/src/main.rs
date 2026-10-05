@@ -16,6 +16,17 @@ use moe_platform::summon::{Modifier, SummonEvent, SummonListener, SummonStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 
+/// 面板居中到鼠标所在显示器（含全屏应用所在的虚拟屏）。
+fn centered_on(
+    monitor_pos: (i32, i32),
+    monitor_size: (u32, u32),
+    window_size: (u32, u32),
+) -> (i32, i32) {
+    let x = monitor_pos.0 + (monitor_size.0.saturating_sub(window_size.0) / 2) as i32;
+    let y = monitor_pos.1 + (monitor_size.1.saturating_sub(window_size.1) / 2) as i32;
+    (x, y)
+}
+
 /// 组合键写法 → global-shortcut 插件的加速器语法。
 fn accelerator(key: &SummonKey) -> Option<String> {
     let SummonKey::Combo { modifiers, key } = key else {
@@ -72,15 +83,54 @@ struct SummonStatusPayload {
     double_tap_ms: u64,
 }
 
+/// 把面板移到鼠标所在显示器（含全屏虚拟屏）并居中。
+fn place_on_active_screen(window: &tauri::WebviewWindow) {
+    let Ok(cursor) = window.cursor_position() else {
+        return;
+    };
+    let monitor = window
+        .monitor_from_point(cursor.x, cursor.y)
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    let (Some(monitor), Ok(size)) = (monitor, window.outer_size()) else {
+        return;
+    };
+    let pos = monitor.position();
+    let msize = monitor.size();
+    let (x, y) = centered_on(
+        (pos.x, pos.y),
+        (msize.width, msize.height),
+        (size.width, size.height),
+    );
+    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+/// 必须在主线程调用：补全 collectionBehavior 并展示面板。
+fn show_panel_blocking(window: &tauri::WebviewWindow) {
+    // tao 只设了 canJoinAllSpaces；浮在全屏应用（独立虚拟屏）上需要 FullScreenAuxiliary
+    #[cfg(target_os = "macos")]
+    if let Ok(ptr) = window.ns_window() {
+        moe_platform::mac::enable_fullscreen_auxiliary(ptr);
+    }
+    place_on_active_screen(window);
+    let _ = window.show();
+    let _ = window.set_focus();
+    eprintln!("moe: 面板已显示");
+}
+
+fn show_panel(window: tauri::WebviewWindow) {
+    let target = window.clone();
+    let _ = window.run_on_main_thread(move || show_panel_blocking(&target));
+}
+
 fn toggle_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("panel") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
             eprintln!("moe: 面板已隐藏");
         } else {
-            let _ = window.show();
-            let _ = window.set_focus();
-            eprintln!("moe: 面板已显示");
+            show_panel(window);
         }
     }
 }
@@ -227,8 +277,7 @@ fn main() {
             // M1（tray 见 IIE4AD-347 之前）：启动即展示面板——否则未授权时
             // 整个应用没有任何入口，用户看到的是一片虚无。
             if let Some(window) = handle.get_webview_window("panel") {
-                let _ = window.show();
-                let _ = window.set_focus();
+                show_panel(window);
             }
 
             Ok(())
@@ -258,6 +307,18 @@ mod tests {
         assert_eq!(accelerator(&key).as_deref(), Some("Control+K"));
         let key = SummonKey::parse("double-cmd").unwrap();
         assert_eq!(accelerator(&key), None);
+    }
+
+    #[test]
+    fn centers_window_in_monitor() {
+        assert_eq!(centered_on((0, 0), (1920, 1080), (680, 420)), (620, 330));
+        // 第二块屏（macOS 允许排布在主屏左侧，坐标为负）也要正确
+        assert_eq!(
+            centered_on((-1920, 0), (1920, 1080), (680, 420)),
+            (-1300, 330)
+        );
+        // 窗口比屏幕大时不越界（saturating 归零偏移）
+        assert_eq!(centered_on((0, 0), (600, 400), (680, 420)), (0, 0));
     }
 
     #[test]

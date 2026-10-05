@@ -274,10 +274,10 @@ async function refresh(query: string) {
 // ---- 全局键盘事件（keyboard-first：所有能力都可达，鼠标仅冗余）----
 
 window.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowDown" || (e.metaKey && e.key === "n")) {
+  if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
     e.preventDefault();
     move(1);
-  } else if (e.key === "ArrowUp" || (e.metaKey && e.key === "p")) {
+  } else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
     e.preventDefault();
     move(-1);
   } else if (e.key === "Enter") {
