@@ -87,6 +87,10 @@ struct AppState {
     registry: Mutex<Registry>,
     config: MoeConfig,
     listener: Mutex<Box<dyn SummonListener>>,
+    /// 呼出面板前抓取的选区（非激活面板成为 key 后 AX 焦点会离开目标应用）。
+    selection: Mutex<Option<String>>,
+    /// 选区读取与回写的平台实现（ADR-0002）。
+    text_target: Box<dyn moe_platform::TextTarget>,
     /// 命令使用记录（平台级，IIE4AD-346）；锁顺序：先 frecency 后 registry。
     frecency: Mutex<Frecency>,
     /// 最近一次展示面板的时刻（失焦收起需忽略展示瞬态）。
@@ -100,6 +104,8 @@ struct SummonStatusPayload {
     status: &'static str,
     key: String,
     double_tap_ms: u64,
+    /// 辅助功能授权（选区/回写用；非 macOS 恒为 true）。
+    accessibility: bool,
 }
 
 /// 把面板移到鼠标所在显示器（含全屏虚拟屏）并居中。
@@ -125,9 +131,12 @@ fn place_on_active_screen(window: &tauri::WebviewWindow) {
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// 必须在主线程调用：定位并展示面板。
+/// 必须在主线程调用：先抓选区，再定位并展示面板。
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
+        // 先抓选区再显面板（面板成为 key 后系统焦点离开目标应用）
+        let selection = state.text_target.read_selection().unwrap_or(None);
+        *state.selection.lock().expect("selection poisoned") = selection;
         *state.last_shown.lock().expect("last_shown poisoned") = Some(std::time::Instant::now());
     }
     place_on_active_screen(window);
@@ -173,6 +182,27 @@ fn toggle_panel(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || toggle_panel_blocking(&handle));
 }
 
+/// WriteBack 投递：权限前置检查 → 收面板 → 等焦点交还 → AX/剪贴板写入。
+fn deliver_writeback(app: &AppHandle, text: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if !moe_platform::mac::is_accessibility_trusted() {
+        moe_platform::mac::prompt_accessibility_permission();
+        return Err("需要「辅助功能」授权才能回写（已弹出系统引导，授权后无需重启）".into());
+    }
+    hide_panel_blocking(app);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        // 等非激活面板关闭、焦点交还目标应用
+        std::thread::sleep(Duration::from_millis(120));
+        let state = handle.state::<AppState>();
+        match state.text_target.write_text(&text) {
+            Ok(()) => eprintln!("moe: 已回写（{} 字符）", text.chars().count()),
+            Err(err) => eprintln!("moe: 回写失败: {err}"),
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 fn keymap() -> Vec<(&'static str, SystemKey)> {
     moe_core::keymap::default_keymap()
@@ -191,37 +221,49 @@ fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandMeta
 
 #[tauri::command]
 fn invoke_command(
+    app: AppHandle,
     state: State<'_, AppState>,
     command_id: String,
     query: Option<String>,
 ) -> Result<ActionResult, String> {
-    // M2: selection 参数将从 moe-platform::TextTarget 抓取后传入。
+    let selection = state.selection.lock().expect("selection poisoned").clone();
     let result = state
         .registry
         .lock()
         .expect("registry poisoned")
-        .invoke(&command_id, query.as_deref(), None)
+        .invoke(&command_id, query.as_deref(), selection.as_deref())
         .map_err(|e| e.to_string())?;
 
-    let mut frecency = state.frecency.lock().expect("frecency poisoned");
-    frecency.record(&command_id, std::time::SystemTime::now());
-    moe_platform::store::save_frecency(&frecency);
+    {
+        let mut frecency = state.frecency.lock().expect("frecency poisoned");
+        frecency.record(&command_id, std::time::SystemTime::now());
+        moe_platform::store::save_frecency(&frecency);
+    }
+
+    if let ActionResult::WriteBack { text } = &result {
+        deliver_writeback(&app, text.clone())?;
+    }
     Ok(result)
 }
 
 #[tauri::command]
 fn run_item_action(
+    app: AppHandle,
     state: State<'_, AppState>,
     command_id: String,
     item: Item,
     action: Action,
 ) -> Result<ActionResult, String> {
-    state
+    let result = state
         .registry
         .lock()
         .expect("registry poisoned")
         .run_item_action(&command_id, &item, &action)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if let ActionResult::WriteBack { text } = &result {
+        deliver_writeback(&app, text.clone())?;
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -236,20 +278,36 @@ fn summon_status(state: State<'_, AppState>) -> SummonStatusPayload {
         SummonStatus::NeedsPermission => "needsPermission",
         SummonStatus::Unsupported => "unsupported",
     };
+    #[cfg(target_os = "macos")]
+    let accessibility = moe_platform::mac::is_accessibility_trusted();
+    #[cfg(not(target_os = "macos"))]
+    let accessibility = true;
     SummonStatusPayload {
         status,
         key: key_label(&state.config.summon.key),
         double_tap_ms: state.config.summon.double_tap_ms,
+        accessibility,
     }
 }
 
 #[tauri::command]
-fn open_permission_settings() {
+fn open_input_monitoring_settings() {
     #[cfg(target_os = "macos")]
     {
         // 「输入监控」面板：listen-only 键盘 tap 的门槛
         let _ = std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+            .spawn();
+    }
+}
+
+#[tauri::command]
+fn open_accessibility_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        // 「辅助功能」面板：AX 读写选区/回写的门槛
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
             .spawn();
     }
 }
@@ -311,6 +369,12 @@ fn main() {
         SummonKey::Combo { .. } => Box::new(moe_platform::UnsupportedSummon),
     };
 
+    #[cfg(target_os = "macos")]
+    let text_target: Box<dyn moe_platform::TextTarget> =
+        Box::new(moe_platform::mac_text::mac_text_target());
+    #[cfg(not(target_os = "macos"))]
+    let text_target: Box<dyn moe_platform::TextTarget> = Box::new(moe_platform::Unsupported);
+
     let mut registry = Registry::new();
     moe_extensions::install(&mut registry);
 
@@ -333,6 +397,8 @@ fn main() {
             registry: Mutex::new(registry),
             config,
             listener: Mutex::new(listener),
+            selection: Mutex::new(None),
+            text_target,
             frecency: Mutex::new(moe_platform::store::load_frecency()),
             last_shown: Mutex::new(None),
         });
@@ -453,7 +519,8 @@ fn main() {
             run_item_action,
             hide_panel,
             summon_status,
-            open_permission_settings
+            open_input_monitoring_settings,
+            open_accessibility_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running Moe");

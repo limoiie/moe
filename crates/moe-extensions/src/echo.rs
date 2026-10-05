@@ -48,6 +48,12 @@ impl Extension for Echo {
                 "演示 Item 流：结果仍可 Apply / 副操作",
                 InputKind::Query,
             ),
+            meta(
+                "echo.shout",
+                "Echo: Shout",
+                "有选区则大写回写，无选区则插入标记",
+                InputKind::Selection,
+            ),
         ]
     }
 
@@ -55,11 +61,17 @@ impl Extension for Echo {
         &self,
         command_id: &str,
         query: Option<&str>,
-        _selection: Option<&str>,
+        selection: Option<&str>,
     ) -> Result<ActionResult, MoeError> {
         let text = query.unwrap_or_default().to_string();
         match command_id {
             "echo.write-back" => Ok(ActionResult::WriteBack { text }),
+            "echo.shout" => Ok(ActionResult::WriteBack {
+                text: match selection {
+                    Some(sel) => sel.to_uppercase(),
+                    None => "MOE WAS HERE".to_string(),
+                },
+            }),
             "echo.items" => Ok(ActionResult::List {
                 items: ["alpha", "beta", "gamma"]
                     .iter()

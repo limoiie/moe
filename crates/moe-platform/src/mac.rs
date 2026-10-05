@@ -10,8 +10,11 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
+use core_foundation::string::{CFString, CFStringRef};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType,
@@ -27,6 +30,8 @@ const STATUS_READY: u8 = 1;
 
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> u8;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
+    static kAXTrustedCheckOptionPrompt: CFStringRef;
     /// listen-only 键盘事件监听的正确权限门（10.15+）：输入监控。
     fn CGPreflightListenEventAccess() -> u8;
     fn CGRequestListenEventAccess() -> u8;
@@ -34,9 +39,21 @@ unsafe extern "C" {
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
 }
 
-/// 辅助功能授权（M2 的 TextTarget 会用；这里仅用于诊断输出）。
+/// 辅助功能授权（写回/选区读取的门槛；M2）。
 pub fn is_accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
+}
+
+/// 弹一次系统引导，并把本应用加入「辅助功能」列表。
+pub fn prompt_accessibility_permission() {
+    unsafe {
+        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+        let options = CFDictionary::from_CFType_pairs(&[(
+            key.as_CFType(),
+            CFBoolean::true_value().as_CFType(),
+        )]);
+        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef());
+    }
 }
 
 /// 输入监控（Input Monitoring）是否已授权——listen-only 键盘 tap 的门槛。

@@ -159,8 +159,7 @@ function applyResult(res: ActionResult, commandId: string) {
     return;
   }
   if ("writeBack" in res) {
-    // M2: 交给 moe-platform::TextTarget 真实回写（ADR-0002/0006）。
-    showDetail(`WriteBack（M2 真实回写前预览）\n\n${res.writeBack.text}`);
+    // 回写由后端完成（收面板 → AX / 剪贴板降级投递）；面板此刻已被收起
     return;
   }
   if ("list" in res) {
@@ -179,11 +178,15 @@ async function applyFocused(alt: boolean) {
   if (v.mode === "commands") {
     const cmd = v.commands[v.focus];
     if (!cmd) return;
-    const res = await invoke<ActionResult>("invoke_command", {
-      commandId: cmd.id,
-      query: q.value || null,
-    });
-    applyResult(res, cmd.id);
+    try {
+      const res = await invoke<ActionResult>("invoke_command", {
+        commandId: cmd.id,
+        query: q.value || null,
+      });
+      applyResult(res, cmd.id);
+    } catch (err) {
+      showDetail(`执行失败：${String(err)}`);
+    }
     return;
   }
   if (v.mode === "items") {
@@ -192,24 +195,32 @@ async function applyFocused(alt: boolean) {
       ? (secondaryOf(item) ?? primaryOf(item))
       : primaryOf(item);
     if (!item || !action || !v.sourceCommandId) return;
-    const res = await invoke<ActionResult>("run_item_action", {
-      commandId: v.sourceCommandId,
-      item,
-      action,
-    });
-    applyResult(res, v.sourceCommandId);
+    try {
+      const res = await invoke<ActionResult>("run_item_action", {
+        commandId: v.sourceCommandId,
+        item,
+        action,
+      });
+      applyResult(res, v.sourceCommandId);
+    } catch (err) {
+      showDetail(`执行失败：${String(err)}`);
+    }
     return;
   }
   // actions 模式：⌘K 展开后的选择
   const action = v.actions[v.focus];
   const item = v.items[v.itemIndex ?? 0];
   if (!action || !item || !v.sourceCommandId) return;
-  const res = await invoke<ActionResult>("run_item_action", {
-    commandId: v.sourceCommandId,
-    item,
-    action,
-  });
-  applyResult(res, v.sourceCommandId);
+  try {
+    const res = await invoke<ActionResult>("run_item_action", {
+      commandId: v.sourceCommandId,
+      item,
+      action,
+    });
+    applyResult(res, v.sourceCommandId);
+  } catch (err) {
+    showDetail(`执行失败：${String(err)}`);
+  }
 }
 
 function move(delta: number) {
@@ -307,6 +318,7 @@ interface SummonStatus {
   status: "ready" | "needsPermission" | "unsupported";
   key: string;
   doubleTapMs: number;
+  accessibility: boolean;
 }
 
 const KEY_LABELS: Record<string, string> = {
@@ -330,14 +342,32 @@ async function refreshBanner() {
   if (status.status === "needsPermission") {
     const key = KEY_LABELS[status.key] ?? status.key;
     bannerTextEl.textContent = `${key} 呼出需要「输入监控」授权；授权后自动生效，个别系统版本需重启 Moe 一次。`;
-    bannerEl.classList.remove("hidden");
-    bannerEl.classList.add("flex");
+    bannerActionEl.textContent = "打开输入监控设置";
+    bannerActionEl.dataset.action = "input-monitoring";
+    showBanner();
+  } else if (!status.accessibility) {
+    bannerTextEl.textContent =
+      "读取选区与回写需要「辅助功能」授权（写回时也会自动弹系统引导）；授权后无需重启。";
+    bannerActionEl.textContent = "打开辅助功能设置";
+    bannerActionEl.dataset.action = "accessibility";
+    showBanner();
   } else {
     hideBanner();
   }
 }
 
-bannerActionEl.addEventListener("click", () => void invoke("open_permission_settings"));
+function showBanner() {
+  bannerEl.classList.remove("hidden");
+  bannerEl.classList.add("flex");
+}
+
+bannerActionEl.addEventListener("click", () => {
+  const command =
+    bannerActionEl.dataset.action === "accessibility"
+      ? "open_accessibility_settings"
+      : "open_input_monitoring_settings";
+  void invoke(command);
+});
 void listen("summon-authorized", () => hideBanner());
 
 // 呼出时保留上次的输入与结果（用户可能在隐藏后补充输入），

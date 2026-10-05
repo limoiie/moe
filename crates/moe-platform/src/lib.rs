@@ -5,8 +5,11 @@
 pub mod config;
 #[cfg(target_os = "macos")]
 pub mod mac;
+#[cfg(target_os = "macos")]
+pub mod mac_text;
 pub mod store;
 pub mod summon;
+pub mod text_target;
 
 pub use summon::{SummonEvent, SummonListener, SummonStatus, UnsupportedSummon};
 
