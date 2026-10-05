@@ -18,9 +18,16 @@
 
 ```sh
 pnpm -C ui install
-cargo test                 # 契约测试
-cd crates/moe-app && cargo tauri dev   # 面板开发运行（首次会编译 Tauri 全家桶）
+cargo test                                     # 契约测试
+cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：自动起 Vite + 热更新）
 ```
+
+⚠️ 直接 `cargo run -p moe-app` 是 **dev 构建**：WebView 会去连 `devUrl`（http://localhost:1420），
+没有 Vite dev server 时得到的是一个「全透明空窗口」（看起来像没启动）。可用跑法：
+
+1. `cd crates/moe-app && cargo tauri dev`（推荐）
+2. 两个终端：`pnpm -C ui dev` + `cargo run -p moe-app`
+3. 嵌入产物：`cargo tauri build`（生产构建，经 `custom-protocol` 特性嵌入 `ui/dist`）
 
 ## 当前状态：M1 骨架
 

@@ -13,3 +13,7 @@ serde.workspace = true
 moe-core.workspace = true
 moe-platform.workspace = true
 moe-extensions.workspace = true
+
+[features]
+# 生产构建（tauri build）时嵌入 ui/dist；不启用时走 devUrl（见 README「开发」）
+custom-protocol = ["tauri/custom-protocol"]
