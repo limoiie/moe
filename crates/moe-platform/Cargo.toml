@@ -16,3 +16,4 @@ core-graphics = "0.24"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = "0.3"
+keyring = { version = "3", default-features = false, features = ["apple-native"] }

@@ -3,6 +3,7 @@
 //! macOS AX 实现是 M2。
 
 pub mod config;
+pub mod keychain;
 #[cfg(target_os = "macos")]
 pub mod mac;
 #[cfg(target_os = "macos")]

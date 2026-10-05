@@ -78,14 +78,13 @@ impl Registry {
                 .then_with(|| a.2.id.cmp(&b.2.id))
         });
         if scored.is_empty() {
-            // 无匹配：给扩展一个「捕获输入」的机会（如 AI 问答）
-            let mut fallbacks: Vec<CommandMeta> = self
+            // 无匹配：给扩展一个「捕获输入」的机会（如 AI 问答）。
+            // 保持注册顺序（先注册的扩展优先，例如 `key …` 命中 Moe 的保存项）。
+            return self
                 .extensions
                 .iter()
                 .filter_map(|ext| ext.fallback_command(q))
                 .collect();
-            fallbacks.sort_by(|a, b| a.id.cmp(&b.id));
-            return fallbacks;
         }
         scored.into_iter().map(|(_, _, cmd)| cmd).collect()
     }

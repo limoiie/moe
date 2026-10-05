@@ -3,6 +3,7 @@
 use moe_core::registry::Registry;
 
 pub mod ai;
+pub mod ai_client;
 pub mod echo;
 pub mod moe;
 

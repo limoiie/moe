@@ -57,5 +57,8 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
 - 搜索：nucleo 模糊匹配（**精确前缀 > 匹配位置**）+ **frecency 平分决胜**；
   命令用一次就更靠前，空查询也按 frecency 排序。使用记录在平台级 KV
   （`data_dir/moe/frecency.json`），不占扩展的 Namespace。
+- AI 问答（M3a）：OpenAI 兼容端点**真实流式**（`[ai]` 的 base_url/model，即改即用无需重启）；
+  key 走 keychain——面板输入 `key <你的key>` 回车保存（不回显），或设 `MOE_AI_API_KEY`；
+  回答以 Markdown 详情卡片边流边渲染；无匹配时自动出现「AI: 提问「…」」捕获项。
 
 里程碑验收标准见 `docs/adr/0009-milestone-scope.md`。

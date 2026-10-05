@@ -17,6 +17,11 @@ pub const DEFAULT_TEMPLATE: &str = "\
 # double-cmd | double-option | double-ctrl | 组合键（如 cmd+shift+space）
 key = \"double-cmd\"
 double_tap_ms = 400
+
+# [ai]  取消注释并填入任意 OpenAI 兼容端点（DeepSeek/OpenRouter/本地 llama.cpp …）
+# base_url = \"https://api.deepseek.com/v1\"
+# model = \"deepseek-chat\"
+# API key 不写在这里：用命令「key <你的key>」存 keychain（或设 MOE_AI_API_KEY）
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,13 +93,43 @@ impl Default for SummonConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AiConfig {
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+}
+
+impl AiConfig {
+    /// 端点未配置时 AI 命令不可用（引导项代替回答）。
+    pub fn configured(&self) -> bool {
+        self.base_url
+            .as_deref()
+            .is_some_and(|url| !url.trim().is_empty())
+    }
+
+    pub fn model_or_default(&self) -> &str {
+        self.model
+            .as_deref()
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or("gpt-4o-mini")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MoeConfig {
     pub summon: SummonConfig,
+    pub ai: AiConfig,
 }
 
 #[derive(Deserialize, Default)]
 struct RawConfig {
     summon: Option<RawSummon>,
+    ai: Option<RawAi>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawAi {
+    base_url: Option<String>,
+    model: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -118,7 +153,11 @@ impl MoeConfig {
                 summon.double_tap_ms = ms;
             }
         }
-        Ok(Self { summon })
+        let ai = raw.ai.map_or_else(AiConfig::default, |raw_ai| AiConfig {
+            base_url: raw_ai.base_url,
+            model: raw_ai.model,
+        });
+        Ok(Self { summon, ai })
     }
 
     /// 从平台配置目录加载；文件缺失或解析失败时回落到默认值（ADR-0008）。
@@ -233,6 +272,29 @@ mod tests {
                 key: "space".into()
             }
         );
+    }
+
+    #[test]
+    fn ai_section_parses_with_defaults() {
+        let cfg = MoeConfig::from_toml("").unwrap();
+        assert!(!cfg.ai.configured());
+        assert_eq!(cfg.ai.model_or_default(), "gpt-4o-mini");
+
+        let cfg = MoeConfig::from_toml(
+            "[ai]\nbase_url = \"https://api.deepseek.com/v1\"\nmodel = \"deepseek-chat\"\n",
+        )
+        .unwrap();
+        assert!(cfg.ai.configured());
+        assert_eq!(
+            cfg.ai.base_url.as_deref(),
+            Some("https://api.deepseek.com/v1")
+        );
+        assert_eq!(cfg.ai.model_or_default(), "deepseek-chat");
+
+        // 只配端点：模型回落默认值
+        let cfg = MoeConfig::from_toml("[ai]\nbase_url = \"https://x/v1\"\n").unwrap();
+        assert!(cfg.ai.configured());
+        assert_eq!(cfg.ai.model_or_default(), "gpt-4o-mini");
     }
 
     #[test]
