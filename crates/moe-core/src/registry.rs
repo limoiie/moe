@@ -47,7 +47,12 @@ impl Registry {
         let mut scored: Vec<(u32, f64, CommandMeta)> = Vec::new();
         for ext in &self.extensions {
             for cmd in ext.commands() {
-                let haystack = format!("{} {}", cmd.title, ext.title());
+                let haystack = format!(
+                    "{} {} {}",
+                    cmd.title,
+                    cmd.subtitle.as_deref().unwrap_or(""),
+                    ext.title()
+                );
                 let hay = Utf32Str::new(&haystack, &mut buf);
                 if let Some(score) = pattern.score(hay, &mut matcher) {
                     // 排序契约（IIE4AD-346）：精确前缀 > 位置 > frecency。
@@ -156,7 +161,7 @@ mod tests {
                     id: "toy.hello".into(),
                     extension_id: "toy".into(),
                     title: "Hello Toy".into(),
-                    subtitle: None,
+                    subtitle: Some("backspace demo".into()),
                     input: InputKind::None,
                 },
             ]
@@ -228,6 +233,12 @@ mod tests {
             ["toy.list"]
         );
         assert_eq!(registry().search("toy", &NoFrecency).len(), 2);
+        // 副标题也进索引（"backspace demo" 只存在于 toy.hello 的 subtitle）
+        let hits = registry().search("pace", &NoFrecency);
+        assert_eq!(
+            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["toy.hello"]
+        );
     }
 
     #[test]
