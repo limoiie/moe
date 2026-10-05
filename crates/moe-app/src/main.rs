@@ -5,7 +5,6 @@
 //! 组合键走 global-shortcut 插件（ADR-0008）。
 
 use std::sync::Mutex;
-#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 use moe_core::contract::{Action, ActionResult, CommandMeta, Item};
@@ -87,6 +86,8 @@ struct AppState {
     registry: Mutex<Registry>,
     config: MoeConfig,
     listener: Mutex<Box<dyn SummonListener>>,
+    /// 最近一次展示面板的时刻（失焦收起需忽略展示瞬态）。
+    last_shown: Mutex<Option<std::time::Instant>>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -123,6 +124,9 @@ fn place_on_active_screen(window: &tauri::WebviewWindow) {
 
 /// 必须在主线程调用：定位并展示面板。
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
+    if let Some(state) = window.app_handle().try_state::<AppState>() {
+        *state.last_shown.lock().expect("last_shown poisoned") = Some(std::time::Instant::now());
+    }
     place_on_active_screen(window);
     #[cfg(target_os = "macos")]
     if let Ok(panel) = window.app_handle().get_webview_panel(window.label()) {
@@ -319,6 +323,7 @@ fn main() {
             registry: Mutex::new(registry),
             config,
             listener: Mutex::new(listener),
+            last_shown: Mutex::new(None),
         });
 
     // NSPanel 支持（macOS）：必须在 to_panel 之前注册
@@ -385,26 +390,47 @@ fn main() {
             }
 
             // 有 tray 后启动不再无条件展示面板：仅当呼出监听未就绪（缺「输入监控」
-            // 授权）时展示引导；否则启动后一切静默，菜单栏图标就是入口。
-            let listener_needs_attention = handle
-                .state::<AppState>()
-                .listener
-                .lock()
-                .expect("listener poisoned")
-                .status()
-                == SummonStatus::NeedsPermission;
-            if listener_needs_attention && let Some(window) = handle.get_webview_window("panel") {
-                show_panel_blocking(&window);
-            }
+            // 授权）时展示引导。监听线程挂 tap 是毫秒级但异步，直接查会命中初始
+            // 状态而误弹，因此给 600ms 宽限期后再决定。
+            let probe = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(600));
+                let needs_attention = probe
+                    .state::<AppState>()
+                    .listener
+                    .lock()
+                    .expect("listener poisoned")
+                    .status()
+                    == SummonStatus::NeedsPermission;
+                if !needs_attention {
+                    return;
+                }
+                let show_handle = probe.clone();
+                let _ = probe.run_on_main_thread(move || {
+                    if let Some(window) = show_handle.get_webview_window("panel") {
+                        show_panel_blocking(&window);
+                    }
+                });
+            });
 
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 失焦即收起（Raycast 同款）；tray 已提供返回入口，可安全启用
-            if window.label() == "panel"
-                && let tauri::WindowEvent::Focused(false) = event
-                && window.is_visible().unwrap_or(false)
-            {
+            // 失焦即收起（Raycast 同款）；tray 已提供返回入口，可安全启用。
+            // 刚展示的 300ms 内忽略失焦：非激活面板成为 key window 的过程
+            // 会产生瞬态 Focused(false)，不设护栏会「闪一下就消失」。
+            if window.label() != "panel" || !window.is_visible().unwrap_or(false) {
+                return;
+            }
+            if let tauri::WindowEvent::Focused(false) = event {
+                let just_shown = window
+                    .app_handle()
+                    .try_state::<AppState>()
+                    .and_then(|state| *state.last_shown.lock().expect("last_shown poisoned"))
+                    .is_some_and(|at| at.elapsed() < Duration::from_millis(300));
+                if just_shown {
+                    return;
+                }
                 let _ = window.hide();
                 eprintln!("moe: 失焦，面板已收起");
             }
