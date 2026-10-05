@@ -110,6 +110,7 @@ impl Ax for MacAx {
             );
             CFRelease(focused);
             if err != 0 {
+                eprintln!("moe: AXSelectedText 写入失败（AXError {err}）");
                 Err(PlatformError::Unsupported("AXSelectedText write rejected"))
             } else {
                 Ok(())
@@ -119,7 +120,17 @@ impl Ax for MacAx {
 
     fn selected_text_range(&self) -> Option<(i64, i64)> {
         // 尽力而为：失败/不支持都返回 None（跳过回写后选中）
-        let focused = focused_element().ok()??;
+        let focused = match focused_element() {
+            Ok(Some(f)) => f,
+            Ok(None) => {
+                eprintln!("moe: 读 AX 范围：无焦点元素");
+                return None;
+            }
+            Err(err) => {
+                eprintln!("moe: 读 AX 范围：{err}");
+                return None;
+            }
+        };
         // SAFETY: value 按 copy 规则持有；AXValue 解出 CFRange。
         unsafe {
             let name = attribute("AXSelectedTextRange");
@@ -128,6 +139,10 @@ impl Ax for MacAx {
                 AXUIElementCopyAttributeValue(focused, name.as_concrete_TypeRef(), &mut value);
             CFRelease(focused);
             if err != 0 || value.is_null() {
+                eprintln!(
+                    "moe: 读 AXSelectedTextRange 失败（AXError {err}，空值 {}）",
+                    value.is_null()
+                );
                 return None;
             }
             let mut range = CFRange {
@@ -141,17 +156,22 @@ impl Ax for MacAx {
             );
             CFRelease(value);
             if ok == 0 {
+                eprintln!("moe: AXValueGetValue(CFRange) 解包失败");
                 return None;
             }
+            eprintln!("moe: 读 AX 范围 = ({}, {})", range.location, range.length);
             Some((range.location, range.length))
         }
     }
 
     fn set_selected_range(&self, location: i64, length: i64) {
+        // 部分应用异步提交编辑：立刻设范围会被其后的光标移动覆盖
+        std::thread::sleep(std::time::Duration::from_millis(60));
         let Ok(Some(focused)) = focused_element() else {
+            eprintln!("moe: 设 AX 范围：无焦点元素");
             return;
         };
-        // SAFETY: 标准 AX 写入；失败静默（回写本身已成功）。
+        // SAFETY: 标准 AX 写入；失败记录但不算回写失败。
         unsafe {
             let range = CFRange { location, length };
             let value = AXValueCreate(
@@ -159,13 +179,15 @@ impl Ax for MacAx {
                 &range as *const CFRange as *const std::ffi::c_void,
             );
             if value.is_null() {
+                eprintln!("moe: AXValueCreate(CFRange) 失败");
                 CFRelease(focused);
                 return;
             }
             let name = attribute("AXSelectedTextRange");
-            let _ = AXUIElementSetAttributeValue(focused, name.as_concrete_TypeRef(), value);
+            let err = AXUIElementSetAttributeValue(focused, name.as_concrete_TypeRef(), value);
             CFRelease(value);
             CFRelease(focused);
+            eprintln!("moe: 设 AX 范围 = ({location}, {length}) → AXError {err}");
         }
     }
 }
