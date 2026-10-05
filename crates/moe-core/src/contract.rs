@@ -99,8 +99,9 @@ impl std::fmt::Display for MoeError {
 impl std::error::Error for MoeError {}
 
 /// 命令执行期间的增量事件（流式回答走 Item 语义：按 id 就地更新）。
+/// 注意：枚举上的 `rename_all` 只改变体名；struct 变体字段需要 `rename_all_fields`。
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum CommandEvent {
     ItemUpdated { command_id: String, item: Item },
 }
@@ -148,6 +149,7 @@ pub trait Extension: Send + Sync {
     }
 
     /// Item 流的下一步：对 Item 执行其某个动作（默认无动作可执行）。
+    /// 对 Item 执行其某个动作（默认无动作可执行）。
     fn run_item_action(
         &self,
         _command_id: &str,
@@ -155,5 +157,29 @@ pub trait Extension: Send + Sync {
         _action: &Action,
     ) -> Result<ActionResult, MoeError> {
         Err(MoeError::NotFound)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：枚举的 rename_all 只改变体名，struct 变体字段需 rename_all_fields；
+    /// UI 按 `payload.itemUpdated.commandId` 读取（曾因 snake_case 静默丢更新）。
+    #[test]
+    fn command_event_serializes_camel_case_for_ui() {
+        let event = CommandEvent::ItemUpdated {
+            command_id: "ai.quick-ask".into(),
+            item: Item {
+                id: "ai.answer".into(),
+                title: "正在回答…".into(),
+                subtitle: None,
+                actions: vec![],
+                payload: serde_json::Value::Null,
+            },
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["itemUpdated"]["commandId"], "ai.quick-ask");
+        assert_eq!(json["itemUpdated"]["item"]["id"], "ai.answer");
     }
 }
