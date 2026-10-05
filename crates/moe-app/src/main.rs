@@ -5,6 +5,7 @@
 //! 组合键走 global-shortcut 插件（ADR-0008）。
 
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 use moe_core::contract::{Action, ActionResult, CommandMeta, Item};
