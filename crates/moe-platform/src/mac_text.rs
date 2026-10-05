@@ -29,6 +29,18 @@ unsafe extern "C" {
         attribute: CFStringRef,
         value: CFTypeRef,
     ) -> i32;
+    fn AXValueCreate(the_type: u32, value_ptr: *const std::ffi::c_void) -> CFTypeRef;
+    fn AXValueGetValue(value: CFTypeRef, the_type: u32, value_ptr: *mut std::ffi::c_void) -> u8;
+}
+
+/// AX 范围值的类型枚举（kAXValueTypeCFRange 是编译期枚举，无链接符号）；
+/// CFRange 的成员都是 CFIndex（64 位平台上为 i64）。
+const AX_VALUE_CF_RANGE: u32 = 4;
+
+#[repr(C)]
+struct CFRange {
+    location: i64,
+    length: i64,
 }
 
 /// AX 属性名。现代 SDK 里 `kAX*Attribute` 是 `CFSTR("...")` 宏而非导出符号，
@@ -102,6 +114,58 @@ impl Ax for MacAx {
             } else {
                 Ok(())
             }
+        }
+    }
+
+    fn selected_text_range(&self) -> Option<(i64, i64)> {
+        // 尽力而为：失败/不支持都返回 None（跳过回写后选中）
+        let focused = focused_element().ok()??;
+        // SAFETY: value 按 copy 规则持有；AXValue 解出 CFRange。
+        unsafe {
+            let name = attribute("AXSelectedTextRange");
+            let mut value: CFTypeRef = std::ptr::null();
+            let err =
+                AXUIElementCopyAttributeValue(focused, name.as_concrete_TypeRef(), &mut value);
+            CFRelease(focused);
+            if err != 0 || value.is_null() {
+                return None;
+            }
+            let mut range = CFRange {
+                location: 0,
+                length: 0,
+            };
+            let ok = AXValueGetValue(
+                value,
+                AX_VALUE_CF_RANGE,
+                &mut range as *mut CFRange as *mut std::ffi::c_void,
+            );
+            CFRelease(value);
+            if ok == 0 {
+                return None;
+            }
+            Some((range.location, range.length))
+        }
+    }
+
+    fn set_selected_range(&self, location: i64, length: i64) {
+        let Ok(Some(focused)) = focused_element() else {
+            return;
+        };
+        // SAFETY: 标准 AX 写入；失败静默（回写本身已成功）。
+        unsafe {
+            let range = CFRange { location, length };
+            let value = AXValueCreate(
+                AX_VALUE_CF_RANGE,
+                &range as *const CFRange as *const std::ffi::c_void,
+            );
+            if value.is_null() {
+                CFRelease(focused);
+                return;
+            }
+            let name = attribute("AXSelectedTextRange");
+            let _ = AXUIElementSetAttributeValue(focused, name.as_concrete_TypeRef(), value);
+            CFRelease(value);
+            CFRelease(focused);
         }
     }
 }

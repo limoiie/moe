@@ -10,6 +10,15 @@ pub trait Ax: Send + Sync {
     /// 当前焦点元素的选区文本；无选区为 `Ok(None)`（光标模式）。
     fn selected_text(&self) -> Result<Option<String>, PlatformError>;
 
+    /// 当前选区/光标范围 `(location, length)`（UTF-16 码元）；
+    /// 应用不支持时为 `None`（此时跳过「回写后选中」）。
+    fn selected_text_range(&self) -> Option<(i64, i64)> {
+        None
+    }
+
+    /// 把选区设为指定范围（回写后选中写入内容，便于确认/重写）；尽力而为。
+    fn set_selected_range(&self, _location: i64, _length: i64) {}
+
     /// 有选区则替换；无选区（光标态）则插入。
     fn set_selected_text(&self, text: &str) -> Result<(), PlatformError>;
 }
@@ -45,8 +54,15 @@ impl<A: Ax, C: Clipboard> TextTarget for HybridTextTarget<A, C> {
     }
 
     fn write_text(&self, text: &str) -> Result<(), PlatformError> {
+        // 先记下写入点（选区起点/光标位），写完后把新内容选中
+        let insert_at = self.ax.selected_text_range();
         match self.ax.set_selected_text(text) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if let Some((location, _)) = insert_at {
+                    self.ax.set_selected_range(location, utf16_len(text));
+                }
+                Ok(())
+            }
             Err(_) => {
                 // AX 不被目标应用接受：降级为「快照 → 写入 → 合成粘贴 → 恢复」
                 let snapshot = self.clipboard.snapshot();
@@ -57,6 +73,11 @@ impl<A: Ax, C: Clipboard> TextTarget for HybridTextTarget<A, C> {
             }
         }
     }
+}
+
+/// AX 范围用 UTF-16 码元计数（emoji 占两个单位）。
+fn utf16_len(text: &str) -> i64 {
+    text.encode_utf16().count() as i64
 }
 
 #[cfg(test)]
@@ -78,6 +99,8 @@ mod tests {
     struct FakeAx {
         read: AxRead,
         write: AxWrite,
+        range: Option<(i64, i64)>,
+        log: Arc<Mutex<Vec<String>>>,
     }
 
     impl Ax for FakeAx {
@@ -87,6 +110,17 @@ mod tests {
                 AxRead::NoSelection => Ok(None),
                 AxRead::Denied => Err(PlatformError::PermissionRequired),
             }
+        }
+
+        fn selected_text_range(&self) -> Option<(i64, i64)> {
+            self.range
+        }
+
+        fn set_selected_range(&self, location: i64, length: i64) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("range:{location}:{length}"));
         }
 
         fn set_selected_text(&self, _text: &str) -> Result<(), PlatformError> {
@@ -123,22 +157,29 @@ mod tests {
         }
     }
 
-    fn target(
-        read: AxRead,
-        write: AxWrite,
-    ) -> (HybridTextTarget<FakeAx, FakeClip>, Arc<Mutex<Vec<String>>>) {
+    type Log = Arc<Mutex<Vec<String>>>;
+    type TestTarget = (HybridTextTarget<FakeAx, FakeClip>, Log, Log);
+
+    fn target(read: AxRead, write: AxWrite, range: Option<(i64, i64)>) -> TestTarget {
         let clip = FakeClip::default();
-        let log = Arc::clone(&clip.log);
-        (HybridTextTarget::new(FakeAx { read, write }, clip), log)
+        let clip_log = Arc::clone(&clip.log);
+        let ax_log = Arc::new(Mutex::new(Vec::new()));
+        let ax = FakeAx {
+            read,
+            write,
+            range,
+            log: Arc::clone(&ax_log),
+        };
+        (HybridTextTarget::new(ax, clip), clip_log, ax_log)
     }
 
     #[test]
     fn read_selection_passes_through() {
-        let (t, _) = target(AxRead::Text("hi"), AxWrite::Ok);
+        let (t, _, _) = target(AxRead::Text("hi"), AxWrite::Ok, None);
         assert_eq!(t.read_selection().unwrap(), Some("hi".to_string()));
-        let (t, _) = target(AxRead::NoSelection, AxWrite::Ok);
+        let (t, _, _) = target(AxRead::NoSelection, AxWrite::Ok, None);
         assert_eq!(t.read_selection().unwrap(), None);
-        let (t, _) = target(AxRead::Denied, AxWrite::Ok);
+        let (t, _, _) = target(AxRead::Denied, AxWrite::Ok, None);
         assert!(matches!(
             t.read_selection(),
             Err(PlatformError::PermissionRequired)
@@ -147,19 +188,37 @@ mod tests {
 
     #[test]
     fn ax_write_success_never_touches_clipboard() {
-        let (t, log) = target(AxRead::NoSelection, AxWrite::Ok);
+        let (t, clip_log, _) = target(AxRead::NoSelection, AxWrite::Ok, None);
         assert!(t.write_text("HELLO").is_ok());
-        assert!(log.lock().unwrap().is_empty());
+        assert!(clip_log.lock().unwrap().is_empty());
     }
 
     #[test]
     fn ax_write_failure_falls_back_to_clipboard_paste() {
-        let (t, log) = target(AxRead::NoSelection, AxWrite::Denied);
+        let (t, clip_log, ax_log) = target(AxRead::NoSelection, AxWrite::Denied, None);
         // 降级成功也算回写成功
         assert!(t.write_text("HELLO").is_ok());
         assert_eq!(
-            *log.lock().unwrap(),
+            *clip_log.lock().unwrap(),
             ["snapshot", "set:HELLO", "paste", "restore:SNAP"]
         );
+        // 降级路径不涉及 AX 范围操作
+        assert!(ax_log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ax_write_selects_inserted_text_using_utf16_length() {
+        // 写入前选区在位置 7；"a😀" 的 UTF-16 长度是 3（emoji 占两个码元）
+        let (t, clip_log, ax_log) = target(AxRead::NoSelection, AxWrite::Ok, Some((7, 3)));
+        assert!(t.write_text("a😀").is_ok());
+        assert_eq!(*ax_log.lock().unwrap(), ["range:7:3"]);
+        assert!(clip_log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn no_range_info_skips_selection() {
+        let (t, _, ax_log) = target(AxRead::NoSelection, AxWrite::Ok, None);
+        assert!(t.write_text("hi").is_ok());
+        assert!(ax_log.lock().unwrap().is_empty());
     }
 }
