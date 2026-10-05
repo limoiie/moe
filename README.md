@@ -24,9 +24,10 @@ cd crates/moe-app && cargo tauri dev   # 面板开发运行（首次会编译 Ta
 
 ## 当前状态：M1 骨架
 
-- 呼出键：**双击 ⌘**（ADR-0008）。macOS 首次运行会弹一次辅助功能授权，
-  未授权时面板内常显引导（授权后自动生效，无需重启）；已实现于
-  `moe-platform::mac`（listen-only CGEventTap + 可测的双击状态机）。
+- 呼出键：**双击 ⌘**（ADR-0008）。macOS 首次运行会请求**「输入监控」授权**
+  （listen-only 键盘 tap 的门槛；辅助功能留待 M2 回写类功能），未授权时面板内
+  常显引导。已实现于 `moe-platform::mac`（listen-only CGEventTap + 可测的双击
+  状态机）；启动日志会打印权限状态与 tap 挂载结果，方便排查。
 - `config.toml` 可改呼出键（macOS 为 `~/Library/Application Support/moe/config.toml`，
   Linux 为 `~/.config/moe/config.toml`）：
 

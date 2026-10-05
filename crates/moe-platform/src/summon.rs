@@ -13,6 +13,18 @@ pub enum Modifier {
     Shift,
 }
 
+impl Modifier {
+    /// 展示用符号（日志与 Hints）。
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Meta => "⌘",
+            Self::Alt => "⌥",
+            Self::Control => "⌃",
+            Self::Shift => "⇧",
+        }
+    }
+}
+
 /// 来自平台键盘监听的一条输入。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {

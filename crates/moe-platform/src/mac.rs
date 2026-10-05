@@ -10,11 +10,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use core_foundation::base::TCFType;
-use core_foundation::boolean::CFBoolean;
-use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
-use core_foundation::string::{CFString, CFStringRef};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType,
@@ -30,26 +27,26 @@ const STATUS_READY: u8 = 1;
 
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> u8;
-    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
-    static kAXTrustedCheckOptionPrompt: CFStringRef;
+    /// listen-only 键盘事件监听的正确权限门（10.15+）：输入监控。
+    fn CGPreflightListenEventAccess() -> u8;
+    fn CGRequestListenEventAccess() -> u8;
     /// core-graphics 的声明不对外导出；自行声明以支持 TapDisabled 后重新启用。
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
 }
 
+/// 辅助功能授权（M2 的 TextTarget 会用；这里仅用于诊断输出）。
 pub fn is_accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
 }
 
-/// 弹一次系统授权对话框（已授权时为无操作）。
-pub fn prompt_accessibility_permission() {
-    unsafe {
-        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
-        let options = CFDictionary::from_CFType_pairs(&[(
-            key.as_CFType(),
-            CFBoolean::true_value().as_CFType(),
-        )]);
-        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef());
-    }
+/// 输入监控（Input Monitoring）是否已授权——listen-only 键盘 tap 的门槛。
+pub fn is_input_monitoring_granted() -> bool {
+    unsafe { CGPreflightListenEventAccess() != 0 }
+}
+
+/// 未授权时弹一次系统引导，并把本应用加入「输入监控」列表。
+pub fn request_input_monitoring() -> bool {
+    unsafe { CGRequestListenEventAccess() != 0 }
 }
 
 pub struct MacSummonListener {
@@ -100,7 +97,20 @@ fn run_listener(
     status: Arc<AtomicU8>,
     handler: Box<dyn Fn(SummonEvent) + Send>,
 ) {
-    prompt_accessibility_permission();
+    eprintln!(
+        "moe: 呼出监听启动（双击 {}，间隔上限 {:?}）",
+        key.label(),
+        max_gap
+    );
+    eprintln!(
+        "moe: 输入监控 preflight = {}；辅助功能 = {}",
+        is_input_monitoring_granted(),
+        is_accessibility_trusted()
+    );
+    if !is_input_monitoring_granted() {
+        eprintln!("moe: 请求系统授权（输入监控）…");
+        request_input_monitoring();
+    }
 
     // RefCell 足够：tap 回调与 run loop 同线程。
     let state = Rc::new(RefCell::new(TapState {
@@ -109,6 +119,7 @@ fn run_listener(
         port: None,
     }));
 
+    let mut logged_failure = false;
     loop {
         let tap_state = Rc::clone(&state);
         let handler_ref: &(dyn Fn(SummonEvent) + Send) = &*handler;
@@ -120,6 +131,7 @@ fn run_listener(
                         && s.detector.feed(input, Instant::now())
                     {
                         drop(s);
+                        eprintln!("moe: 检测到双击 {} → 呼出", key.label());
                         handler_ref(SummonEvent::Summon);
                     }
                 }
@@ -149,6 +161,8 @@ fn run_listener(
             Ok(tap) => {
                 state.borrow_mut().port = Some(tap.mach_port.as_concrete_TypeRef());
                 status.store(STATUS_READY, Ordering::SeqCst);
+                eprintln!("moe: CGEventTap 已挂载，双击 {} 可呼出", key.label());
+                logged_failure = false;
                 handler(SummonEvent::Authorized);
                 let source = tap
                     .mach_port
@@ -162,7 +176,11 @@ fn run_listener(
                 status.store(STATUS_NEEDS_PERMISSION, Ordering::SeqCst);
             }
             Err(()) => {
-                // 未授权/暂时失败：退避重试，授权生效后无需重启
+                // 未授权/暂时失败：退避重试，授权生效后无需重启（个别系统版本仍需重启一次）
+                if !logged_failure {
+                    eprintln!("moe: CGEventTap 创建失败（多半是「输入监控」未授权），每秒重试…");
+                    logged_failure = true;
+                }
                 std::thread::sleep(Duration::from_millis(1000));
             }
         }

@@ -329,7 +329,7 @@ async function refreshBanner() {
   const status = await invoke<SummonStatus>("summon_status");
   if (status.status === "needsPermission") {
     const key = KEY_LABELS[status.key] ?? status.key;
-    bannerTextEl.textContent = `${key} 呼出需要「辅助功能」授权；授权后自动生效，无需重启。`;
+    bannerTextEl.textContent = `${key} 呼出需要「输入监控」授权；授权后自动生效，个别系统版本需重启 Moe 一次。`;
     bannerEl.classList.remove("hidden");
     bannerEl.classList.add("flex");
   } else {
@@ -337,7 +337,7 @@ async function refreshBanner() {
   }
 }
 
-bannerActionEl.addEventListener("click", () => void invoke("open_accessibility_settings"));
+bannerActionEl.addEventListener("click", () => void invoke("open_permission_settings"));
 void listen("summon-authorized", () => hideBanner());
 
 // 呼出时清空回到命令层

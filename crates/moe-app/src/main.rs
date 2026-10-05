@@ -76,9 +76,11 @@ fn toggle_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("panel") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
+            eprintln!("moe: 面板已隐藏");
         } else {
             let _ = window.show();
             let _ = window.set_focus();
+            eprintln!("moe: 面板已显示");
         }
     }
 }
@@ -147,11 +149,12 @@ fn summon_status(state: State<'_, AppState>) -> SummonStatusPayload {
 }
 
 #[tauri::command]
-fn open_accessibility_settings() {
+fn open_permission_settings() {
     #[cfg(target_os = "macos")]
     {
+        // 「输入监控」面板：listen-only 键盘 tap 的门槛
         let _ = std::process::Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
             .spawn();
     }
 }
@@ -180,6 +183,8 @@ fn main() {
 
     let accelerator = accelerator(&config.summon.key);
     let is_double_tap = matches!(config.summon.key, SummonKey::DoubleTap(_));
+    let summon_label = key_label(&config.summon.key);
+    eprintln!("moe: 启动，呼出键 = {summon_label}");
 
     tauri::Builder::default()
         .plugin(
@@ -212,18 +217,18 @@ fn main() {
                 let summon_handle = handle.clone();
                 listener.start(Box::new(move |event| match event {
                     SummonEvent::Summon => toggle_panel(&summon_handle),
-                    // 授权生效（无需重启）：通知面板收起引导条
+                    // 授权生效：通知面板收起引导条
                     SummonEvent::Authorized => {
                         let _ = summon_handle.emit("summon-authorized", ());
                     }
                 }));
-                // 未授权时没有可用呼出方式（tray 见 IIE4AD-347）：开机即展示面板与引导
-                if listener.status() == SummonStatus::NeedsPermission
-                    && let Some(window) = handle.get_webview_window("panel")
-                {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+            }
+
+            // M1（tray 见 IIE4AD-347 之前）：启动即展示面板——否则未授权时
+            // 整个应用没有任何入口，用户看到的是一片虚无。
+            if let Some(window) = handle.get_webview_window("panel") {
+                let _ = window.show();
+                let _ = window.set_focus();
             }
 
             Ok(())
@@ -235,7 +240,7 @@ fn main() {
             run_item_action,
             hide_panel,
             summon_status,
-            open_accessibility_settings
+            open_permission_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running Moe");
