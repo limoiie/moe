@@ -24,9 +24,21 @@ cd crates/moe-app && cargo tauri dev   # 面板开发运行（首次会编译 Ta
 
 ## 当前状态：M1 骨架
 
-- 呼出键暂时为 `⌥Space`（临时手段）；默认方案「双击 ⌘」需要 CGEventTap +
-  辅助功能授权（ADR-0008），是 M1 的下一个 ticket。
-- 搜索为朴素子串打分；fuzzy（nucleo）+ frecency 另行排期。
+- 呼出键：**双击 ⌘**（ADR-0008）。macOS 首次运行会弹一次辅助功能授权，
+  未授权时面板内常显引导（授权后自动生效，无需重启）；已实现于
+  `moe-platform::mac`（listen-only CGEventTap + 可测的双击状态机）。
+- `config.toml` 可改呼出键（macOS 为 `~/Library/Application Support/moe/config.toml`，
+  Linux 为 `~/.config/moe/config.toml`）：
+
+  ```toml
+  [summon]
+  key = "double-cmd"   # double-cmd | double-option | double-ctrl | 组合键如 cmd+shift+space
+  double_tap_ms = 400  # 100..=1000
+  ```
+
+- Linux：双击监听未实现（X11 随 M4 Linux 验证落地；Wayland 无全局键盘拦截，
+  只能 WM 绑定或改用组合键模式—组合键走 global-shortcut 插件，各平台可用）。
 - WriteBack 目前只在面板内展示文本；真正的选区抓取/回写是 M2。
+- 搜索为朴素子串打分；fuzzy（nucleo）+ frecency 另行排期（IIE4AD-346）。
 
 里程碑验收标准见 `docs/adr/0009-milestone-scope.md`。

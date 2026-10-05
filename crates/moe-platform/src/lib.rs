@@ -1,5 +1,13 @@
 //! 平台边界（ADR-0002/0008）：与宿主应用的文字互动、呼出键监听。
-//! 当前只有 trait 定义与 stub——macOS AX 实现是 M2，CGEventTap 双击 ⌘ 是 M1 下一 ticket。
+//! 呼出监听：macOS 已实现（CGEventTap），其余平台为 stub；TextTarget 的
+//! macOS AX 实现是 M2。
+
+pub mod config;
+#[cfg(target_os = "macos")]
+pub mod mac;
+pub mod summon;
+
+pub use summon::{SummonEvent, SummonListener, SummonStatus, UnsupportedSummon};
 
 use std::fmt;
 
@@ -27,13 +35,6 @@ pub trait TextTarget: Send + Sync {
 
     /// 有 Selection 则替换之，否则插入到光标处。
     fn write_text(&self, text: &str) -> Result<(), PlatformError>;
-}
-
-/// 呼出监听（默认：双击 ⌘，ADR-0008）。
-pub trait SummonListener: Send + Sync {
-    /// 修饰键双击依赖事件监听，macOS 上即需授权。
-    fn is_authorized(&self) -> bool;
-    fn start(&mut self, callback: Box<dyn Fn() + Send>);
 }
 
 /// 全平台占位实现：在真实实现落地前让上层可以编译与接线。

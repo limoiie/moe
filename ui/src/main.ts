@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 import { store } from "./store";
 
@@ -300,12 +301,53 @@ q.addEventListener("input", () => {
   debounce = setTimeout(() => void refresh(q.value), 60);
 });
 
+// ---- 呼出授权引导（ADR-0008）：未授权时常显，授权后自动消失 ----
+
+interface SummonStatus {
+  status: "ready" | "needsPermission" | "unsupported";
+  key: string;
+  doubleTapMs: number;
+}
+
+const KEY_LABELS: Record<string, string> = {
+  "double-cmd": "双击 ⌘",
+  "double-option": "双击 ⌥",
+  "double-ctrl": "双击 ⌃",
+  "double-shift": "双击 ⇧",
+};
+
+const bannerEl = document.querySelector<HTMLDivElement>("#banner")!;
+const bannerTextEl = document.querySelector<HTMLSpanElement>("#banner-text")!;
+const bannerActionEl = document.querySelector<HTMLButtonElement>("#banner-action")!;
+
+function hideBanner() {
+  bannerEl.classList.add("hidden");
+  bannerEl.classList.remove("flex");
+}
+
+async function refreshBanner() {
+  const status = await invoke<SummonStatus>("summon_status");
+  if (status.status === "needsPermission") {
+    const key = KEY_LABELS[status.key] ?? status.key;
+    bannerTextEl.textContent = `${key} 呼出需要「辅助功能」授权；授权后自动生效，无需重启。`;
+    bannerEl.classList.remove("hidden");
+    bannerEl.classList.add("flex");
+  } else {
+    hideBanner();
+  }
+}
+
+bannerActionEl.addEventListener("click", () => void invoke("open_accessibility_settings"));
+void listen("summon-authorized", () => hideBanner());
+
 // 呼出时清空回到命令层
 window.addEventListener("focus", () => {
   q.value = "";
   void refresh("");
+  void refreshBanner();
 });
 
 await initHints();
 await refresh("");
+await refreshBanner();
 render();

@@ -1,0 +1,193 @@
+//! macOS 呼出监听：listen-only CGEventTap（ADR-0008）。
+//!
+//! 事件翻译（flagsChanged → [`Input`]）是薄胶水；判定语义在
+//! [`crate::summon::DoubleTapDetector`]。未授权时创建 tap 会失败，这里退避
+//! 重试——用户授权后无需重启即可生效。
+
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::{Duration, Instant};
+
+use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+use core_foundation::mach_port::CFMachPortRef;
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
+use core_foundation::string::{CFString, CFStringRef};
+use core_graphics::event::{
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventType,
+};
+use std::cell::RefCell;
+
+use crate::summon::{
+    DoubleTapDetector, Input, Modifier, SummonEvent, SummonListener, SummonStatus,
+};
+
+const STATUS_NEEDS_PERMISSION: u8 = 0;
+const STATUS_READY: u8 = 1;
+
+unsafe extern "C" {
+    fn AXIsProcessTrusted() -> u8;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
+    static kAXTrustedCheckOptionPrompt: CFStringRef;
+    /// core-graphics 的声明不对外导出；自行声明以支持 TapDisabled 后重新启用。
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+}
+
+pub fn is_accessibility_trusted() -> bool {
+    unsafe { AXIsProcessTrusted() != 0 }
+}
+
+/// 弹一次系统授权对话框（已授权时为无操作）。
+pub fn prompt_accessibility_permission() {
+    unsafe {
+        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+        let options = CFDictionary::from_CFType_pairs(&[(
+            key.as_CFType(),
+            CFBoolean::true_value().as_CFType(),
+        )]);
+        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef());
+    }
+}
+
+pub struct MacSummonListener {
+    key: Modifier,
+    max_gap: Duration,
+    status: Arc<AtomicU8>,
+}
+
+impl MacSummonListener {
+    pub fn new(key: Modifier, max_gap: Duration) -> Self {
+        Self {
+            key,
+            max_gap,
+            status: Arc::new(AtomicU8::new(STATUS_NEEDS_PERMISSION)),
+        }
+    }
+}
+
+impl SummonListener for MacSummonListener {
+    fn status(&self) -> SummonStatus {
+        if self.status.load(Ordering::SeqCst) == STATUS_READY {
+            SummonStatus::Ready
+        } else {
+            SummonStatus::NeedsPermission
+        }
+    }
+
+    fn start(&mut self, handler: Box<dyn Fn(SummonEvent) + Send + 'static>) {
+        let key = self.key;
+        let max_gap = self.max_gap;
+        let status = Arc::clone(&self.status);
+        std::thread::Builder::new()
+            .name("moe-summon".into())
+            .spawn(move || run_listener(key, max_gap, status, handler))
+            .expect("failed to spawn moe-summon thread");
+    }
+}
+
+struct TapState {
+    detector: DoubleTapDetector,
+    flags: CGEventFlags,
+    port: Option<CFMachPortRef>,
+}
+
+fn run_listener(
+    key: Modifier,
+    max_gap: Duration,
+    status: Arc<AtomicU8>,
+    handler: Box<dyn Fn(SummonEvent) + Send>,
+) {
+    prompt_accessibility_permission();
+
+    // RefCell 足够：tap 回调与 run loop 同线程。
+    let state = Rc::new(RefCell::new(TapState {
+        detector: DoubleTapDetector::new(key, max_gap),
+        flags: CGEventFlags::empty(),
+        port: None,
+    }));
+
+    loop {
+        let tap_state = Rc::clone(&state);
+        let handler_ref: &(dyn Fn(SummonEvent) + Send) = &*handler;
+        let callback = move |_proxy, etype: CGEventType, event: &CGEvent| -> Option<CGEvent> {
+            match etype {
+                CGEventType::FlagsChanged => {
+                    let mut s = tap_state.borrow_mut();
+                    if let Some(input) = translate_flags(&mut s.flags, event.get_flags())
+                        && s.detector.feed(input, Instant::now())
+                    {
+                        drop(s);
+                        handler_ref(SummonEvent::Summon);
+                    }
+                }
+                CGEventType::KeyDown => {
+                    tap_state
+                        .borrow_mut()
+                        .detector
+                        .feed(Input::Other, Instant::now());
+                }
+                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                    if let Some(port) = tap_state.borrow().port {
+                        unsafe { CGEventTapEnable(port, true) };
+                    }
+                }
+                _ => {}
+            }
+            None
+        };
+
+        match CGEventTap::new(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::ListenOnly,
+            vec![CGEventType::FlagsChanged, CGEventType::KeyDown],
+            callback,
+        ) {
+            Ok(tap) => {
+                state.borrow_mut().port = Some(tap.mach_port.as_concrete_TypeRef());
+                status.store(STATUS_READY, Ordering::SeqCst);
+                handler(SummonEvent::Authorized);
+                let source = tap
+                    .mach_port
+                    .create_runloop_source(0)
+                    .expect("failed to create run loop source");
+                CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
+                tap.enable();
+                CFRunLoop::run_current();
+                // tap 失效（如系统睡眠后）：清除端口并重建
+                state.borrow_mut().port = None;
+                status.store(STATUS_NEEDS_PERMISSION, Ordering::SeqCst);
+            }
+            Err(()) => {
+                // 未授权/暂时失败：退避重试，授权生效后无需重启
+                std::thread::sleep(Duration::from_millis(1000));
+            }
+        }
+    }
+}
+
+fn translate_flags(before: &mut CGEventFlags, after: CGEventFlags) -> Option<Input> {
+    let was = *before;
+    *before = after;
+    let masks = [
+        (CGEventFlags::CGEventFlagCommand, Modifier::Meta),
+        (CGEventFlags::CGEventFlagAlternate, Modifier::Alt),
+        (CGEventFlags::CGEventFlagControl, Modifier::Control),
+        (CGEventFlags::CGEventFlagShift, Modifier::Shift),
+    ];
+    for (mask, modifier) in masks {
+        let held_before = was.contains(mask);
+        let held_after = after.contains(mask);
+        if held_before != held_after {
+            return Some(if held_after {
+                Input::Down(modifier)
+            } else {
+                Input::Up(modifier)
+            });
+        }
+    }
+    None
+}

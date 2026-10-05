@@ -30,6 +30,10 @@ _Avoid_: 侧边栏模式、sidebar（正式术语用 Side View）
 由全局快捷键呼出的居中悬浮面板，是用户与所有 Command 相遇的唯一场所。
 _Avoid_: 启动器、launcher、悬浮框（口语可用）
 
+**Summon Key（呼出键）**:
+唤出 Command Panel 的唯一键位；默认双击 ⌘，可配置为其他修饰键双击或组合键（ADR-0008）。未获系统授权时面板内给出引导。
+_Avoid_: 快捷键（那泛指 Keymap 内所有键）
+
 **Input Bar（输入栏）**:
 Command Panel 顶部的统一输入区，永远处于可输入状态（像浏览器地址栏的位置，但语义是输入而非路径显示）。所有 Extension 形态中它的位置与行为一致。
 _Avoid_: 搜索框、地址栏
