@@ -2,7 +2,10 @@
 //!
 //! 读取顺序：keychain → 环境变量 `MOE_AI_API_KEY`（便于开发）。
 
+// 仅 macOS 使用（Linux 走环境变量/后续 secret-service），避免非 mac 平台 dead_code。
+#[cfg(target_os = "macos")]
 const SERVICE: &str = "moe";
+#[cfg(target_os = "macos")]
 const ACCOUNT: &str = "ai.api-key";
 
 pub fn ai_api_key() -> Option<String> {
