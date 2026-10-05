@@ -45,13 +45,22 @@ impl Extension for Moe {
     }
 
     fn commands(&self) -> Vec<CommandMeta> {
-        vec![CommandMeta {
-            id: "moe.open-config".into(),
-            extension_id: "moe".into(),
-            title: "Moe: 打开配置文件".into(),
-            subtitle: Some("呼出键、[ai] 端点等设置".into()),
-            input: InputKind::None,
-        }]
+        vec![
+            CommandMeta {
+                id: "moe.open-config".into(),
+                extension_id: "moe".into(),
+                title: "Moe: 打开配置文件".into(),
+                subtitle: Some("呼出键、[ai] 端点等设置".into()),
+                input: InputKind::None,
+            },
+            CommandMeta {
+                id: "moe.set-ai-key".into(),
+                extension_id: "moe".into(),
+                title: "Moe: 保存 AI Key".into(),
+                subtitle: Some("输入 `key <你的key>`（不回显，存 keychain）".into()),
+                input: InputKind::Query,
+            },
+        ]
     }
 
     fn invoke(
@@ -98,5 +107,24 @@ impl Extension for Moe {
             subtitle: Some("Enter 存入 keychain".into()),
             input: InputKind::Query,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moe_core::contract::Extension;
+
+    /// 守卫：fallback 合成的 id 必须能在 commands() 里被路由，
+    /// 否则 Apply 时会 NotFound（曾经踩过）。
+    #[test]
+    fn fallback_command_is_invocable() {
+        let ext = Moe;
+        let fallback = ext.fallback_command("key sk-test").expect("fallback");
+        assert!(
+            ext.commands().iter().any(|c| c.id == fallback.id),
+            "fallback id 必须在 commands() 中可路由：{}",
+            fallback.id
+        );
     }
 }

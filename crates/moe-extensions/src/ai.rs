@@ -233,3 +233,21 @@ impl Extension for AiShell {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moe_core::contract::Extension;
+
+    /// 同款守卫：fallback 合成的 id 必须可路由。
+    #[test]
+    fn fallback_command_is_invocable() {
+        let ext = AiShell;
+        let fallback = ext.fallback_command("hello").expect("fallback");
+        assert!(
+            ext.commands().iter().any(|c| c.id == fallback.id),
+            "fallback id 必须在 commands() 中可路由：{}",
+            fallback.id
+        );
+    }
+}
