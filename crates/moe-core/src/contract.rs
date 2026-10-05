@@ -62,8 +62,10 @@ pub enum ActionResult {
     List {
         items: Vec<Item>,
     },
-    /// 触发 Materialize：该 Command 的 Extension 的 Side View。
-    OpenSideView,
+    /// 触发 Materialize：该 Extension 的 Side View，携带开窗所需载荷。
+    OpenSideView {
+        payload: serde_json::Value,
+    },
     Silent,
 }
 
@@ -77,6 +79,9 @@ pub struct CommandMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
     pub input: InputKind,
+    /// Live 列表：Input Bar 变化即用新查询重跑本命令（如历史搜索）；
+    /// false 时输入只用于命令盘检索（默认）。
+    pub live: bool,
 }
 
 #[derive(Debug)]
@@ -152,13 +157,23 @@ pub trait Extension: Send + Sync {
     }
 
     /// Item 流的下一步：对 Item 执行其某个动作（默认无动作可执行）。
-    /// 对 Item 执行其某个动作（默认无动作可执行）。
     fn run_item_action(
         &self,
         _command_id: &str,
         _item: &Item,
         _action: &Action,
     ) -> Result<ActionResult, MoeError> {
+        Err(MoeError::NotFound)
+    }
+
+    /// Side View 续聊（ADR-0004）：空 id 表示新建会话；返回实际会话 id。
+    /// 回复在后台流式产出，经 `CommandEvent` 增量送达（command_id 约定 `ai.side`）。
+    fn side_continue(
+        &self,
+        _conversation_id: &str,
+        _message: &str,
+        _emitter: Arc<dyn Emitter>,
+    ) -> Result<String, MoeError> {
         Err(MoeError::NotFound)
     }
 }

@@ -32,6 +32,23 @@ tauri_nspanel::tauri_panel! {
     })
 }
 
+// 侧栏（chat）同款浮层语义：非激活、可进入全屏应用的 Space、且能成为 key window 接收输入。
+// 宏会引入一批 `use` 导入，同一模块只能调用一次，因此放进子模块再导出类型。
+#[cfg(target_os = "macos")]
+mod chat_panel {
+    tauri_nspanel::tauri_panel! {
+        panel!(MoeChatPanel {
+            config: {
+                can_become_key_window: true,
+                is_floating_panel: true
+            }
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+use chat_panel::MoeChatPanel;
+
 /// 面板居中到鼠标所在显示器（含全屏应用所在的虚拟屏）。
 fn centered_on(
     monitor_pos: (i32, i32),
@@ -41,6 +58,16 @@ fn centered_on(
     let x = monitor_pos.0 + (monitor_size.0.saturating_sub(window_size.0) / 2) as i32;
     let y = monitor_pos.1 + (monitor_size.1.saturating_sub(window_size.1) / 2) as i32;
     (x, y)
+}
+
+/// 右停靠：贴显示器右缘、顶部对齐（侧栏窗口用）。
+fn right_docked_on(
+    monitor_pos: (i32, i32),
+    monitor_size: (u32, u32),
+    window_size: (u32, u32),
+) -> (i32, i32) {
+    let x = monitor_pos.0 + monitor_size.0.saturating_sub(window_size.0) as i32;
+    (x, monitor_pos.1)
 }
 
 /// 组合键写法 → global-shortcut 插件的加速器语法。
@@ -141,6 +168,56 @@ fn place_on_active_screen(window: &tauri::WebviewWindow) {
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
+/// 菜单栏在屏幕顶部占用的高度（物理像素）。
+/// NSScreen 要求主线程，调用点已在主线程闭包内。
+#[cfg(target_os = "macos")]
+fn top_inset_physical(scale: f64) -> u32 {
+    use tauri_nspanel::objc2::MainThreadMarker;
+    use tauri_nspanel::objc2_app_kit::NSScreen;
+    let Some(mtm) = MainThreadMarker::new() else {
+        return 0;
+    };
+    let Some(screen) = NSScreen::mainScreen(mtm) else {
+        return 0;
+    };
+    let frame = screen.frame();
+    let visible = screen.visibleFrame();
+    let inset_points =
+        (frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height);
+    (inset_points.max(0.0) * scale).round() as u32
+}
+
+/// 把侧栏移到鼠标所在显示器（含全屏虚拟屏）的右侧、占满高度。
+fn place_side_view(window: &tauri::WebviewWindow) {
+    let Ok(cursor) = window.cursor_position() else {
+        return;
+    };
+    let monitor = window
+        .monitor_from_point(cursor.x, cursor.y)
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    let (Some(monitor), Ok(size)) = (monitor, window.outer_size()) else {
+        return;
+    };
+    let pos = monitor.position();
+    let msize = monitor.size();
+    // 高度减去菜单栏：macOS 会把窗口顶边约束到可见区域之内，
+    // 否则多出的高度会把底边（输入框）推到屏幕之外。
+    #[cfg(target_os = "macos")]
+    let inset = top_inset_physical(monitor.scale_factor());
+    #[cfg(not(target_os = "macos"))]
+    let inset = 0;
+    let height = msize.height.saturating_sub(inset);
+    let (x, y) = right_docked_on(
+        (pos.x, pos.y + inset as i32),
+        (msize.width, height),
+        (size.width, size.height),
+    );
+    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    let _ = window.set_size(tauri::PhysicalSize::new(size.width, height));
+}
+
 /// 必须在主线程调用：先抓选区，再定位并展示面板。
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -192,6 +269,37 @@ fn toggle_panel(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || toggle_panel_blocking(&handle));
 }
 
+/// Materialize：收起面板 → 右停靠展示 chat 窗口 → 交付载荷（会话 id 等）。
+fn open_side_view(app: &AppHandle, payload: serde_json::Value) {
+    let handle = app.clone();
+    // 窗口操作（含 AppKit 的 orderOut/orderFront）都要在主线程。
+    let _ = app.run_on_main_thread(move || {
+        hide_panel_blocking(&handle);
+        let Some(window) = handle.get_webview_window("chat") else {
+            eprintln!("moe: chat 窗口不存在");
+            return;
+        };
+        place_side_view(&window);
+
+        #[cfg(target_os = "macos")]
+        let panel_shown = if let Ok(panel) = handle.get_webview_panel("chat") {
+            panel.show_and_make_key();
+            true
+        } else {
+            false
+        };
+        #[cfg(not(target_os = "macos"))]
+        let panel_shown = false;
+
+        if !panel_shown {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        let _ = handle.emit_to("chat", "side-open", payload);
+        eprintln!("moe: 侧栏已展示");
+    });
+}
+
 /// WriteBack 投递：权限前置检查 → 收面板 → 等焦点交还 → AX/剪贴板写入。
 fn deliver_writeback(app: &AppHandle, text: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -235,6 +343,7 @@ fn invoke_command(
     state: State<'_, AppState>,
     command_id: String,
     query: Option<String>,
+    record: Option<bool>,
 ) -> Result<ActionResult, String> {
     let selection = state.selection.lock().expect("selection poisoned").clone();
     let emitter: std::sync::Arc<dyn CommandEmitter> =
@@ -246,7 +355,8 @@ fn invoke_command(
         .invoke_streaming(&command_id, query.as_deref(), selection.as_deref(), emitter)
         .map_err(|e| e.to_string())?;
 
-    {
+    // Live 列表随输入重跑时不算一次「启动」（frecency 语义，IIE4AD-360）。
+    if record.unwrap_or(true) {
         let mut frecency = state.frecency.lock().expect("frecency poisoned");
         frecency.record(&command_id, std::time::SystemTime::now());
         moe_platform::store::save_frecency(&frecency);
@@ -254,6 +364,9 @@ fn invoke_command(
 
     if let ActionResult::WriteBack { text } = &result {
         deliver_writeback(&app, text.clone())?;
+    }
+    if let ActionResult::OpenSideView { payload } = &result {
+        open_side_view(&app, payload.clone());
     }
     Ok(result)
 }
@@ -275,12 +388,39 @@ fn run_item_action(
     if let ActionResult::WriteBack { text } = &result {
         deliver_writeback(&app, text.clone())?;
     }
+    if let ActionResult::OpenSideView { payload } = &result {
+        open_side_view(&app, payload.clone());
+    }
     Ok(result)
 }
 
 #[tauri::command]
 fn hide_panel(app: AppHandle) {
     hide_panel_blocking(&app);
+}
+
+/// 侧栏历史：某会话的全部消息（按时间正序）。
+#[tauri::command]
+fn side_messages(conversation_id: String) -> Result<Vec<moe_core::conversation::Message>, String> {
+    moe_platform::db::Db::open_default()?.messages(&conversation_id)
+}
+
+/// 侧栏续聊：空会话 id 会在 `ai` Namespace 新建会话；返回（可能新建的）会话 id。
+#[tauri::command]
+fn side_send(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+    message: String,
+) -> Result<String, String> {
+    let emitter: std::sync::Arc<dyn CommandEmitter> =
+        std::sync::Arc::new(TauriEventEmitter(app.clone()));
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .side_continue("ai", &conversation_id, &message, emitter)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -469,6 +609,29 @@ fn main() {
                 }
             }
 
+            // 侧栏窗口同款浮层：不抢激活、可出现在任意 Space（含全屏应用之上）。
+            #[cfg(target_os = "macos")]
+            if let Some(window) = handle.get_webview_window("chat") {
+                match window.to_panel::<MoeChatPanel>() {
+                    Ok(panel) => {
+                        panel.set_level(PanelLevel::Floating.value());
+                        panel.set_collection_behavior(
+                            CollectionBehavior::new()
+                                .can_join_all_spaces()
+                                .full_screen_auxiliary()
+                                .value(),
+                        );
+                        if let Err(err) = panel.add_style_mask(
+                            tauri_nspanel::objc2_app_kit::NSWindowStyleMask::NonactivatingPanel,
+                        ) {
+                            eprintln!("moe: chat 的 NonactivatingPanel 样式设置失败: {err:?}");
+                        }
+                        panel.set_hides_on_deactivate(false);
+                    }
+                    Err(err) => eprintln!("moe: chat 转换为 NSPanel 失败（回退普通窗口）: {err}"),
+                }
+            }
+
             // 菜单栏常驻（IIE4AD-347）：无 Dock 图标、不参与 ⌘-Tab（Raycast 同款）
             #[cfg(target_os = "macos")]
             {
@@ -530,6 +693,8 @@ fn main() {
             invoke_command,
             run_item_action,
             hide_panel,
+            side_messages,
+            side_send,
             summon_status,
             open_input_monitoring_settings,
             open_accessibility_settings
@@ -578,5 +743,17 @@ mod tests {
             key_label(&SummonKey::parse("cmd+space").unwrap()),
             "Command+Space"
         );
+    }
+
+    #[test]
+    fn docks_side_view_to_right_edge() {
+        assert_eq!(right_docked_on((0, 0), (1920, 1080), (420, 800)), (1500, 0));
+        // 第二块屏（macOS 允许排布在主屏左侧，坐标为负）也要正确
+        assert_eq!(
+            right_docked_on((-1920, 0), (1920, 1080), (420, 800)),
+            (-420, 0)
+        );
+        // 窗口比屏幕宽时不越界（saturating 归零偏移）
+        assert_eq!(right_docked_on((0, 0), (300, 200), (420, 800)), (0, 0));
     }
 }

@@ -10,6 +10,7 @@ tauri-build = { version = "2" }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 serde.workspace = true
+serde_json.workspace = true
 moe-core.workspace = true
 moe-platform.workspace = true
 moe-extensions.workspace = true

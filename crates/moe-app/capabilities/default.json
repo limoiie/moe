@@ -1,6 +1,11 @@
 {
   "identifier": "default",
-  "description": "Panel webview: 核心 IPC 与呼出键注册",
-  "windows": ["panel"],
-  "permissions": ["core:default", "global-shortcut:default"]
+  "description": "Panel & chat webviews: 核心 IPC、呼出键注册与窗口收起",
+  "windows": ["panel", "chat"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-start-dragging",
+    "global-shortcut:default"
+  ]
 }

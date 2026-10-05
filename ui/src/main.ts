@@ -28,12 +28,16 @@ interface CommandMeta {
   title: string;
   subtitle?: string;
   input: "none" | "query" | "selection";
+  /** Live 列表：进入后输入变化即重跑（如历史搜索）。 */
+  live: boolean;
 }
-// 外部 tagged 枚举：单位变体（silent/openSideView）序列化为裸字符串。
+// 外部 tagged 枚举：单位变体（silent）序列化为裸字符串；
+// openSideView/writeBack 等带载荷变体为对象（侧栏开窗由后端执行）。
 type ActionResult =
   | string
   | { writeBack: { text: string } }
-  | { list: { items: Item[] } };
+  | { list: { items: Item[] } }
+  | { openSideView: { payload: unknown } };
 
 // ---- 视图状态 ----
 
@@ -46,6 +50,8 @@ interface View {
   actions: Action[];
   /** actions 模式下来自哪个 item；items 模式的来源 Command。 */
   sourceCommandId?: string;
+  /** 来源 Command 是否 Live（输入变化即重跑列表）。 */
+  sourceLive?: boolean;
   itemIndex?: number;
 }
 
@@ -169,13 +175,17 @@ function hideDetail() {
   detailItemId = null;
 }
 
-function applyResult(res: ActionResult, commandId: string) {
+function applyResult(res: ActionResult, commandId: string, live = false) {
   if (typeof res === "string") {
-    if (res === "openSideView") showDetail("Side View：M3 接入（ADR-0004）");
+    // silent：无需 UI 动作（openSideView 的开窗已由后端完成）
     return;
   }
   if ("writeBack" in res) {
     // 回写由后端完成（收面板 → AX / 剪贴板降级投递）；面板此刻已被收起
+    return;
+  }
+  if ("openSideView" in res) {
+    // 侧栏窗口由后端展示并收到载荷；面板已收起
     return;
   }
   if ("list" in res) {
@@ -186,6 +196,7 @@ function applyResult(res: ActionResult, commandId: string) {
       items,
       focus: 0,
       sourceCommandId: commandId,
+      sourceLive: live,
     }));
     const first = items[0];
     if (first?.detail) {
@@ -202,9 +213,13 @@ async function applyFocused(alt: boolean) {
     try {
       const res = await invoke<ActionResult>("invoke_command", {
         commandId: cmd.id,
-        query: q.value || null,
+        // Live 命令以自己的视图接管输入：进入时清空输入框，之后的输入即该命令的查询
+        query: cmd.live ? null : q.value || null,
       });
-      applyResult(res, cmd.id);
+      if (cmd.live) {
+        q.value = "";
+      }
+      applyResult(res, cmd.id, cmd.live);
     } catch (err) {
       showDetail(`执行失败：${String(err)}`);
     }
@@ -222,7 +237,7 @@ async function applyFocused(alt: boolean) {
         item,
         action,
       });
-      applyResult(res, v.sourceCommandId);
+      applyResult(res, v.sourceCommandId, v.sourceLive);
     } catch (err) {
       showDetail(`执行失败：${String(err)}`);
     }
@@ -238,7 +253,7 @@ async function applyFocused(alt: boolean) {
       item,
       action,
     });
-    applyResult(res, v.sourceCommandId);
+    applyResult(res, v.sourceCommandId, v.sourceLive);
   } catch (err) {
     showDetail(`执行失败：${String(err)}`);
   }
@@ -274,7 +289,23 @@ async function materialize() {
       item,
       action,
     });
-    applyResult(res, v.sourceCommandId);
+    applyResult(res, v.sourceCommandId, v.sourceLive);
+  }
+}
+
+/** Live 命令：输入变化即用新查询重跑列表（如「AI: 搜索历史会话」）。 */
+async function rerunLive(query: string) {
+  const v = view.get();
+  if (!v.sourceCommandId) return;
+  try {
+    const res = await invoke<ActionResult>("invoke_command", {
+      commandId: v.sourceCommandId,
+      query: query || null,
+      record: false, // 重跑不算一次启动（frecency 语义）
+    });
+    applyResult(res, v.sourceCommandId, true);
+  } catch (err) {
+    showDetail(`执行失败：${String(err)}`);
   }
 }
 
@@ -330,7 +361,14 @@ window.addEventListener("keydown", (e) => {
 let debounce: ReturnType<typeof setTimeout> | undefined;
 q.addEventListener("input", () => {
   clearTimeout(debounce);
-  debounce = setTimeout(() => void refresh(q.value), 60);
+  debounce = setTimeout(() => {
+    const v = view.get();
+    if (v.mode === "items" && v.sourceLive && v.sourceCommandId) {
+      void rerunLive(q.value);
+    } else {
+      void refresh(q.value);
+    }
+  }, 60);
 });
 
 // ---- 呼出授权引导（ADR-0008）：未授权时常显，授权后自动消失 ----

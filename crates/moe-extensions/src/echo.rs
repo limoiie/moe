@@ -22,6 +22,7 @@ fn meta(id: &str, title: &str, subtitle: &str, input: InputKind) -> CommandMeta 
         title: title.into(),
         subtitle: Some(subtitle.into()),
         input,
+        live: false,
     }
 }
 

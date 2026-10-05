@@ -52,6 +52,7 @@ impl Extension for Moe {
                 title: "Moe: 打开配置文件".into(),
                 subtitle: Some("呼出键、[ai] 端点等设置".into()),
                 input: InputKind::None,
+                live: false,
             },
             CommandMeta {
                 id: "moe.set-ai-key".into(),
@@ -59,6 +60,7 @@ impl Extension for Moe {
                 title: "Moe: 保存 AI Key".into(),
                 subtitle: Some("输入 `key <你的key>`（不回显，存 keychain）".into()),
                 input: InputKind::Query,
+                live: false,
             },
         ]
     }
@@ -106,6 +108,7 @@ impl Extension for Moe {
             title: "Moe: 保存 AI Key（不回显）".into(),
             subtitle: Some("Enter 存入 keychain".into()),
             input: InputKind::Query,
+            live: false,
         })
     }
 }

@@ -96,6 +96,26 @@ impl Registry {
             .find(|e| e.commands().iter().any(|c| c.id == command_id))
     }
 
+    pub fn find_extension(&self, extension_id: &str) -> Option<&dyn Extension> {
+        self.extensions
+            .iter()
+            .map(Box::as_ref)
+            .find(|e| e.id() == extension_id)
+    }
+
+    /// Side View 续聊：按扩展 id 路由（ADR-0004）。
+    pub fn side_continue(
+        &self,
+        extension_id: &str,
+        conversation_id: &str,
+        message: &str,
+        emitter: Arc<dyn Emitter>,
+    ) -> Result<String, MoeError> {
+        self.find_extension(extension_id)
+            .ok_or(MoeError::NotFound)?
+            .side_continue(conversation_id, message, emitter)
+    }
+
     pub fn invoke(
         &self,
         command_id: &str,
@@ -179,6 +199,7 @@ mod tests {
                     title: "Toy: List".into(),
                     subtitle: None,
                     input: InputKind::Query,
+                    live: false,
                 },
                 CommandMeta {
                     id: "toy.hello".into(),
@@ -186,6 +207,7 @@ mod tests {
                     title: "Hello Toy".into(),
                     subtitle: Some("backspace demo".into()),
                     input: InputKind::None,
+                    live: false,
                 },
             ]
         }
@@ -251,6 +273,7 @@ mod tests {
                 title: "Stream: Ask".into(),
                 subtitle: None,
                 input: InputKind::Query,
+                live: false,
             }]
         }
         fn invoke(
@@ -327,6 +350,80 @@ mod tests {
         assert_eq!(result, ActionResult::WriteBack { text: "hi".into() });
     }
 
+    /// Side View 续聊契约（IIE4AD-360）：按扩展路由；未实现/未知扩展为 NotFound。
+    /// 返回实际会话 id（空 id 的“新建”语义由扩展实现）。
+    #[test]
+    fn side_continue_routes_to_extension_or_not_found() {
+        struct SideToy;
+        impl Extension for SideToy {
+            fn id(&self) -> &str {
+                "side"
+            }
+            fn title(&self) -> &str {
+                "Side"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&str>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+            fn side_continue(
+                &self,
+                conversation_id: &str,
+                message: &str,
+                emitter: Arc<dyn Emitter>,
+            ) -> Result<String, MoeError> {
+                emitter.emit(CommandEvent::ItemUpdated {
+                    command_id: "ai.side".into(),
+                    item: Item {
+                        id: "side.item".into(),
+                        title: message.into(),
+                        subtitle: None,
+                        actions: vec![],
+                        payload: serde_json::Value::Null,
+                        detail: None,
+                    },
+                });
+                Ok(if conversation_id.is_empty() {
+                    "42".into()
+                } else {
+                    conversation_id.into()
+                })
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(SideToy));
+        r.register(Box::new(Toy));
+        let recorder = RecordingEmitter::default();
+        let events = Arc::clone(&recorder.0);
+
+        let id = r
+            .side_continue("side", "", "你好", Arc::new(recorder))
+            .unwrap();
+        assert_eq!(id, "42");
+        assert_eq!(events.lock().unwrap().len(), 1);
+        assert_eq!(
+            r.side_continue("side", "7", "x", Arc::new(NoopEmitter))
+                .unwrap(),
+            "7"
+        );
+        assert!(matches!(
+            r.side_continue("toy", "1", "x", Arc::new(NoopEmitter)),
+            Err(MoeError::NotFound)
+        ));
+        assert!(matches!(
+            r.side_continue("nope", "1", "x", Arc::new(NoopEmitter)),
+            Err(MoeError::NotFound)
+        ));
+    }
+
     #[test]
     fn unmatched_query_offers_fallback_command() {
         struct FallbackToy;
@@ -355,6 +452,7 @@ mod tests {
                     title: format!("Ask「{query}」"),
                     subtitle: None,
                     input: InputKind::Query,
+                    live: false,
                 })
             }
         }
@@ -435,6 +533,7 @@ mod tests {
                     title: "Deploy".into(),
                     subtitle: None,
                     input: InputKind::None,
+                    live: false,
                 }]
             }
             fn invoke(

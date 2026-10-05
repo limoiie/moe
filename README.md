@@ -29,7 +29,7 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
 2. 两个终端：`pnpm -C ui dev` + `cargo run -p moe-app`
 3. 嵌入产物：`cargo tauri build`（生产构建，经 `custom-protocol` 特性嵌入 `ui/dist`）
 
-## 当前状态：M1 骨架
+## 当前状态：M1 骨架与 M2/M3 能力
 
 - 呼出键：**双击 ⌘**（ADR-0008）。macOS 首次运行会请求**「输入监控」授权**
   （listen-only 键盘 tap 的门槛；辅助功能留待 M2 回写类功能），未授权时面板内
@@ -60,5 +60,10 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
 - AI 问答（M3a）：OpenAI 兼容端点**真实流式**（`[ai]` 的 base_url/model，即改即用无需重启）；
   key 走 keychain——面板输入 `key <你的key>` 回车保存（不回显），或设 `MOE_AI_API_KEY`；
   回答以 Markdown 详情卡片边流边渲染；无匹配时自动出现「AI: 提问「…」」捕获项。
+- AI 侧栏与历史（M3b，IIE4AD-360）：回答项的 **⌘M Materialize** 或命令
+  「AI: 搜索历史会话」（**Live 列表**：进入后输入即筛标题）→ 右侧栏窗口，
+  停在鼠标所在显示器右缘、可与全屏应用共存；侧栏内多轮续聊把整段会话作为上下文，
+  历史存本地 SQLite（`data_dir/moe/moe.db`，`ai` Namespace），流式回答经
+  `command-event`（`commandId = ai.side`）逐段渲染。附件入口已占位（IIE4AD-358）。
 
 里程碑验收标准见 `docs/adr/0009-milestone-scope.md`。

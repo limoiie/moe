@@ -42,6 +42,12 @@ _Avoid_: 搜索框、地址栏
 Input Bar 之下随输入实时更新的候选列表；其中当前被选中的一个称为 Focused Item。
 _Avoid_: 下拉列表
 
+**Live List（实时列表）**:
+Command 的一种列表语义（`CommandMeta.live`）：进入该 Command 后，Input Bar 的每次变化
+都会用新查询重跑本 Command（如「AI: 搜索历史会话」随输入筛标题）。非 Live 的 Command
+中输入变化仍是命令盘检索。
+_Avoid_: 动态搜索、自动补全
+
 **Focused Item（焦点项）**:
 Result List 中当前接受键盘操作的唯一 item。所有主/副操作都作用于它。
 _Avoid_: 高亮项、选中项（"选中"保留给其他应用的文字选区）
