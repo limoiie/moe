@@ -35,6 +35,8 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
   （listen-only 键盘 tap 的门槛；辅助功能留待 M2 回写类功能），未授权时面板内
   常显引导。已实现于 `moe-platform::mac`（listen-only CGEventTap + 可测的双击
   状态机）；启动日志会打印权限状态与 tap 挂载结果，方便排查。
+- 面板在 macOS 上是 **NSPanel**（tauri-nspanel）：不激活应用、不抢菜单栏、
+  可浮在全屏应用的 Space 之上；呼出时自动居中到鼠标所在显示器。
 - `config.toml` 可改呼出键（macOS 为 `~/Library/Application Support/moe/config.toml`，
   Linux 为 `~/.config/moe/config.toml`）：
 

@@ -16,6 +16,21 @@ use moe_platform::summon::{Modifier, SummonEvent, SummonListener, SummonStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 
+#[cfg(target_os = "macos")]
+use tauri_nspanel::{CollectionBehavior, ManagerExt, PanelLevel, WebviewWindowExt};
+
+// 面板形态的 NSPanel（ADR-0008 的浮层语义）：非激活应用、可进入全屏应用的
+// Space、且能成为 key window 接收键盘。`can_become_key_window` 是打字的前提。
+#[cfg(target_os = "macos")]
+tauri_nspanel::tauri_panel! {
+    panel!(MoePanel {
+        config: {
+            can_become_key_window: true,
+            is_floating_panel: true
+        }
+    })
+}
+
 /// 面板居中到鼠标所在显示器（含全屏应用所在的虚拟屏）。
 fn centered_on(
     monitor_pos: (i32, i32),
@@ -106,33 +121,49 @@ fn place_on_active_screen(window: &tauri::WebviewWindow) {
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// 必须在主线程调用：补全 collectionBehavior 并展示面板。
+/// 必须在主线程调用：定位并展示面板。
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
-    // tao 只设了 canJoinAllSpaces；浮在全屏应用（独立虚拟屏）上需要 FullScreenAuxiliary
-    #[cfg(target_os = "macos")]
-    if let Ok(ptr) = window.ns_window() {
-        moe_platform::mac::enable_fullscreen_auxiliary(ptr);
-    }
     place_on_active_screen(window);
+    #[cfg(target_os = "macos")]
+    if let Ok(panel) = window.app_handle().get_webview_panel(window.label()) {
+        // NSPanel：不激活应用、不切 Space，直接成为 key window 接收输入
+        panel.show_and_make_key();
+        eprintln!("moe: 面板已显示（NSPanel）");
+        return;
+    }
     let _ = window.show();
     let _ = window.set_focus();
     eprintln!("moe: 面板已显示");
 }
 
-fn show_panel(window: tauri::WebviewWindow) {
-    let target = window.clone();
-    let _ = window.run_on_main_thread(move || show_panel_blocking(&target));
+/// 必须在主线程调用。
+fn hide_panel_blocking(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Ok(panel) = app.get_webview_panel("panel") {
+        panel.hide();
+        eprintln!("moe: 面板已隐藏（NSPanel）");
+        return;
+    }
+    if let Some(window) = app.get_webview_window("panel") {
+        let _ = window.hide();
+        eprintln!("moe: 面板已隐藏");
+    }
+}
+
+fn toggle_panel_blocking(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("panel") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        hide_panel_blocking(app);
+    } else {
+        show_panel_blocking(&window);
+    }
 }
 
 fn toggle_panel(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("panel") {
-        if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-            eprintln!("moe: 面板已隐藏");
-        } else {
-            show_panel(window);
-        }
-    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || toggle_panel_blocking(&handle));
 }
 
 #[tauri::command]
@@ -180,8 +211,8 @@ fn run_item_action(
 }
 
 #[tauri::command]
-fn hide_panel(window: tauri::WebviewWindow) {
-    let _ = window.hide();
+fn hide_panel(app: AppHandle) {
+    hide_panel_blocking(&app);
 }
 
 #[tauri::command]
@@ -236,7 +267,7 @@ fn main() {
     let summon_label = key_label(&config.summon.key);
     eprintln!("moe: 启动，呼出键 = {summon_label}");
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(
             ShortcutBuilder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -250,7 +281,13 @@ fn main() {
             registry: Mutex::new(registry),
             config,
             listener: Mutex::new(listener),
-        })
+        });
+
+    // NSPanel 支持（macOS）：必须在 to_panel 之前注册
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
+    builder
         .setup(move |app| {
             let handle = app.handle().clone();
 
@@ -274,10 +311,36 @@ fn main() {
                 }));
             }
 
+            // macOS：把窗口原地换成 NSPanel。普通 NSWindow 在应用被激活时会被
+            // 系统拉回自己的 Space；NSPanel（非激活）才能浮在任何全屏应用之上，
+            // 并且不把菜单栏抢走（ADR-0008 的浮层语义）。
+            #[cfg(target_os = "macos")]
+            if let Some(window) = handle.get_webview_window("panel") {
+                match window.to_panel::<MoePanel>() {
+                    Ok(panel) => {
+                        panel.set_level(PanelLevel::Floating.value());
+                        panel.set_collection_behavior(
+                            CollectionBehavior::new()
+                                .can_join_all_spaces()
+                                .full_screen_auxiliary()
+                                .value(),
+                        );
+                        if let Err(err) = panel.add_style_mask(
+                            tauri_nspanel::objc2_app_kit::NSWindowStyleMask::NonactivatingPanel,
+                        ) {
+                            eprintln!("moe: NonactivatingPanel 样式设置失败: {err:?}");
+                        }
+                        // NSPanel 默认失活即隐藏；显隐由呼出键控制
+                        panel.set_hides_on_deactivate(false);
+                    }
+                    Err(err) => eprintln!("moe: 转换为 NSPanel 失败（回退普通窗口）: {err}"),
+                }
+            }
+
             // M1（tray 见 IIE4AD-347 之前）：启动即展示面板——否则未授权时
             // 整个应用没有任何入口，用户看到的是一片虚无。
             if let Some(window) = handle.get_webview_window("panel") {
-                show_panel(window);
+                show_panel_blocking(&window);
             }
 
             Ok(())
