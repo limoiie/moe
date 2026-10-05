@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Panel webview: 核心 IPC 与呼出键注册",
+  "windows": ["panel"],
+  "permissions": ["core:default", "global-shortcut:default"]
+}

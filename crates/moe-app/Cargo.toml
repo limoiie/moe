@@ -1,0 +1,13 @@
+[package]
+name = "moe-app"
+edition.workspace = true
+version.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+moe-core.workspace = true
+moe-extensions.workspace = true

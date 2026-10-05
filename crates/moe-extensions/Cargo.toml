@@ -1,0 +1,8 @@
+[package]
+name = "moe-extensions"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+moe-core.workspace = true
+serde_json.workspace = true

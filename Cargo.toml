@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/moe-core",
+    "crates/moe-platform",
+    "crates/moe-extensions",
+    "crates/moe-app",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+moe-core = { path = "crates/moe-core" }
+moe-platform = { path = "crates/moe-platform" }
+moe-extensions = { path = "crates/moe-extensions" }
