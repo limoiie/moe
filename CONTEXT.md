@@ -51,7 +51,7 @@ _Avoid_: 执行、打开、启用
 _Avoid_: 右键菜单
 
 **Selection（选区）**:
-指用户在其他应用中选中的文字（或文件）。Moe 自身的列表选择不叫 Selection，叫 Focus。
+指用户在其他应用中选中的文字。Moe 自身的列表选择不叫 Selection，叫 Focus。
 _Avoid_: 用 Selection 指代 Focused Item
 
 **Keymap（统一键位表）**:
