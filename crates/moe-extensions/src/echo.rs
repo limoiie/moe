@@ -84,6 +84,7 @@ impl Extension for Echo {
                             action("copy", "复制纯文本", ActionKind::Secondary),
                         ],
                         payload: serde_json::json!({ "word": word }),
+                        detail: None,
                     })
                     .collect(),
             }),

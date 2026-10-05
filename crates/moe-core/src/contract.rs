@@ -45,6 +45,9 @@ pub struct Item {
     pub actions: Vec<Action>,
     /// 对 UI 不透明，动作执行时原样送回 Extension。
     pub payload: serde_json::Value,
+    /// 详情内容（Markdown，详情视图卡片渲染）；流式回答在此累积。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Apply 或任一动作执行后的结果。输出类型不封闭枚举——List 中的 Item
@@ -176,6 +179,7 @@ mod tests {
                 subtitle: None,
                 actions: vec![],
                 payload: serde_json::Value::Null,
+                detail: None,
             },
         };
         let json = serde_json::to_value(&event).unwrap();

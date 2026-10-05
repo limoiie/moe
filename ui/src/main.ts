@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
 import "./styles.css";
 import { store } from "./store";
 
@@ -18,6 +20,7 @@ interface Item {
   subtitle?: string;
   actions: Action[];
   payload: unknown;
+  detail?: string | null;
 }
 interface CommandMeta {
   id: string;
@@ -58,6 +61,9 @@ const view = store<View>({
   items: [],
   actions: [],
 });
+
+/// 当前详情卡片对应的 item（流式事件据此重渲）
+let detailItemId: string | null = null;
 
 // ---- Hints Bar：键位语义来自 Rust 统一键位表，视图层不自行发明 ----
 
@@ -145,12 +151,22 @@ function secondaryOf(item: Item) {
   return item.actions.find((a) => a.kind === "secondary");
 }
 
-function showDetail(text: string) {
-  detailEl.textContent = text;
+function showDetail(markdown: string, sourceItemId: string | null = null) {
+  const nearBottom =
+    detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
+  detailEl.innerHTML = DOMPurify.sanitize(
+    marked.parse(markdown, { async: false }),
+  );
   detailEl.classList.remove("hidden");
+  listEl.classList.add("hidden");
+  detailItemId = sourceItemId;
+  if (nearBottom) detailEl.scrollTop = detailEl.scrollHeight;
 }
 function hideDetail() {
   detailEl.classList.add("hidden");
+  detailEl.innerHTML = "";
+  listEl.classList.remove("hidden");
+  detailItemId = null;
 }
 
 function applyResult(res: ActionResult, commandId: string) {
@@ -163,13 +179,18 @@ function applyResult(res: ActionResult, commandId: string) {
     return;
   }
   if ("list" in res) {
+    const items = res.list.items;
     view.update((v) => ({
       ...v,
       mode: "items",
-      items: res.list.items,
+      items,
       focus: 0,
       sourceCommandId: commandId,
     }));
+    const first = items[0];
+    if (first?.detail) {
+      showDetail(first.detail, first.id);
+    }
   }
 }
 
@@ -384,6 +405,10 @@ void listen<CommandEventPayload>("command-event", (event) => {
   const items = v.items.slice();
   items[idx] = payload.item;
   view.update((s) => ({ ...s, items }));
+  // 详情卡片开着且正是这个 item：流式重渲（自动滚底）
+  if (detailItemId === payload.item.id && payload.item.detail) {
+    showDetail(payload.item.detail, payload.item.id);
+  }
 });
 void listen("summon-authorized", () => hideBanner());
 

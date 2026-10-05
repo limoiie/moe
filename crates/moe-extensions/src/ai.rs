@@ -13,10 +13,10 @@ use moe_core::contract::{
 
 pub struct AiShell;
 
-fn answer_item(text: &str) -> Item {
+fn answer_item(detail: &str) -> Item {
     Item {
         id: "ai.answer".into(),
-        title: text.into(),
+        title: "AI 回答".into(),
         subtitle: None,
         actions: vec![
             Action {
@@ -39,6 +39,7 @@ fn answer_item(text: &str) -> Item {
             },
         ],
         payload: serde_json::Value::Null,
+        detail: Some(detail.into()),
     }
 }
 
@@ -53,7 +54,17 @@ impl AiShell {
         if let Some(emitter) = emitter {
             std::thread::spawn(move || {
                 let full = format!(
-                    "这是对「{question}」的 mock 流式回答：OpenAI 兼容客户端接入后，这里将逐字显示模型输出。"
+                    "## 对「{question}」的 mock 回答\n\n\
+                     这是**结构化**的演示输出（真实模型接入后内容由模型生成）：\n\n\
+                     - 第一条要点\n\
+                     - 第二条要点，带 `行内代码`\n\
+                     - 第三条要点\n\n\
+                     ```rust\n\
+                     fn main() {{\n\
+                         println!(\"hello from Moe\");\n\
+                     }}\n\
+                     ```\n\n\
+                     > 引用块：回答可回写、可复制、可实体化为侧栏。\n"
                 );
                 let mut acc = String::new();
                 for ch in full.chars() {
@@ -144,8 +155,9 @@ impl Extension for AiShell {
         action: &Action,
     ) -> Result<ActionResult, MoeError> {
         match action.id.as_str() {
+            // 回写全文（标题是固定的，正文在 detail）
             "write-back" => Ok(ActionResult::WriteBack {
-                text: item.title.clone(),
+                text: item.detail.clone().unwrap_or_else(|| item.title.clone()),
             }),
             // 真剪贴板写入接 moe-platform 后替换（M3a 后续）。
             "copy" => Ok(ActionResult::Silent),

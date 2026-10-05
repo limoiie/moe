@@ -207,6 +207,7 @@ mod tests {
                             action("copy", ActionKind::Secondary),
                         ],
                         payload: serde_json::Value::Null,
+                        detail: None,
                     }],
                 }),
                 "toy.hello" => Ok(ActionResult::WriteBack { text: "hi".into() }),
@@ -277,6 +278,7 @@ mod tests {
                 subtitle: None,
                 actions: vec![action("write-back", ActionKind::Primary)],
                 payload: serde_json::Value::Null,
+                detail: None,
             };
             emitter.emit(CommandEvent::ItemUpdated {
                 command_id: command_id.to_string(),
