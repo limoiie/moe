@@ -1,7 +1,10 @@
-use crate::contract::{Action, ActionResult, CommandMeta, Extension, Item, MoeError};
+use crate::contract::{
+    Action, ActionResult, CommandMeta, Emitter, Extension, Item, MoeError, NoopEmitter,
+};
 use crate::frecency::FrecencyLookup;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+use std::sync::Arc;
 
 /// 所有内置 Extension 的注册表（ADR-0003：编译内置，Namespace 隔离）。
 #[derive(Default)]
@@ -74,6 +77,16 @@ impl Registry {
                 .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
                 .then_with(|| a.2.id.cmp(&b.2.id))
         });
+        if scored.is_empty() {
+            // 无匹配：给扩展一个「捕获输入」的机会（如 AI 问答）
+            let mut fallbacks: Vec<CommandMeta> = self
+                .extensions
+                .iter()
+                .filter_map(|ext| ext.fallback_command(q))
+                .collect();
+            fallbacks.sort_by(|a, b| a.id.cmp(&b.id));
+            return fallbacks;
+        }
         scored.into_iter().map(|(_, _, cmd)| cmd).collect()
     }
 
@@ -90,9 +103,19 @@ impl Registry {
         query: Option<&str>,
         selection: Option<&str>,
     ) -> Result<ActionResult, MoeError> {
+        self.invoke_streaming(command_id, query, selection, Arc::new(NoopEmitter))
+    }
+
+    pub fn invoke_streaming(
+        &self,
+        command_id: &str,
+        query: Option<&str>,
+        selection: Option<&str>,
+        emitter: Arc<dyn Emitter>,
+    ) -> Result<ActionResult, MoeError> {
         self.find(command_id)
             .ok_or(MoeError::NotFound)?
-            .invoke(command_id, query, selection)
+            .invoke_streaming(command_id, query, selection, emitter)
     }
 
     pub fn run_item_action(
@@ -110,8 +133,9 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contract::{ActionKind, InputKind};
+    use crate::contract::{ActionKind, CommandEvent, InputKind};
     use crate::frecency::{FrecencyLookup, NoFrecency};
+    use std::sync::Mutex;
 
     struct FixedFrecency(std::collections::HashMap<String, f64>);
 
@@ -209,6 +233,143 @@ mod tests {
         let mut r = Registry::new();
         r.register(Box::new(Toy));
         r
+    }
+
+    struct StreamingToy;
+
+    impl Extension for StreamingToy {
+        fn id(&self) -> &str {
+            "stream"
+        }
+        fn title(&self) -> &str {
+            "Stream"
+        }
+        fn commands(&self) -> Vec<CommandMeta> {
+            vec![CommandMeta {
+                id: "stream.ask".into(),
+                extension_id: "stream".into(),
+                title: "Stream: Ask".into(),
+                subtitle: None,
+                input: InputKind::Query,
+            }]
+        }
+        fn invoke(
+            &self,
+            _command_id: &str,
+            _query: Option<&str>,
+            _selection: Option<&str>,
+        ) -> Result<ActionResult, MoeError> {
+            // 覆盖了 invoke_streaming，默认路径不应被走到
+            Err(MoeError::Internal(
+                "default invoke should not be used".into(),
+            ))
+        }
+        fn invoke_streaming(
+            &self,
+            command_id: &str,
+            _query: Option<&str>,
+            _selection: Option<&str>,
+            emitter: Arc<dyn Emitter>,
+        ) -> Result<ActionResult, MoeError> {
+            let item = Item {
+                id: "stream.item".into(),
+                title: "partial…".into(),
+                subtitle: None,
+                actions: vec![action("write-back", ActionKind::Primary)],
+                payload: serde_json::Value::Null,
+            };
+            emitter.emit(CommandEvent::ItemUpdated {
+                command_id: command_id.to_string(),
+                item: item.clone(),
+            });
+            Ok(ActionResult::List { items: vec![item] })
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingEmitter(Arc<Mutex<Vec<CommandEvent>>>);
+
+    impl Emitter for RecordingEmitter {
+        fn emit(&self, event: CommandEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    #[test]
+    fn streaming_events_route_through_registry() {
+        let mut r = Registry::new();
+        r.register(Box::new(StreamingToy));
+        let recorder = RecordingEmitter::default();
+        let events = Arc::clone(&recorder.0);
+
+        let result = r
+            .invoke_streaming("stream.ask", Some("q"), None, Arc::new(recorder))
+            .unwrap();
+        assert!(matches!(result, ActionResult::List { .. }));
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            CommandEvent::ItemUpdated { command_id, item } => {
+                assert_eq!(command_id, "stream.ask");
+                assert_eq!(item.id, "stream.item");
+            }
+        }
+    }
+
+    #[test]
+    fn non_streaming_extensions_fall_back_to_invoke() {
+        let recorder = RecordingEmitter::default();
+        let result = registry()
+            .invoke_streaming("toy.hello", None, None, Arc::new(recorder))
+            .unwrap();
+        assert_eq!(result, ActionResult::WriteBack { text: "hi".into() });
+    }
+
+    #[test]
+    fn unmatched_query_offers_fallback_command() {
+        struct FallbackToy;
+        impl Extension for FallbackToy {
+            fn id(&self) -> &str {
+                "fb"
+            }
+            fn title(&self) -> &str {
+                "Fallback"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&str>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+            fn fallback_command(&self, query: &str) -> Option<CommandMeta> {
+                Some(CommandMeta {
+                    id: "fb.ask".into(),
+                    extension_id: "fb".into(),
+                    title: format!("Ask「{query}」"),
+                    subtitle: None,
+                    input: InputKind::Query,
+                })
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(FallbackToy));
+        let hits = r.search("hello", &NoFrecency);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].title.contains("hello"));
+
+        // 有正常匹配时不出现 fallback
+        let mut r = Registry::new();
+        r.register(Box::new(FallbackToy));
+        r.register(Box::new(Toy));
+        let hits = r.search("toy", &NoFrecency);
+        assert!(hits.iter().all(|c| c.id != "fb.ask"));
     }
 
     #[test]

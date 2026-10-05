@@ -7,7 +7,8 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use moe_core::contract::{Action, ActionResult, CommandMeta, Item};
+use moe_core::contract::Emitter as CommandEmitter;
+use moe_core::contract::{Action, ActionResult, CommandEvent, CommandMeta, Item};
 use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
 use moe_core::registry::Registry;
@@ -80,6 +81,15 @@ fn key_label(key: &SummonKey) -> String {
         SummonKey::DoubleTap(Modifier::Control) => "double-ctrl".into(),
         SummonKey::DoubleTap(Modifier::Shift) => "double-shift".into(),
         SummonKey::Combo { .. } => accelerator(key).unwrap_or_default(),
+    }
+}
+
+/// 把 Command 的增量事件转发到面板（streaming 在 worker 线程发事件）。
+struct TauriEventEmitter(AppHandle);
+
+impl CommandEmitter for TauriEventEmitter {
+    fn emit(&self, event: CommandEvent) {
+        let _ = self.0.emit("command-event", event);
     }
 }
 
@@ -227,11 +237,13 @@ fn invoke_command(
     query: Option<String>,
 ) -> Result<ActionResult, String> {
     let selection = state.selection.lock().expect("selection poisoned").clone();
+    let emitter: std::sync::Arc<dyn CommandEmitter> =
+        std::sync::Arc::new(TauriEventEmitter(app.clone()));
     let result = state
         .registry
         .lock()
         .expect("registry poisoned")
-        .invoke(&command_id, query.as_deref(), selection.as_deref())
+        .invoke_streaming(&command_id, query.as_deref(), selection.as_deref(), emitter)
         .map_err(|e| e.to_string())?;
 
     {

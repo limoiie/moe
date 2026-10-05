@@ -1,6 +1,7 @@
 //! Command 契约：输入种类 × Item 流输出，回写由平台统一执行（ADR-0006）。
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +98,25 @@ impl std::fmt::Display for MoeError {
 
 impl std::error::Error for MoeError {}
 
+/// 命令执行期间的增量事件（流式回答走 Item 语义：按 id 就地更新）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandEvent {
+    ItemUpdated { command_id: String, item: Item },
+}
+
+/// 增量事件出口。worker 线程也会发事件，因此要求线程安全。
+pub trait Emitter: Send + Sync {
+    fn emit(&self, event: CommandEvent);
+}
+
+/// 无事件出口（非流式调用方）。
+pub struct NoopEmitter;
+
+impl Emitter for NoopEmitter {
+    fn emit(&self, _event: CommandEvent) {}
+}
+
 pub trait Extension: Send + Sync {
     /// Namespace 键（ADR-0003）：存储与历史都隔离在它之下。
     fn id(&self) -> &str;
@@ -110,6 +130,22 @@ pub trait Extension: Send + Sync {
         query: Option<&str>,
         selection: Option<&str>,
     ) -> Result<ActionResult, MoeError>;
+
+    /// 带增量事件的执行入口；默认回落 [`Extension::invoke`]（非流式扩展不需实现）。
+    fn invoke_streaming(
+        &self,
+        command_id: &str,
+        query: Option<&str>,
+        selection: Option<&str>,
+        _emitter: Arc<dyn Emitter>,
+    ) -> Result<ActionResult, MoeError> {
+        self.invoke(command_id, query, selection)
+    }
+
+    /// 搜索无匹配时提供的「捕获式」命令（如 AI: 提问「…」）；默认无。
+    fn fallback_command(&self, _query: &str) -> Option<CommandMeta> {
+        None
+    }
 
     /// Item 流的下一步：对 Item 执行其某个动作（默认无动作可执行）。
     fn run_item_action(

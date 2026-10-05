@@ -368,6 +368,23 @@ bannerActionEl.addEventListener("click", () => {
       : "open_input_monitoring_settings";
   void invoke(command);
 });
+
+// 流式命令事件：按 item id 就地更新（如 AI 回答逐字到达）
+interface CommandEventPayload {
+  itemUpdated?: { commandId: string; item: Item };
+}
+
+void listen<CommandEventPayload>("command-event", (event) => {
+  const payload = event.payload?.itemUpdated;
+  if (!payload) return;
+  const v = view.get();
+  if (v.mode !== "items" || v.sourceCommandId !== payload.commandId) return;
+  const idx = v.items.findIndex((i) => i.id === payload.item.id);
+  if (idx === -1) return;
+  const items = v.items.slice();
+  items[idx] = payload.item;
+  view.update((s) => ({ ...s, items }));
+});
 void listen("summon-authorized", () => hideBanner());
 
 // 呼出时保留上次的输入与结果（用户可能在隐藏后补充输入），
