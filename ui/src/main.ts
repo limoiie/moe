@@ -340,10 +340,9 @@ async function refreshBanner() {
 bannerActionEl.addEventListener("click", () => void invoke("open_permission_settings"));
 void listen("summon-authorized", () => hideBanner());
 
-// 呼出时清空回到命令层
+// 呼出时保留上次的输入与结果（用户可能在隐藏后补充输入），
+// 只刷新权限引导状态（可能刚去系统设置授过权）。
 window.addEventListener("focus", () => {
-  q.value = "";
-  void refresh("");
   void refreshBanner();
 });
 

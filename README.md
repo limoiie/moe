@@ -37,6 +37,7 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
   状态机）；启动日志会打印权限状态与 tap 挂载结果，方便排查。
 - 面板在 macOS 上是 **NSPanel**（tauri-nspanel）：不激活应用、不抢菜单栏、
   可浮在全屏应用的 Space 之上；呼出时自动居中到鼠标所在显示器。
+- 面板隐藏/重现之间**保留输入与结果**；`Esc` 分层回退（详情→结果层→清空输入→关闭）依旧可用。
 - `config.toml` 可改呼出键（macOS 为 `~/Library/Application Support/moe/config.toml`，
   Linux 为 `~/.config/moe/config.toml`）：
 
