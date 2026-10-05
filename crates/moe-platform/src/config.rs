@@ -10,6 +10,15 @@ pub const DEFAULT_DOUBLE_TAP_MS: u64 = 400;
 pub const MIN_DOUBLE_TAP_MS: u64 = 100;
 pub const MAX_DOUBLE_TAP_MS: u64 = 1000;
 
+/// 首次「打开配置文件」时落盘的默认模板（必须能解析为 [`MoeConfig::default()`]）。
+pub const DEFAULT_TEMPLATE: &str = "\
+# Moe 配置
+[summon]
+# double-cmd | double-option | double-ctrl | 组合键（如 cmd+shift+space）
+key = \"double-cmd\"
+double_tap_ms = 400
+";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SummonKey {
     /// 双击修饰键（默认 double-cmd）。
@@ -163,6 +172,25 @@ pub fn config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("moe").join("config.toml"))
 }
 
+/// 打开配置文件；不存在时先用默认模板创建。返回文件路径。
+pub fn open_in_editor() -> std::io::Result<PathBuf> {
+    let path = config_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
+    if !path.exists() {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, DEFAULT_TEMPLATE)?;
+    }
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open")
+        .arg("-t")
+        .arg(&path)
+        .spawn()?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = std::process::Command::new("xdg-open").arg(&path).spawn()?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +233,12 @@ mod tests {
                 key: "space".into()
             }
         );
+    }
+
+    #[test]
+    fn default_template_parses_and_matches_defaults() {
+        let cfg = MoeConfig::from_toml(DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(cfg, MoeConfig::default());
     }
 
     #[test]

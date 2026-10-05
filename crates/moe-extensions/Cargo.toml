@@ -5,4 +5,5 @@ version.workspace = true
 
 [dependencies]
 moe-core.workspace = true
+moe-platform.workspace = true
 serde_json.workspace = true

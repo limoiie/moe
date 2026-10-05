@@ -240,6 +240,44 @@ fn open_permission_settings() {
     }
 }
 
+/// 菜单栏常驻：tray 图标 + 菜单（显示面板 / 打开配置文件 / 退出）。
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let show = MenuItem::with_id(app, "tray.show", "显示面板", true, None::<&str>)?;
+    let config = MenuItem::with_id(app, "tray.config", "打开配置文件", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "tray.quit", "退出 Moe", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &config, &quit])?;
+
+    let mut builder = TrayIconBuilder::new()
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "tray.show" => toggle_panel(app),
+            "tray.config" => {
+                if let Err(err) = moe_platform::config::open_in_editor() {
+                    eprintln!("moe: 打开配置文件失败: {err}");
+                }
+            }
+            "tray.quit" => app.exit(0),
+            _ => {}
+        });
+
+    match tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
+        Ok(icon) => builder = builder.icon(icon),
+        Err(err) => eprintln!("moe: tray 图标解码失败: {err}"),
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // 模板图：菜单栏按明暗自动渲染
+        builder = builder.icon_as_template(true);
+    }
+    builder.build(app)?;
+    eprintln!("moe: tray 已创建");
+    Ok(())
+}
+
 fn main() {
     let config = MoeConfig::load();
 
@@ -337,13 +375,39 @@ fn main() {
                 }
             }
 
-            // M1（tray 见 IIE4AD-347 之前）：启动即展示面板——否则未授权时
-            // 整个应用没有任何入口，用户看到的是一片虚无。
-            if let Some(window) = handle.get_webview_window("panel") {
+            // 菜单栏常驻（IIE4AD-347）：无 Dock 图标、不参与 ⌘-Tab（Raycast 同款）
+            #[cfg(target_os = "macos")]
+            {
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+            if let Err(err) = build_tray(app) {
+                eprintln!("moe: tray 创建失败: {err}");
+            }
+
+            // 有 tray 后启动不再无条件展示面板：仅当呼出监听未就绪（缺「输入监控」
+            // 授权）时展示引导；否则启动后一切静默，菜单栏图标就是入口。
+            let listener_needs_attention = handle
+                .state::<AppState>()
+                .listener
+                .lock()
+                .expect("listener poisoned")
+                .status()
+                == SummonStatus::NeedsPermission;
+            if listener_needs_attention && let Some(window) = handle.get_webview_window("panel") {
                 show_panel_blocking(&window);
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 失焦即收起（Raycast 同款）；tray 已提供返回入口，可安全启用
+            if window.label() == "panel"
+                && let tauri::WindowEvent::Focused(false) = event
+                && window.is_visible().unwrap_or(false)
+            {
+                let _ = window.hide();
+                eprintln!("moe: 失焦，面板已收起");
+            }
         })
         .invoke_handler(tauri::generate_handler![
             keymap,
