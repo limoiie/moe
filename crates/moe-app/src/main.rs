@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use moe_core::contract::{Action, ActionResult, CommandMeta, Item};
+use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
 use moe_core::registry::Registry;
 use moe_platform::config::{MoeConfig, SummonKey};
@@ -86,6 +87,8 @@ struct AppState {
     registry: Mutex<Registry>,
     config: MoeConfig,
     listener: Mutex<Box<dyn SummonListener>>,
+    /// 命令使用记录（平台级，IIE4AD-346）；锁顺序：先 frecency 后 registry。
+    frecency: Mutex<Frecency>,
     /// 最近一次展示面板的时刻（失焦收起需忽略展示瞬态）。
     last_shown: Mutex<Option<std::time::Instant>>,
 }
@@ -177,11 +180,13 @@ fn keymap() -> Vec<(&'static str, SystemKey)> {
 
 #[tauri::command]
 fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandMeta> {
+    // 锁顺序：先 frecency 后 registry（invoke 路径不嵌套持锁）
+    let frecency = state.frecency.lock().expect("frecency poisoned");
     state
         .registry
         .lock()
         .expect("registry poisoned")
-        .search(&query)
+        .search(&query, &*frecency)
 }
 
 #[tauri::command]
@@ -191,12 +196,17 @@ fn invoke_command(
     query: Option<String>,
 ) -> Result<ActionResult, String> {
     // M2: selection 参数将从 moe-platform::TextTarget 抓取后传入。
-    state
+    let result = state
         .registry
         .lock()
         .expect("registry poisoned")
         .invoke(&command_id, query.as_deref(), None)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let mut frecency = state.frecency.lock().expect("frecency poisoned");
+    frecency.record(&command_id, std::time::SystemTime::now());
+    moe_platform::store::save_frecency(&frecency);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -323,6 +333,7 @@ fn main() {
             registry: Mutex::new(registry),
             config,
             listener: Mutex::new(listener),
+            frecency: Mutex::new(moe_platform::store::load_frecency()),
             last_shown: Mutex::new(None),
         });
 

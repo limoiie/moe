@@ -5,6 +5,7 @@
 pub mod config;
 #[cfg(target_os = "macos")]
 pub mod mac;
+pub mod store;
 pub mod summon;
 
 pub use summon::{SummonEvent, SummonListener, SummonStatus, UnsupportedSummon};

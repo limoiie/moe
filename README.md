@@ -52,6 +52,8 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
 - Linux：双击监听未实现（X11 随 M4 Linux 验证落地；Wayland 无全局键盘拦截，
   只能 WM 绑定或改用组合键模式—组合键走 global-shortcut 插件，各平台可用）。
 - WriteBack 目前只在面板内展示文本；真正的选区抓取/回写是 M2。
-- 搜索为朴素子串打分；fuzzy（nucleo）+ frecency 另行排期（IIE4AD-346）。
+- 搜索：nucleo 模糊匹配（**精确前缀 > 匹配位置**）+ **frecency 平分决胜**；
+  命令用一次就更靠前，空查询也按 frecency 排序。使用记录在平台级 KV
+  （`data_dir/moe/frecency.json`），不占扩展的 Namespace。
 
 里程碑验收标准见 `docs/adr/0009-milestone-scope.md`。
