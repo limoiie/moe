@@ -280,18 +280,38 @@ const DETAIL_PREVIEW_CLASS =
 function paintDetail(markdown: string, itemId: string | null, pending: boolean) {
   const nearBottom =
     detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
-  detailEl.innerHTML = DOMPurify.sanitize(
+  const parts = ensureDetailParts();
+  parts.body.innerHTML = DOMPurify.sanitize(
     marked.parse(markdown, { async: false }),
   );
-  // 生成中的行内指示（像 ChatGPT 的加载点，而不是把状态写成正文）
-  if (pending) detailEl.append(generatingEl());
+  // 生成中的行内指示（像 ChatGPT 的加载点，而不是把状态写成正文）：
+  // 正文与指示分开，流式事件只换正文，三点动画不被重建打断
+  parts.indicator.classList.toggle("hidden", !pending);
   detailItemId = itemId;
   if (nearBottom) detailEl.scrollTop = detailEl.scrollHeight;
+}
+
+interface DetailParts {
+  body: HTMLElement;
+  indicator: HTMLElement;
+}
+let detailParts: DetailParts | null = null;
+
+/** 详情正文容器 + 固定的行内生成指示（clearDetail 后重建）。 */
+function ensureDetailParts(): DetailParts {
+  if (!detailParts || !detailEl.contains(detailParts.body)) {
+    const body = document.createElement("div");
+    const indicator = generatingEl();
+    detailEl.replaceChildren(body, indicator);
+    detailParts = { body, indicator };
+  }
+  return detailParts;
 }
 
 function clearDetail() {
   detailMode = "none";
   detailItemId = null;
+  detailParts = null;
   detailEl.className = "md hidden";
   detailEl.replaceChildren();
   listEl.classList.remove("hidden");
