@@ -247,16 +247,19 @@ function render() {
   const rows = currentEntries().map((e, i) => {
     const focused = i === v.focus;
     const li = document.createElement("li");
+    // 每一行都有 hover 态：鼠标能“摸”到交互；焦点行仍是唯一的高亮主色
     li.className =
-      "flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm " +
-      (focused ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300");
+      "group flex cursor-default items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm " +
+      (focused
+        ? "bg-zinc-700/70 text-zinc-50"
+        : "text-zinc-300 hover:bg-zinc-800/60 hover:text-zinc-100");
     li.append(
       iconEl(e.icon, {
         className: e.iconMuted
           ? "text-zinc-600"
           : focused
             ? "text-zinc-200"
-            : "text-zinc-400",
+            : "text-zinc-400 group-hover:text-zinc-300",
       }),
     );
     const left = document.createElement("div");
@@ -277,6 +280,10 @@ function render() {
     }
     li.addEventListener("mousedown", () => {
       view.update((s) => ({ ...s, focus: i }));
+    });
+    // 悬停即把焦点交给这一行（Raycast 同款）：详情预览跟随光标，不用先点一下
+    li.addEventListener("mousemove", () => {
+      if (view.get().focus !== i) view.update((s) => ({ ...s, focus: i }));
     });
     return li;
   });
@@ -634,8 +641,10 @@ function renderActionsCard() {
       const focused = index === actionsCardFocus;
       const li = document.createElement("li");
       li.className =
-        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
-        (focused ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300");
+        "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
+        (focused
+          ? "bg-zinc-700/70 text-zinc-50"
+          : "text-zinc-300 hover:bg-zinc-800/60 hover:text-zinc-100");
       li.append(
         iconEl(iconOfActionRow(row), {
           size: 15,
