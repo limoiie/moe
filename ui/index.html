@@ -49,6 +49,20 @@
         <span id="toast-icon"></span>
         <span id="toast-text"></span>
       </div>
+      <!-- 动作面板（⌘K / ⌘⇧P）：浮层卡片，输入 + 过滤后的动作列表，不替换主体 -->
+      <div
+        id="actions-card"
+        class="moe-actions-card absolute bottom-14 right-2 z-20 hidden w-80 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 backdrop-blur-xl"
+      >
+        <input
+          id="action-search"
+          class="w-full border-b border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+          placeholder="筛选动作…"
+          spellcheck="false"
+        />
+        <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
+      </div>
+
       <!-- 悬浮动作条（Raycast 同款）：主操作 + 动作，同一个胶囊；距右/下边缘 8px -->
       <div id="action-bar" class="moe-action-bar absolute bottom-2 right-2 z-10"></div>
     </div>

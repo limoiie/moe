@@ -250,7 +250,10 @@ historySearchEl.addEventListener("keydown", (e) => {
       void selectConversation(target.id);
       closeHistoryCard();
     }
-  } else if (e.key === "Escape") {
+  } else if (
+    e.key === "Escape" ||
+    (e.key === "Backspace" && historySearchEl.value === "")
+  ) {
     e.preventDefault();
     e.stopPropagation();
     closeHistoryCard();
@@ -616,7 +619,10 @@ attachPathEl.addEventListener("keydown", (e) => {
     e.preventDefault();
     e.stopPropagation();
     void submitAttachPath();
-  } else if (e.key === "Escape") {
+  } else if (
+    e.key === "Escape" ||
+    (e.key === "Backspace" && attachPathEl.value === "")
+  ) {
     e.preventDefault();
     e.stopPropagation();
     closeAttachRow();
@@ -694,21 +700,33 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape" || (mod && e.key.toLowerCase() === "w")) {
     e.preventDefault();
-    if (historyOpen) {
-      closeHistoryCard();
-      return;
-    }
-    if (actionsOpen) {
-      closeActionsMenu();
-      return;
-    }
-    if (generating) {
-      void stopGeneration();
-      return;
-    }
-    void getCurrentWindow().hide();
+    void back();
+    return;
+  }
+  // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
+  // 非空不动（正常删字）；空时逐层往回，根层收起侧栏。
+  if (e.key === "Backspace" && composerEl.value === "" && !e.isComposing) {
+    e.preventDefault();
+    void back();
   }
 });
+
+/** Esc / 空输入 Backspace 的分层回退：历史卡 → 操作菜单 → 停止生成 → 收起窗口。 */
+async function back() {
+  if (historyOpen) {
+    closeHistoryCard();
+    return;
+  }
+  if (actionsOpen) {
+    closeActionsMenu();
+    return;
+  }
+  if (generating) {
+    await stopGeneration();
+    return;
+  }
+  await getCurrentWindow().hide();
+}
 
 window.addEventListener("focus", () => composerEl.focus());
 

@@ -58,14 +58,13 @@ interface ActionRow {
   platform?: EntryAction;
 }
 
-type Mode = "commands" | "items" | "actions";
+type Mode = "commands" | "items";
 interface View {
   mode: Mode;
   focus: number;
   commands: CommandMeta[];
   items: Item[];
-  actions: ActionRow[];
-  /** actions 模式下来自哪个 item；items 模式的来源 Command。 */
+  /** items 模式的来源 Command。 */
   sourceCommandId?: string;
   /** 来源 Command 的图标（结果项未自带图标时的回退）。 */
   sourceIcon?: string;
@@ -75,13 +74,15 @@ interface View {
   sourceLive?: boolean;
   /** 结果声明的视图形态：true = 唯一一条即内容，详情占满面板（ADR-0013）。 */
   detailFull?: boolean;
-  itemIndex?: number;
 }
 
 const q = document.querySelector<HTMLInputElement>("#query")!;
 const listEl = document.querySelector<HTMLUListElement>("#list")!;
 const detailEl = document.querySelector<HTMLDivElement>("#detail")!;
 const actionBarEl = document.querySelector<HTMLDivElement>("#action-bar")!;
+const actionsCardEl = document.querySelector<HTMLDivElement>("#actions-card")!;
+const actionSearchEl = document.querySelector<HTMLInputElement>("#action-search")!;
+const actionListEl = document.querySelector<HTMLUListElement>("#action-list")!;
 const toastEl = document.querySelector<HTMLDivElement>("#toast")!;
 const toastIconEl = document.querySelector<HTMLSpanElement>("#toast-icon")!;
 const toastTextEl = document.querySelector<HTMLSpanElement>("#toast-text")!;
@@ -93,7 +94,6 @@ const view = store<View>({
   focus: 0,
   commands: [],
   items: [],
-  actions: [],
 });
 
 /// 当前详情卡片对应的 item（流式事件据此重渲）
@@ -103,6 +103,11 @@ type DetailMode = "none" | "preview" | "message";
 let detailMode: DetailMode = "none";
 /** Esc 收起预览后，直到焦点变化才重新展开（Raycast 同款层级）。 */
 let previewDismissed = false;
+
+/** 动作面板（⌘K / ⌘⇧P 弹出的浮层卡片）：全部动作 + 筛选，不替换主体。 */
+let actionsCardRows: ActionRow[] = [];
+let actionsCardFocus = 0;
+let actionsCardOpen = false;
 
 // ---- 轻量反馈（⌥⏎ 复制等无 UI 结果的动作）----
 
@@ -136,6 +141,16 @@ async function initActionBar() {
 function primaryActionOf(): { title: string; keys: string; run: () => void; disabled: boolean } {
   const v = view.get();
   const applyKeys = keyDisplay.get("apply") ?? "⏎";
+  // 动作面板开着时：胶囊的主操作跟随面板里高亮的那条动作（Raycast 同款）
+  if (actionsCardOpen) {
+    const row = filteredActionRows()[actionsCardFocus];
+    return {
+      title: row?.action.title ?? "应用",
+      keys: row?.action.keybinding ?? applyKeys,
+      run: () => void runActionRow(row),
+      disabled: !row,
+    };
+  }
   if (v.mode === "items") {
     const item = v.items[v.focus];
     // 生成中：主操作让位给停止（IIE4AD-365，Esc 的第一优先级）
@@ -153,15 +168,6 @@ function primaryActionOf(): { title: string; keys: string; run: () => void; disa
       keys: action?.keybinding ?? applyKeys,
       run: () => void applyFocused(false),
       disabled: !action,
-    };
-  }
-  if (v.mode === "actions") {
-    const row = v.actions[v.focus];
-    return {
-      title: row?.action.title ?? "应用",
-      keys: row?.action.keybinding ?? applyKeys,
-      run: () => void applyFocused(false),
-      disabled: !row,
     };
   }
   return { title: "应用", keys: applyKeys, run: () => void applyFocused(false), disabled: false };
@@ -188,9 +194,8 @@ function renderActionBar() {
   actionsButton.title = `全部动作（${actionsKeys}）`;
   actionsButton.append(document.createTextNode("动作"), kbdEl(actionsKeys, { firstOnly: true }));
   actionsButton.addEventListener("click", () => {
-    if (view.get().mode === "actions") closeActions();
-    else void openActions();
-    q.focus();
+    if (actionsCardOpen) closeActionsCard();
+    else void openActionsCard();
   });
 
   // 按钮不能抢走输入栏焦点（否则后续 Enter 会重复点击按钮）
@@ -223,29 +228,16 @@ function currentEntries(): Row[] {
       iconMuted: !c.icon,
     }));
   }
-  if (v.mode === "items") {
-    return v.items.map((i) => {
-      const icon = i.icon ?? v.sourceIcon;
-      return {
-        title: i.title,
-        subtitle: i.subtitle,
-        key: secondaryOf(i)?.keybinding ?? undefined,
-        icon,
-        iconMuted: !icon,
-      };
-    });
-  }
-  return v.actions.map(({ action, platform }) => ({
-    title: action.title,
-    key: action.keybinding ?? (action.kind === "primary" ? "⏎" : undefined),
-    icon: platform
-      ? platform === "browse"
-        ? "history"
-        : "plus"
-      : action.kind === "primary"
-        ? "corner-down-left"
-        : "copy",
-  }));
+  return v.items.map((i) => {
+    const icon = i.icon ?? v.sourceIcon;
+    return {
+      title: i.title,
+      subtitle: i.subtitle,
+      key: secondaryOf(i)?.keybinding ?? undefined,
+      icon,
+      iconMuted: !icon,
+    };
+  });
 }
 
 function render() {
@@ -300,8 +292,6 @@ function updatePlaceholder() {
   const v = view.get();
   if (v.mode === "commands") {
     q.placeholder = QUERY_PLACEHOLDER;
-  } else if (v.mode === "actions") {
-    q.placeholder = "选择动作…";
   } else {
     const command = v.commands.find((c) => c.id === v.sourceCommandId);
     q.placeholder = v.sourceTitle ?? command?.title ?? "结果…";
@@ -427,6 +417,7 @@ function applyResult(
   }
   if ("list" in res) {
     const items = res.list.items;
+    closeActionsCard();
     clearDetail();
     previewDismissed = false;
     view.update((v) => ({
@@ -519,45 +510,22 @@ async function applyFocused(alt: boolean) {
     }
     return;
   }
-  // actions 模式：⌘K 展开后的选择（item 动作，或平台通用动作 Browse/New）
-  const row = v.actions[v.focus];
-  if (!row) return;
-  if (row.platform) {
-    // 平台通用动作（ADR-0014）：与 ⌘P/⌘N 同一条路径，没声明就给提示
-    closeActions();
-    await openEntry(row.platform);
-    return;
-  }
-  const action = row.action;
-  const item = v.items[v.itemIndex ?? 0];
-  if (!item || !v.sourceCommandId) return;
-  try {
-    const res = await invoke<ActionResult>("run_item_action", {
-      commandId: v.sourceCommandId,
-      item,
-      action,
-    });
-    if (action.id === "copy") toast("已复制");
-    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
-  } catch (err) {
-    showMessage(`执行失败：${String(err)}`);
-  }
 }
 
 function move(delta: number) {
   previewDismissed = false;
   view.update((v) => {
-    const len =
-      v.mode === "commands" ? v.commands.length : v.mode === "items" ? v.items.length : v.actions.length;
+    const len = v.mode === "commands" ? v.commands.length : v.items.length;
     return { ...v, focus: len === 0 ? 0 : (v.focus + delta + len) % len };
   });
 }
 
 /**
- * 打开动作层：Focused Item 的主/副操作，末尾附上该 Extension 真的
- * 声明了的平台通用动作（Browse ⌘P / New ⌘N，ADR-0014）——所有可做的事都在这一层。
+ * 打开动作面板（Raycast 同款浮层卡片）：Focused Item 的主/副操作，
+ * 末尾附上该 Extension 真的声明了的平台通用动作（Browse ⌘P / New ⌘N，ADR-0014）。
+ * 主体（命令列表/结果）保持不变，不再像过去那样换掉整个面板。
  */
-async function openActions() {
+async function openActionsCard() {
   const v = view.get();
   if (v.mode !== "items") return;
   const item = v.items[v.focus];
@@ -586,20 +554,114 @@ async function openActions() {
       });
     });
   }
-  view.update((s) => ({
-    ...s,
-    mode: "actions",
-    actions: rows,
-    itemIndex: s.focus,
-    focus: 0,
-  }));
+  actionsCardRows = rows;
+  actionsCardFocus = 0;
+  actionsCardOpen = true;
+  actionSearchEl.value = "";
+  actionsCardEl.classList.remove("hidden");
+  renderActionsCard();
+  actionSearchEl.focus();
+  renderActionBar();
 }
 
-/** 动作层返回上一层（结果层）；Esc 与动作按钮都走这里。 */
-function closeActions() {
+/** 关闭动作面板，把焦点交回 Input Bar。 */
+function closeActionsCard() {
+  if (!actionsCardOpen) return;
+  actionsCardOpen = false;
+  actionsCardEl.classList.add("hidden");
+  renderActionBar();
+  q.focus();
+}
+
+/** 按标题过滤（大小写不敏感）。 */
+function filteredActionRows(): ActionRow[] {
+  const needle = actionSearchEl.value.trim().toLowerCase();
+  if (!needle) return actionsCardRows;
+  return actionsCardRows.filter((row) => row.action.title.toLowerCase().includes(needle));
+}
+
+function iconOfActionRow(row: ActionRow): string {
+  if (row.platform) return row.platform === "browse" ? "history" : "plus";
+  return row.action.kind === "primary" ? "corner-down-left" : "copy";
+}
+
+function renderActionsCard() {
+  const rows = filteredActionRows();
+  actionsCardFocus = rows.length === 0 ? 0 : Math.min(actionsCardFocus, rows.length - 1);
+  if (rows.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "px-2 py-3 text-xs text-zinc-600";
+    empty.textContent = actionSearchEl.value.trim() ? "没有匹配的动作" : "这个结果没有动作";
+    actionListEl.replaceChildren(empty);
+    return;
+  }
+  actionListEl.replaceChildren(
+    ...rows.map((row, index) => {
+      const focused = index === actionsCardFocus;
+      const li = document.createElement("li");
+      li.className =
+        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
+        (focused ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300");
+      li.append(
+        iconEl(iconOfActionRow(row), {
+          size: 15,
+          className: focused ? "text-zinc-200" : "text-zinc-500",
+        }),
+      );
+      const title = document.createElement("span");
+      title.className = "min-w-0 flex-1 truncate";
+      title.textContent = row.action.title;
+      li.append(title);
+      const keys = row.action.keybinding ?? (row.action.kind === "primary" ? "⏎" : null);
+      if (keys) {
+        const kbd = kbdEl(keys, { firstOnly: true });
+        kbd.classList.add("shrink-0");
+        li.append(kbd);
+      }
+      li.addEventListener("mouseenter", () => {
+        if (actionsCardFocus !== index) {
+          actionsCardFocus = index;
+          renderActionsCard();
+          renderActionBar();
+        }
+      });
+      li.addEventListener("click", () => void runActionRow(row));
+      return li;
+    }),
+  );
+  actionListEl.children[actionsCardFocus]?.scrollIntoView({ block: "nearest" });
+}
+
+function moveActionFocus(delta: number) {
+  const rows = filteredActionRows();
+  if (rows.length === 0) return;
+  actionsCardFocus = (actionsCardFocus + delta + rows.length) % rows.length;
+  renderActionsCard();
+  renderActionBar();
+}
+
+/** 执行动作面板的一条：平台通用动作走 ⌘P/⌘N 同一条路，其余交给 Extension。 */
+async function runActionRow(row: ActionRow | undefined) {
+  if (!row) return;
+  closeActionsCard();
+  if (row.platform) {
+    await openEntry(row.platform);
+    return;
+  }
   const v = view.get();
-  if (v.mode !== "actions") return;
-  view.update((s) => ({ ...s, mode: "items", focus: s.itemIndex ?? 0 }));
+  const item = v.mode === "items" ? v.items[v.focus] : undefined;
+  if (!item || !v.sourceCommandId) return;
+  try {
+    const res = await invoke<ActionResult>("run_item_action", {
+      commandId: v.sourceCommandId,
+      item,
+      action: row.action,
+    });
+    if (row.action.id === "copy") toast("已复制");
+    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
+  } catch (err) {
+    showMessage(`执行失败：${String(err)}`);
+  }
 }
 
 async function materialize() {
@@ -632,7 +694,7 @@ async function rerunLive(query: string) {
   }
 }
 
-// Esc 分层回退：停止生成 → 动作层 → 预览/详情 → 结果层 → 输入 → 关面板（ADR-0006 Keymap::Back）
+// Esc / 空输入 Backspace 的分层回退：停止生成 → 动作面板 → 预览/详情 → 结果层 → 清空输入 → 关面板
 async function back() {
   const v = view.get();
   // 流式生成中：Esc 的第一优先级是停止（IIE4AD-365）
@@ -640,16 +702,16 @@ async function back() {
     await stopGeneration();
     return;
   }
-  // 动作层是自己打开的一层：Esc 先收回结果层，再往下退（Raycast 同款）
-  if (v.mode === "actions") {
-    closeActions();
+  // 动作面板是浮层：先收它，再往下退（Raycast 同款）
+  if (actionsCardOpen) {
+    closeActionsCard();
     return;
   }
   if (dismissDetail()) {
     return;
   }
   if (v.mode !== "commands") {
-    view.update((s) => ({ ...s, mode: "commands", items: [], actions: [], focus: 0 }));
+    view.update((s) => ({ ...s, mode: "commands", items: [], focus: 0 }));
     return;
   }
   if (q.value) {
@@ -778,19 +840,26 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       void submitAttach();
-    } else if (e.key === "Escape") {
+    } else if (e.key === "Escape" || (e.key === "Backspace" && q.value === "")) {
       e.preventDefault();
       cancelAttach();
     }
     return;
   }
   // 通用动作（ADR-0014）：Browse ⌘P / Actions ⌘⇧P / New ⌘N。
-  // 语义由共享键位模块识别，落点由本表面决定（面板 = 动作层 / Extension 声明的入口）。
+  // 语义由共享键位模块识别，落点由本表面决定（面板 = 动作面板 / Extension 声明的入口）。
   const general = generalActionOf(e);
   if (general) {
     e.preventDefault();
-    if (general === "actions") void openActions();
+    if (general === "actions") toggleActionsCard();
     else void openEntry(general);
+    return;
+  }
+  // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
+  // 输入非空不动它（正常删字）；空时逐层往回，根层关面板。
+  if (e.key === "Backspace" && q.value === "" && !e.isComposing) {
+    e.preventDefault();
+    void back();
     return;
   }
   if (e.key === "ArrowDown" || (e.ctrlKey && !e.metaKey && e.key === "n")) {
@@ -804,13 +873,50 @@ window.addEventListener("keydown", (e) => {
     void applyFocused(e.altKey);
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
-    void openActions();
+    toggleActionsCard();
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "m") {
     e.preventDefault();
     void materialize();
   } else if (e.key === "Escape") {
     e.preventDefault();
     void back();
+  }
+});
+
+/** 动作面板开关（⌘K / ⌘⇧P / 胶囊上的「动作」按钮）。 */
+function toggleActionsCard() {
+  if (actionsCardOpen) closeActionsCard();
+  else void openActionsCard();
+}
+
+// 动作面板自己的键位：↑↓ 选择、⏎ 执行、Esc/空 Backspace 收起（Raycast 同款）
+actionSearchEl.addEventListener("input", () => {
+  actionsCardFocus = 0;
+  renderActionsCard();
+  renderActionBar();
+});
+
+// 点击面板/胶囊以外的地方收起（胶囊要排除，否则会与「动作」按钮的 click 相消）
+document.addEventListener("mousedown", (e) => {
+  if (!actionsCardOpen) return;
+  const target = e.target as Node;
+  if (actionsCardEl.contains(target) || actionBarEl.contains(target)) return;
+  closeActionsCard();
+});
+
+actionSearchEl.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    e.stopPropagation();
+    moveActionFocus(e.key === "ArrowDown" ? 1 : -1);
+  } else if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    e.stopPropagation();
+    void runActionRow(filteredActionRows()[actionsCardFocus]);
+  } else if (e.key === "Escape" || (e.key === "Backspace" && actionSearchEl.value === "")) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeActionsCard();
   }
 });
 
