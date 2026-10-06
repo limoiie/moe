@@ -37,6 +37,12 @@ export interface CommandMeta {
   live: boolean;
 }
 
+/** 命令盘结果的一个分组（ADR-0020）：来源即分组，组头用扩展名。 */
+export interface CommandSection {
+  title: string;
+  items: CommandMeta[];
+}
+
 // 外部 tagged 枚举：单位变体（silent）序列化为裸字符串；
 // openSideView/writeBack 等带载荷变体为对象（侧栏开窗由后端执行）。
 export type ActionResult =

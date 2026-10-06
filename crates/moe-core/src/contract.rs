@@ -120,6 +120,16 @@ pub struct CommandMeta {
     pub live: bool,
 }
 
+/// 命令盘搜索结果的一个分组（Raycast 同款 section，ADR-0020）：
+/// **来源即分组**——每个 Extension 一个 section，组头用扩展名；
+/// 将来加新来源（文件搜索等）就是加一个新 section，不需要单独的分组规则。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandSection {
+    pub title: String,
+    pub items: Vec<CommandMeta>,
+}
+
 /// 平台通用入口（ADR-0014）：三个通用动作 Browse（⌘P）/ New（⌘N）
 /// 的落地方式——平台定键位与路由，入口由 Extension 声明。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

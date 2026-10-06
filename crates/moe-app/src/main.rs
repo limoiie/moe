@@ -8,7 +8,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use moe_core::contract::Emitter as CommandEmitter;
-use moe_core::contract::{Action, ActionResult, CommandEvent, CommandMeta, EntryKind, Item};
+use moe_core::contract::{
+    Action, ActionResult, CommandEvent, CommandMeta, CommandSection, EntryKind, Item,
+};
 use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
 use moe_core::registry::Registry;
@@ -413,7 +415,7 @@ fn keymap() -> Vec<(&'static str, SystemKey)> {
 }
 
 #[tauri::command]
-fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandMeta> {
+fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandSection> {
     // 选区只在「无匹配 → fallback」时有意义（如 AI 提示选中文字将作为上下文）；拿到即释放。
     let selection = state.selection.lock().expect("selection poisoned").clone();
     // 锁顺序：先 frecency 后 registry（invoke 路径不嵌套持锁）

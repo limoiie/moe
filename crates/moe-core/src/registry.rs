@@ -1,10 +1,41 @@
 use crate::contract::{
-    Action, ActionResult, CommandMeta, Emitter, EntryKind, Extension, Item, MoeError, NoopEmitter,
+    Action, ActionResult, CommandMeta, CommandSection, Emitter, EntryKind, Extension, Item,
+    MoeError, NoopEmitter,
 };
 use crate::frecency::FrecencyLookup;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::sync::Arc;
+
+/// 把有序的命令列表按「来源」（Extension）分组，组序 = 组内最优项的先后
+/// （查询时即匹配分序；空查询时即 frecency 序）。
+/// 分组键是 extension_id（唯一），显示名是扩展的标题——两个扩展即使同名也分两个组。
+fn group_by_extension(
+    extensions: &[Box<dyn Extension>],
+    commands: impl Iterator<Item = CommandMeta>,
+) -> Vec<CommandSection> {
+    let mut sections: Vec<CommandSection> = Vec::new();
+    for cmd in commands {
+        let title = extensions
+            .iter()
+            .map(Box::as_ref)
+            .find(|ext| ext.id() == cmd.extension_id)
+            .map(|ext| ext.title())
+            .unwrap_or(&cmd.extension_id)
+            .to_string();
+        match sections
+            .iter_mut()
+            .find(|section| section.items[0].extension_id == cmd.extension_id)
+        {
+            Some(section) => section.items.push(cmd),
+            None => sections.push(CommandSection {
+                title,
+                items: vec![cmd],
+            }),
+        }
+    }
+    sections
+}
 
 /// 所有内置 Extension 的注册表（ADR-0003：编译内置，Namespace 隔离）。
 #[derive(Default)]
@@ -30,15 +61,16 @@ impl Registry {
     }
 
     /// 命令盘搜索：nucleo 模糊匹配打分，frecency 平分决胜；空查询按 frecency 排序。
-    /// `selection` 只在「无匹配 → fallback」这一步有意义（如 AI 提示选中文字将作为上下文）。
+    /// 返回按「来源」（Extension）分组的 section（ADR-0020）：组序按组内最优项，
+    /// 组内保持得分顺序；`selection` 只在「无匹配 → fallback」这一步有意义。
     pub fn search(
         &self,
         query: &str,
         selection: Option<&str>,
         frecency: &dyn FrecencyLookup,
-    ) -> Vec<CommandMeta> {
+    ) -> Vec<CommandSection> {
         let q = query.trim();
-        if q.is_empty() {
+        let ordered: Vec<CommandMeta> = if q.is_empty() {
             let mut commands = self.commands();
             commands.sort_by(|a, b| {
                 frecency
@@ -46,53 +78,55 @@ impl Registry {
                     .partial_cmp(&frecency.frecency(&a.id))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            return commands;
-        }
-
-        let pattern = Pattern::parse(q, CaseMatching::Smart, Normalization::Smart);
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let mut buf = Vec::new();
-        let q_lower = q.to_lowercase();
-        let mut scored: Vec<(u32, f64, CommandMeta)> = Vec::new();
-        for ext in &self.extensions {
-            for cmd in ext.commands() {
-                let haystack = format!(
-                    "{} {} {}",
-                    cmd.title,
-                    cmd.subtitle.as_deref().unwrap_or(""),
-                    ext.title()
-                );
-                let hay = Utf32Str::new(&haystack, &mut buf);
-                if let Some(score) = pattern.score(hay, &mut matcher) {
-                    // 排序契约（IIE4AD-346）：精确前缀 > 位置 > frecency。
-                    // matcher 的词边界启发式不足以表达「前缀优先」，显式加成。
-                    let title_lower = cmd.title.to_lowercase();
-                    let bonus = if title_lower == q_lower {
-                        1_000_000
-                    } else if title_lower.starts_with(&q_lower) {
-                        500_000
-                    } else {
-                        0
-                    };
-                    scored.push((score + bonus, frecency.frecency(&cmd.id), cmd));
+            commands
+        } else {
+            let pattern = Pattern::parse(q, CaseMatching::Smart, Normalization::Smart);
+            let mut matcher = Matcher::new(Config::DEFAULT);
+            let mut buf = Vec::new();
+            let q_lower = q.to_lowercase();
+            let mut scored: Vec<(u32, f64, CommandMeta)> = Vec::new();
+            for ext in &self.extensions {
+                for cmd in ext.commands() {
+                    let haystack = format!(
+                        "{} {} {}",
+                        cmd.title,
+                        cmd.subtitle.as_deref().unwrap_or(""),
+                        ext.title()
+                    );
+                    let hay = Utf32Str::new(&haystack, &mut buf);
+                    if let Some(score) = pattern.score(hay, &mut matcher) {
+                        // 排序契约（IIE4AD-346）：精确前缀 > 位置 > frecency。
+                        // matcher 的词边界启发式不足以表达「前缀优先」，显式加成。
+                        let title_lower = cmd.title.to_lowercase();
+                        let bonus = if title_lower == q_lower {
+                            1_000_000
+                        } else if title_lower.starts_with(&q_lower) {
+                            500_000
+                        } else {
+                            0
+                        };
+                        scored.push((score + bonus, frecency.frecency(&cmd.id), cmd));
+                    }
                 }
             }
-        }
-        scored.sort_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
-                .then_with(|| a.2.id.cmp(&b.2.id))
-        });
-        if scored.is_empty() {
-            // 无匹配：给扩展一个「捕获输入」的机会（如 AI 问答）。
-            // 保持注册顺序（先注册的扩展优先，例如 `key …` 命中 Moe 的保存项）。
-            return self
-                .extensions
-                .iter()
-                .filter_map(|ext| ext.fallback_command(q, selection))
-                .collect();
-        }
-        scored.into_iter().map(|(_, _, cmd)| cmd).collect()
+            scored.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+                    .then_with(|| a.2.id.cmp(&b.2.id))
+            });
+            if scored.is_empty() {
+                // 无匹配：给扩展一个「捕获输入」的机会（如 AI 问答）。
+                // 保持注册顺序（先注册的扩展优先，例如 `key …` 命中 Moe 的保存项）。
+                return group_by_extension(
+                    &self.extensions,
+                    self.extensions
+                        .iter()
+                        .filter_map(|ext| ext.fallback_command(q, selection)),
+                );
+            }
+            scored.into_iter().map(|(_, _, cmd)| cmd).collect()
+        };
+        group_by_extension(&self.extensions, ordered.into_iter())
     }
 
     fn find(&self, command_id: &str) -> Option<&dyn Extension> {
@@ -530,14 +564,15 @@ mod tests {
         r.register(Box::new(FallbackToy));
         let hits = r.search("hello", None, &NoFrecency);
         assert_eq!(hits.len(), 1);
-        assert!(hits[0].title.contains("hello"));
+        assert_eq!(hits[0].title, "Fallback");
+        assert!(hits[0].items[0].title.contains("hello"));
 
         // 有正常匹配时不出现 fallback
         let mut r = Registry::new();
         r.register(Box::new(FallbackToy));
         r.register(Box::new(Toy));
         let hits = r.search("toy", None, &NoFrecency);
-        assert!(hits.iter().all(|c| c.id != "fb.ask"));
+        assert!(flat(&hits).iter().all(|c| c.id != "fb.ask"));
     }
 
     /// 通用入口（ADR-0014）：入口按「当前命令所属 Extension」解析，
@@ -604,16 +639,27 @@ mod tests {
         assert!(r.entry_command("nope.nope", EntryKind::Browse).is_none());
     }
 
+    /// 把 section 列表拍平成命令列表（断言用）。
+    fn flat(hits: &[CommandSection]) -> Vec<&CommandMeta> {
+        hits.iter().flat_map(|s| &s.items).collect()
+    }
+
     #[test]
     fn empty_query_lists_everything() {
-        assert_eq!(registry().search("", None, &NoFrecency).len(), 2);
+        let hits = registry().search("", None, &NoFrecency);
+        assert_eq!(hits.len(), 1, "单一扩展 => 单一 section");
+        assert_eq!(hits[0].title, "Toy");
+        assert_eq!(hits[0].items.len(), 2);
     }
 
     #[test]
     fn empty_query_orders_by_frecency() {
         let hits = registry().search("", None, &fixed(&[("toy.hello", 9.0)]));
         assert_eq!(
-            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            flat(&hits)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
             ["toy.hello", "toy.list"]
         );
     }
@@ -622,14 +668,20 @@ mod tests {
     fn search_matches_title_and_extension() {
         let hits = registry().search("list", None, &NoFrecency);
         assert_eq!(
-            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            flat(&hits)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
             ["toy.list"]
         );
-        assert_eq!(registry().search("toy", None, &NoFrecency).len(), 2);
+        assert_eq!(flat(&registry().search("toy", None, &NoFrecency)).len(), 2);
         // 副标题也进索引（"backspace demo" 只存在于 toy.hello 的 subtitle）
         let hits = registry().search("pace", None, &NoFrecency);
         assert_eq!(
-            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            flat(&hits)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
             ["toy.hello"]
         );
     }
@@ -639,13 +691,16 @@ mod tests {
         // "tl"："Toy: List" 的子序列；"Hello Toy" 里 l 在 t 之前，不匹配
         let hits = registry().search("tl", None, &NoFrecency);
         assert_eq!(
-            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            flat(&hits)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
             ["toy.list"]
         );
         assert!(registry().search("zzz", None, &NoFrecency).is_empty());
         // 前缀匹配优先于子串匹配
         let hits = registry().search("toy", None, &NoFrecency);
-        assert_eq!(hits.first().map(|c| c.id.as_str()), Some("toy.list"));
+        assert_eq!(flat(&hits).first().map(|c| c.id.as_str()), Some("toy.list"));
     }
 
     #[test]
@@ -685,9 +740,19 @@ mod tests {
         r.register(Box::new(Twin("b")));
         let hits = r.search("deploy", None, &fixed(&[("b.deploy", 9.0)]));
         assert_eq!(
-            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            flat(&hits)
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
             ["b.deploy", "a.deploy"]
         );
+        // 两个扩展两个来源 => 两个 section，按组内最优项排序（b 的 frecency 更高）
+        assert_eq!(
+            hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
+            ["Twin", "Twin"]
+        );
+        assert_eq!(hits[0].items[0].id, "b.deploy");
+        assert_eq!(hits[1].items[0].id, "a.deploy");
     }
 
     #[test]

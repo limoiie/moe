@@ -23,6 +23,7 @@ import type {
   ActionResult,
   CommandEventPayload,
   CommandMeta,
+  CommandSection,
   Item,
 } from "./types";
 
@@ -39,6 +40,8 @@ interface View {
   mode: Mode;
   focus: number;
   commands: CommandMeta[];
+  /** 命令层的来源分组（ADR-0020）：渲染组头用；commands 是它的拍平，焦点/导航基于拍平列表。 */
+  sections: CommandSection[];
   items: Item[];
   /** items 模式的来源 Command。 */
   sourceCommandId?: string;
@@ -69,6 +72,7 @@ const view = store<View>({
   mode: "commands",
   focus: 0,
   commands: [],
+  sections: [],
   items: [],
 });
 
@@ -214,14 +218,6 @@ interface Row {
 
 function currentEntries(): Row[] {
   const v = view.get();
-  if (v.mode === "commands") {
-    return v.commands.map((c) => ({
-      title: c.title,
-      subtitle: c.subtitle,
-      icon: c.icon,
-      iconMuted: !c.icon,
-    }));
-  }
   return v.items.map((i) => {
     const icon = i.icon ?? v.sourceIcon;
     return {
@@ -234,6 +230,54 @@ function currentEntries(): Row[] {
   });
 }
 
+/** 组头（ADR-0020）：来源即分组，组头不聚焦、不参与导航、不响应 hover。 */
+function sectionHeaderEl(title: string): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className =
+    "select-none px-3 pt-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
+  li.textContent = title;
+  return li;
+}
+
+/** 单行：hover = 可交互提示（不夺焦点），焦点行才是唯一高亮主色。 */
+function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className =
+    "group flex cursor-default items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm " +
+    (focused
+      ? "bg-zinc-700/70 text-zinc-50"
+      : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
+  li.append(
+    iconEl(e.icon, {
+      className: e.iconMuted
+        ? "text-zinc-600"
+        : focused
+          ? "text-zinc-200"
+          : "text-zinc-400 group-hover:text-zinc-300",
+    }),
+  );
+  const left = document.createElement("div");
+  left.className = "min-w-0 flex-1 truncate";
+  left.textContent = e.title;
+  if (e.subtitle) {
+    const sub = document.createElement("span");
+    sub.className = "ml-2 text-xs text-zinc-500";
+    sub.textContent = e.subtitle;
+    left.append(sub);
+  }
+  li.append(left);
+  if (e.key) {
+    // 键位块（shadcn Kbd 同款）：与动作条、⌘K 面板保持同一种嵌键样式
+    const keys = kbdEl(e.key, { firstOnly: true });
+    keys.classList.add("shrink-0");
+    li.append(keys);
+  }
+  li.addEventListener("mousedown", () => {
+    view.update((s) => ({ ...s, focus: i }));
+  });
+  return li;
+}
+
 function render() {
   const v = view.get();
   // 页面形态决定窗口尺寸（ADR-0018）：两栏页面加宽加高，其余用默认尺寸。
@@ -244,48 +288,37 @@ function render() {
     v.items.length,
   );
   applyPanelSize(shape);
-  const rows = currentEntries().map((e, i) => {
-    const focused = i === v.focus;
-    const li = document.createElement("li");
-    // 每一行都有 hover 态：鼠标能“摸”到交互；焦点行仍是唯一的高亮主色
-    li.className =
-      "group flex cursor-default items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm " +
-      (focused
-        ? "bg-zinc-700/70 text-zinc-50"
-        : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
-    li.append(
-      iconEl(e.icon, {
-        className: e.iconMuted
-          ? "text-zinc-600"
-          : focused
-            ? "text-zinc-200"
-            : "text-zinc-400 group-hover:text-zinc-300",
-      }),
-    );
-    const left = document.createElement("div");
-    left.className = "min-w-0 flex-1 truncate";
-    left.textContent = e.title;
-    if (e.subtitle) {
-      const sub = document.createElement("span");
-      sub.className = "ml-2 text-xs text-zinc-500";
-      sub.textContent = e.subtitle;
-      left.append(sub);
+  let focusedLi: HTMLLIElement | null = null;
+  if (v.mode === "commands") {
+    // 命令层：按来源分组渲染（组头 + 组内命令行），焦点索引仍在拍平列表上。
+    const lis: HTMLLIElement[] = [];
+    let flat = 0;
+    for (const section of v.sections) {
+      lis.push(sectionHeaderEl(section.title));
+      for (const c of section.items) {
+        const li = rowEl(
+          {
+            title: c.title,
+            subtitle: c.subtitle,
+            icon: c.icon,
+            iconMuted: !c.icon,
+          },
+          flat,
+          flat === v.focus,
+        );
+        if (flat === v.focus) focusedLi = li;
+        flat += 1;
+        lis.push(li);
+      }
     }
-    li.append(left);
-    if (e.key) {
-      // 键位块（shadcn Kbd 同款）：与动作条、⌘K 面板保持同一种嵌键样式
-      const keys = kbdEl(e.key, { firstOnly: true });
-      keys.classList.add("shrink-0");
-      li.append(keys);
-    }
-    li.addEventListener("mousedown", () => {
-      view.update((s) => ({ ...s, focus: i }));
-    });
-    return li;
-  });
-  listEl.replaceChildren(...rows);
+    listEl.replaceChildren(...lis);
+  } else {
+    const rows = currentEntries().map((e, i) => rowEl(e, i, i === v.focus));
+    focusedLi = rows[v.focus] ?? null;
+    listEl.replaceChildren(...rows);
+  }
   // 键盘导航：焦点行始终留在视口内（长列表）
-  rows[v.focus]?.scrollIntoView({ block: "nearest" });
+  focusedLi?.scrollIntoView({ block: "nearest" });
   renderDetail();
   renderActionBar();
   updatePlaceholder();
@@ -775,8 +808,15 @@ async function back(options: { quit?: boolean } = {}) {
 async function refresh(query: string) {
   clearDetail();
   previewDismissed = false;
-  const commands = await invoke<CommandMeta[]>("search_commands", { query });
-  view.update((v) => ({ ...v, mode: "commands", commands, focus: 0 }));
+  const sections = await invoke<CommandSection[]>("search_commands", { query });
+  view.update((v) => ({
+    ...v,
+    mode: "commands",
+    sections,
+    // 焦点/导航基于拍平列表，sections 只负责组头渲染。
+    commands: sections.flatMap((s) => s.items),
+    focus: 0,
+  }));
 }
 
 /** 停止进行中的生成（平台级：不区分扩展/会话，IIE4AD-365）。 */
