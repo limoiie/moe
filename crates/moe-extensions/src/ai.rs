@@ -798,7 +798,9 @@ mod tests {
             let mut buf = [0u8; 2048];
             let _ = socket.read(&mut buf); // 请求头
             let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
-            for index in 0..500 {
+            // 故意比测试的等待窗口长得多（~50s）：只要还没被停止，流就跑不完。
+            // 否则 CI 上测试线程被调度走几秒，流可能自己结束，stop_all_streams() 会命中 0。
+            for index in 0..5_000 {
                 let delta = format!(
                     "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{index},\"}}}}]}}\n\n"
                 );
