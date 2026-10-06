@@ -1,6 +1,6 @@
 //! 平台边界（ADR-0002/0008）：与宿主应用的文字互动、呼出键监听。
-//! 呼出监听：macOS 已实现（CGEventTap），其余平台为 stub；TextTarget 的
-//! macOS AX 实现是 M2。
+//! 呼出监听：macOS = CGEventTap（授权门），Linux = X11 XRecord（免授权，见
+//! [`x11`]；Wayland 自查并报 Unsupported）；TextTarget 的 macOS AX 实现是 M2。
 
 pub mod config;
 pub mod db;
@@ -12,6 +12,7 @@ pub mod mac_text;
 pub mod store;
 pub mod summon;
 pub mod text_target;
+pub mod x11;
 
 pub use summon::{SummonEvent, SummonListener, SummonStatus, UnsupportedSummon};
 

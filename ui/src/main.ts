@@ -500,6 +500,13 @@ async function refreshBanner() {
     bannerActionEl.textContent = "打开输入监控设置";
     bannerActionEl.dataset.action = "input-monitoring";
     showBanner();
+  } else if (status.status === "unsupported") {
+    // Linux/Wayland 等无法全局拦截键盘的会话（IIE4AD-350）：给替代路径
+    const key = KEY_LABELS[status.key] ?? status.key;
+    bannerTextEl.textContent = `${key} 呼出在当前会话不可用（Wayland 等环境无法全局拦截键盘）：改 config.toml 的 [summon] key 用组合键，或用 WM 绑定 \`moe --toggle\`。`;
+    bannerActionEl.textContent = "打开配置文件";
+    bannerActionEl.dataset.action = "config";
+    showBanner();
   } else if (!status.accessibility) {
     bannerTextEl.textContent =
       "读取选区与回写需要「辅助功能」授权（写回时也会自动弹系统引导）；授权后无需重启。";
@@ -517,11 +524,20 @@ function showBanner() {
 }
 
 bannerActionEl.addEventListener("click", () => {
-  const command =
-    bannerActionEl.dataset.action === "accessibility"
+  const action = bannerActionEl.dataset.action;
+  if (action === "config") {
+    void invoke("invoke_command", {
+      commandId: "moe.open-config",
+      query: null,
+      record: false,
+    });
+    return;
+  }
+  void invoke(
+    action === "accessibility"
       ? "open_accessibility_settings"
-      : "open_input_monitoring_settings";
-  void invoke(command);
+      : "open_input_monitoring_settings",
+  );
 });
 
 // 流式命令事件：按 item id 就地更新（如 AI 回答逐字到达）

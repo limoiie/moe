@@ -49,8 +49,23 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
   double_tap_ms = 400  # 100..=1000
   ```
 
-- Linux：双击监听未实现（X11 随 M4 Linux 验证落地；Wayland 无全局键盘拦截，
-  只能 WM 绑定或改用组合键模式—组合键走 global-shortcut 插件，各平台可用）。
+- Linux：**X11 双击监听已可用**（XRecord，免授权；Linux 上 ⌘ 对应键盘的 Super/⌘ 键），
+  接入同一套双击状态机；X 服务缺 RECORD 扩展时自动降级并在日志与面板引导。
+  **Wayland 会话不能全局拦截键盘**（XRecord 只能看到 XWayland 客户端）：Moe 检测到
+  `WAYLAND_DISPLAY`/`XDG_SESSION_TYPE=wayland` 时不启动监听，面板内给出两条替代路径——
+  1）`config.toml` 改用组合键（`[summon] key = "cmd+shift+space"`，走 global-shortcut
+  插件；X11 会话可靠，Wayland 原生会话可能注册不上）；
+  2）用窗口管理器绑定 `moe --toggle`（单实例转发：已在运行则切换面板，未运行则启动并亮面板）：
+
+  ```conf
+  # Hyprland (~/.config/hypr/hyprland.conf)
+  bind = SUPER, M, exec, moe --toggle
+  ```
+
+  ```conf
+  # i3 (~/.config/i3/config) / sway (~/.config/sway/config)
+  bindsym $mod+m exec moe --toggle
+  ```
 - 选区与回写（M2，IIE4AD-356）：呼出面板前抓取选区；`WriteBack` 经 AX 写入
   （有选区替换 / 无选区插光标），AX 被目标应用拒绝时自动降级「剪贴板快照 → 合成 ⌘V → 恢复」；
   演示命令 `Echo: Shout`。写回需要「辅助功能」授权（引导条第二档）。

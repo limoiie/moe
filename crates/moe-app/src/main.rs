@@ -509,6 +509,18 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 启动 600ms 后是否需要「主动展示面板」做引导。
+fn needs_attention(status: SummonStatus, key: &SummonKey) -> bool {
+    match status {
+        // 缺「输入监控」授权（macOS）：面板里给授权引导
+        SummonStatus::NeedsPermission => true,
+        // 双击监听在当前会话不可用（Wayland / 无 RECORD / 未实现平台）：
+        // 引导改用组合键或 WM 绑定 `moe --toggle`
+        SummonStatus::Unsupported => matches!(key, SummonKey::DoubleTap(_)),
+        SummonStatus::Ready => false,
+    }
+}
+
 fn main() {
     let config = MoeConfig::load();
 
@@ -523,7 +535,14 @@ fn main() {
     };
     #[cfg(not(target_os = "macos"))]
     let listener: Box<dyn SummonListener> = match &config.summon.key {
-        // X11 监听是 M4 Linux 验证的一部分；Wayland 只能 WM 绑定（README）。
+        // XRecord 免授权监听（IIE4AD-350）；Wayland / 无 RECORD 时自查并报 Unsupported
+        #[cfg(target_os = "linux")]
+        SummonKey::DoubleTap(modifier) => Box::new(moe_platform::x11::X11SummonListener::new(
+            *modifier,
+            Duration::from_millis(config.summon.double_tap_ms),
+        )),
+        // 其余平台双击未落地：启动后由面板引导改用组合键
+        #[cfg(not(target_os = "linux"))]
         SummonKey::DoubleTap(_) => Box::new(moe_platform::UnsupportedSummon),
         SummonKey::Combo { .. } => Box::new(moe_platform::UnsupportedSummon),
     };
@@ -540,9 +559,17 @@ fn main() {
     let accelerator = accelerator(&config.summon.key);
     let is_double_tap = matches!(config.summon.key, SummonKey::DoubleTap(_));
     let summon_label = key_label(&config.summon.key);
+    // `moe --toggle`：冷启动时直接亮面板；已运行时由单实例回调转发为切换。
+    let toggle_on_start = std::env::args().any(|arg| arg == "--toggle");
     eprintln!("moe: 启动，呼出键 = {summon_label}");
 
     let builder = tauri::Builder::default()
+        // 单实例必须最先注册：`moe --toggle` 由第二个进程转发给已在运行的实例
+        // （Wayland 下没有全局键盘拦截时的 WM 绑定路径，IIE4AD-350）
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            eprintln!("moe: 已有实例在运行，转发请求：{argv:?}");
+            toggle_panel(app);
+        }))
         .plugin(
             ShortcutBuilder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -648,20 +675,23 @@ fn main() {
                 eprintln!("moe: tray 创建失败: {err}");
             }
 
-            // 有 tray 后启动不再无条件展示面板：仅当呼出监听未就绪（缺「输入监控」
-            // 授权）时展示引导。监听线程挂 tap 是毫秒级但异步，直接查会命中初始
-            // 状态而误弹，因此给 600ms 宽限期后再决定。
+            // `moe --toggle` 冷启动：没有旧实例可转发，直接把面板亮出来
+            if toggle_on_start {
+                toggle_panel(&handle);
+            }
+
+            // 有 tray 后启动不再无条件展示面板：仅当呼出监听需要引导（macOS 缺授权 /
+            // Linux Wayland 等双击不可用）时展示。监听线程启动是毫秒级但异步，直接查
+            // 会命中初始状态而误弹，因此给 600ms 宽限期后再决定。
             let probe = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(600));
-                let needs_attention = probe
-                    .state::<AppState>()
-                    .listener
-                    .lock()
-                    .expect("listener poisoned")
-                    .status()
-                    == SummonStatus::NeedsPermission;
-                if !needs_attention {
+                let attention_needed = {
+                    let state = probe.state::<AppState>();
+                    let status = state.listener.lock().expect("listener poisoned").status();
+                    needs_attention(status, &state.config.summon.key)
+                };
+                if !attention_needed {
                     return;
                 }
                 let show_handle = probe.clone();
@@ -751,6 +781,17 @@ mod tests {
             key_label(&SummonKey::parse("cmd+space").unwrap()),
             "Command+Space"
         );
+    }
+
+    /// 启动引导的触发条件（IIE4AD-350）：双击不可用时要弹一次面板给替代路径。
+    #[test]
+    fn startup_shows_panel_only_when_summon_needs_guidance() {
+        let double = SummonKey::parse("double-cmd").unwrap();
+        let combo = SummonKey::parse("cmd+shift+space").unwrap();
+        assert!(needs_attention(SummonStatus::NeedsPermission, &double));
+        assert!(needs_attention(SummonStatus::Unsupported, &double));
+        assert!(!needs_attention(SummonStatus::Unsupported, &combo));
+        assert!(!needs_attention(SummonStatus::Ready, &double));
     }
 
     #[test]
