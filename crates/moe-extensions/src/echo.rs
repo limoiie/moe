@@ -77,8 +77,8 @@ impl Extension for Echo {
                     None => "MOE WAS HERE".to_string(),
                 },
             }),
-            "echo.items" => Ok(ActionResult::List {
-                items: ["alpha", "beta", "gamma"]
+            "echo.items" => Ok(ActionResult::list(
+                ["alpha", "beta", "gamma"]
                     .iter()
                     .map(|word| Item {
                         id: format!("echo.word.{word}"),
@@ -94,7 +94,7 @@ impl Extension for Echo {
                         pending: false,
                     })
                     .collect(),
-            }),
+            )),
             _ => Err(MoeError::NotFound),
         }
     }
@@ -128,9 +128,12 @@ mod tests {
     #[test]
     fn list_items_follow_unified_action_semantics() {
         let ext = Echo;
-        let ActionResult::List { items } = ext.invoke("echo.items", None, None).unwrap() else {
+        let ActionResult::List { items, detail_full } =
+            ext.invoke("echo.items", None, None).unwrap()
+        else {
             panic!("expected list");
         };
+        assert!(!detail_full, "词表是列表视图（左列表 + 右预览）—ADR-0013");
         assert!(!items.is_empty());
         for item in &items {
             assert!(

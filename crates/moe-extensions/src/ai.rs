@@ -348,9 +348,11 @@ impl AiShell {
             cleaned
         };
         if display.trim().is_empty() {
-            return ActionResult::List {
-                items: vec![answer_item("在输入框里写下问题，再按 Enter。", None, false)],
-            };
+            return ActionResult::detail(vec![answer_item(
+                "在输入框里写下问题，再按 Enter。",
+                None,
+                false,
+            )]);
         }
         let attachments: Vec<AttachmentRef> = paths
             .iter()
@@ -359,14 +361,10 @@ impl AiShell {
 
         let config = MoeConfig::load();
         if !config.ai.configured() {
-            return ActionResult::List {
-                items: vec![answer_item(SETUP_MD, None, false)],
-            };
+            return ActionResult::detail(vec![answer_item(SETUP_MD, None, false)]);
         }
         let Some(key) = keychain::ai_api_key() else {
-            return ActionResult::List {
-                items: vec![answer_item(KEY_MISSING_MD, None, false)],
-            };
+            return ActionResult::detail(vec![answer_item(KEY_MISSING_MD, None, false)]);
         };
 
         // 提问即建会话；随后 ⌘M 可带同一会话进侧栏续聊。
@@ -394,37 +392,46 @@ impl AiShell {
                 );
             });
         }
-        ActionResult::List {
-            items: vec![answer_item("正在回答…", conversation_id.as_deref(), true)],
-        }
+        ActionResult::detail(vec![answer_item(
+            "正在回答…",
+            conversation_id.as_deref(),
+            true,
+        )])
     }
 
     /// 历史搜索：列表随输入重跑（CommandMeta.live），标题模糊匹配、最近优先。
     fn search_history(&self, query: &str) -> ActionResult {
+        match Db::open_default() {
+            Ok(db) => Self::search_history_in(&db, query),
+            Err(err) => ActionResult::list(vec![notice_item("读取历史失败", &err)]),
+        }
+    }
+
+    /// DB 注入版：测试用临时库断言形态与条目，不碰真实数据目录。
+    ///
+    /// 形态恒为列表（ADR-0013）：唯一一条命中也不整屏，UI 才有「左列表 + 右预览」。
+    fn search_history_in(db: &Db, query: &str) -> ActionResult {
         let now = unix_now();
-        let items = match Db::open_default() {
-            Ok(db) => match db.conversations("ai", Some(query), HISTORY_LIMIT) {
-                Ok(list) if list.is_empty() => vec![notice_item(
-                    "没有匹配的历史会话",
-                    "在命令盘直接输入问题，即可开始一次新对话。",
-                )],
-                Ok(list) => list
-                    .into_iter()
-                    .map(|conversation| {
-                        // 预览 = 最后一条回答的摘要（进焦点预览卡片，IIE4AD-370）
-                        let preview = db
-                            .last_assistant_message(&conversation.id)
-                            .ok()
-                            .flatten()
-                            .map(|text| preview_excerpt(&text));
-                        history_item(conversation, now, preview)
-                    })
-                    .collect(),
-                Err(err) => vec![notice_item("读取历史失败", &err)],
-            },
+        let items = match db.conversations("ai", Some(query), HISTORY_LIMIT) {
+            Ok(list) if list.is_empty() => vec![notice_item(
+                "没有匹配的历史会话",
+                "在命令盘直接输入问题，即可开始一次新对话。",
+            )],
+            Ok(list) => list
+                .into_iter()
+                .map(|conversation| {
+                    // 预览 = 最后一条回答的摘要（进焦点预览卡片，IIE4AD-370）
+                    let preview = db
+                        .last_assistant_message(&conversation.id)
+                        .ok()
+                        .flatten()
+                        .map(|text| preview_excerpt(&text));
+                    history_item(conversation, now, preview)
+                })
+                .collect(),
             Err(err) => vec![notice_item("读取历史失败", &err)],
         };
-        ActionResult::List { items }
+        ActionResult::list(items)
     }
 }
 
@@ -844,5 +851,58 @@ mod tests {
                 payload: serde_json::json!({ "conversationId": "9" })
             }
         );
+    }
+
+    /// 临时库（不碰真实数据目录）：AI 历史在测试里可写可查。
+    fn temp_db(tag: &str) -> (Db, std::path::PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("moe-{tag}-{nanos}.db"));
+        (Db::open(&path).expect("temp db"), path)
+    }
+
+    /// 回答/引导是详情整屏（ADR-0013）：面板里它就是正文，不该跟列表分栏。
+    #[test]
+    fn ask_placeholder_declares_detail_layout() {
+        let ActionResult::List { items, detail_full } = AiShell.start_ask("   ", None) else {
+            panic!("expected list");
+        };
+        assert!(detail_full, "回答是详情整屏");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "ai.answer");
+    }
+
+    /// 历史搜索恒为列表形态：唯一一条命中也不整屏（用户要看到那一行）——ADR-0013。
+    #[test]
+    fn history_search_stays_list_view_even_with_single_hit() {
+        let (db, path) = temp_db("history");
+        let now = SystemTime::now();
+        let id = db
+            .create_conversation("ai", "解释闭包", now)
+            .expect("create");
+        db.append_message(&id, Role::Assistant, "闭包是……", &[], now)
+            .expect("append");
+
+        let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "闭包")
+        else {
+            panic!("expected list");
+        };
+        assert!(!detail_full, "历史搜索是列表视图（左列表 + 右预览）");
+        assert_eq!(items.len(), 1, "唯一一条命中也不整屏");
+        assert_eq!(items[0].id, format!("ai.conversation.{id}"));
+        assert!(items[0].detail.is_some(), "右侧预览 = 最后一条回答摘要");
+
+        // 无命中：仍是列表形态（一条通知进右预览，列表不消失）
+        let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "不存在")
+        else {
+            panic!("expected list");
+        };
+        assert!(!detail_full);
+        assert_eq!(items[0].title, "没有匹配的历史会话");
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
     }
 }

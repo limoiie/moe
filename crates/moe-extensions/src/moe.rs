@@ -84,19 +84,15 @@ impl Extension for Moe {
             "moe.set-ai-key" => {
                 let key = query.map(key_from_query).unwrap_or_default();
                 if key.is_empty() {
-                    return Ok(ActionResult::List {
-                        items: vec![info_item(
-                            "把 API key 直接跟在 `key` 后面，例如：`key sk-xxxx`。\n\n\
-                             Key 只进系统 keychain，不回显、不写配置文件；也可设 `MOE_AI_API_KEY` 环境变量。",
-                        )],
-                    });
+                    return Ok(ActionResult::detail(vec![info_item(
+                        "把 API key 直接跟在 `key` 后面，例如：`key sk-xxxx`。\n\n\
+                         Key 只进系统 keychain，不回显、不写配置文件；也可设 `MOE_AI_API_KEY` 环境变量。",
+                    )]));
                 }
                 keychain::set_ai_api_key(&key).map_err(MoeError::Internal)?;
-                Ok(ActionResult::List {
-                    items: vec![info_item(
-                        "✅ AI API Key 已保存到 keychain（不回显）。现在可以直接提问了。",
-                    )],
-                })
+                Ok(ActionResult::detail(vec![info_item(
+                    "✅ AI API Key 已保存到 keychain（不回显）。现在可以直接提问了。",
+                )]))
             }
             _ => Err(MoeError::NotFound),
         }

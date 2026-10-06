@@ -228,21 +228,19 @@ mod tests {
             _selection: Option<&str>,
         ) -> Result<ActionResult, MoeError> {
             match command_id {
-                "toy.list" => Ok(ActionResult::List {
-                    items: vec![Item {
-                        id: "item-1".into(),
-                        title: "hello world".into(),
-                        subtitle: None,
-                        actions: vec![
-                            action("write-back", ActionKind::Primary),
-                            action("copy", ActionKind::Secondary),
-                        ],
-                        payload: serde_json::Value::Null,
-                        detail: None,
-                        pending: false,
-                        icon: None,
-                    }],
-                }),
+                "toy.list" => Ok(ActionResult::list(vec![Item {
+                    id: "item-1".into(),
+                    title: "hello world".into(),
+                    subtitle: None,
+                    actions: vec![
+                        action("write-back", ActionKind::Primary),
+                        action("copy", ActionKind::Secondary),
+                    ],
+                    payload: serde_json::Value::Null,
+                    detail: None,
+                    pending: false,
+                    icon: None,
+                }])),
                 "toy.hello" => Ok(ActionResult::WriteBack { text: "hi".into() }),
                 _ => Err(MoeError::NotFound),
             }
@@ -321,7 +319,7 @@ mod tests {
                 command_id: command_id.to_string(),
                 item: item.clone(),
             });
-            Ok(ActionResult::List { items: vec![item] })
+            Ok(ActionResult::list(vec![item]))
         }
     }
 
@@ -611,7 +609,7 @@ mod tests {
     #[test]
     fn item_stream_composes_to_write_back() {
         let r = registry();
-        let ActionResult::List { items } = r.invoke("toy.list", None, None).unwrap() else {
+        let ActionResult::List { items, .. } = r.invoke("toy.list", None, None).unwrap() else {
             panic!("expected list");
         };
         let item = &items[0];

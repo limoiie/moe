@@ -64,7 +64,7 @@ pub struct Item {
 /// Apply 或任一动作执行后的结果。输出类型不封闭枚举——List 中的 Item
 /// 可再次产出 WriteBack / List，可组合性代替枚举（ADR-0006）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ActionResult {
     /// 交平台经 TextTarget 回写：替换 Selection，或插入光标处。
     WriteBack {
@@ -72,12 +72,34 @@ pub enum ActionResult {
     },
     List {
         items: Vec<Item>,
+        /// 详情是否整屏：结果只有一条且它本身就是内容时为 true（AI 回答、通知）。
+        /// 多条结果（如历史搜索）保持「左列表 + 右详情」，由 Extension 声明而非 UI 猜（ADR-0013）。
+        #[serde(default, skip_serializing_if = "is_false")]
+        detail_full: bool,
     },
     /// 触发 Materialize：该 Extension 的 Side View，携带开窗所需载荷。
     OpenSideView {
         payload: serde_json::Value,
     },
     Silent,
+}
+
+impl ActionResult {
+    /// 列表视图：左列表 + 右详情（多条结果，如历史搜索、动作清单）。
+    pub fn list(items: Vec<Item>) -> Self {
+        Self::List {
+            items,
+            detail_full: false,
+        }
+    }
+
+    /// 详情视图：只有一条结果且它本身即内容（AI 回答、系统通知），详情占满面板。
+    pub fn detail(items: Vec<Item>) -> Self {
+        Self::List {
+            items,
+            detail_full: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -222,5 +244,32 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["itemUpdated"]["commandId"], "ai.quick-ask");
         assert_eq!(json["itemUpdated"]["item"]["id"], "ai.answer");
+    }
+
+    fn answer() -> Item {
+        Item {
+            id: "ai.answer".into(),
+            title: "AI 回答".into(),
+            subtitle: None,
+            icon: None,
+            actions: vec![],
+            payload: serde_json::Value::Null,
+            detail: Some("正文".into()),
+            pending: false,
+        }
+    }
+
+    /// 视图形态由 Extension 声明（ADR-0013）：UI 按 `list.detailFull` 决定
+    /// 详情整屏还是「左列表 + 右详情」，不再用 items 条数猜。
+    #[test]
+    fn action_result_declares_view_layout() {
+        let detail = serde_json::to_value(ActionResult::detail(vec![answer()])).unwrap();
+        assert_eq!(detail["list"]["detailFull"], true);
+
+        let list = serde_json::to_value(ActionResult::list(vec![answer()])).unwrap();
+        // 列表视图省略该字段（旧的 list 结果反序列化后仍是列表，向后兼容）
+        assert!(list["list"].get("detailFull").is_none());
+        let legacy: ActionResult = serde_json::from_value(list).unwrap();
+        assert_eq!(legacy, ActionResult::list(vec![answer()]));
     }
 }

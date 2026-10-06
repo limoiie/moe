@@ -45,7 +45,7 @@ interface CommandMeta {
 type ActionResult =
   | string
   | { writeBack: { text: string } }
-  | { list: { items: Item[] } }
+  | { list: { items: Item[]; detailFull?: boolean } }
   | { openSideView: { payload: unknown } };
 
 // ---- 视图状态 ----
@@ -63,6 +63,8 @@ interface View {
   sourceIcon?: string;
   /** 来源 Command 是否 Live（输入变化即重跑列表）。 */
   sourceLive?: boolean;
+  /** 结果声明的视图形态：true = 唯一一条即内容，详情占满面板（ADR-0013）。 */
+  detailFull?: boolean;
   itemIndex?: number;
 }
 
@@ -305,8 +307,8 @@ function showMessage(markdown: string) {
 
 /**
  * items 模式的详情：
- * - 只有一条结果（如 AI 回答）→ 整屏就是内容，生成状态用行内指示；
- * - 多条结果（如历史搜索）→ 左列表、右预览。
+ * - 结果声明 detailFull（如 AI 回答、通知）→ 整屏就是内容，生成状态用行内指示；
+ * - 否则（如历史搜索）→ 左列表、右预览。
  */
 function renderDetail() {
   const v = view.get();
@@ -316,7 +318,7 @@ function renderDetail() {
     if (detailMode !== "message") clearDetail();
     return;
   }
-  const full = v.items.length === 1;
+  const full = v.detailFull === true && v.items.length === 1;
   detailMode = "preview";
   detailEl.className = full ? DETAIL_MESSAGE_CLASS : DETAIL_PREVIEW_CLASS;
   paintDetail(item.detail ?? "", item.id, item.pending === true);
@@ -369,6 +371,7 @@ function applyResult(res: ActionResult, commandId: string, live = false, icon?: 
       sourceCommandId: commandId,
       sourceLive: live,
       sourceIcon: icon,
+      detailFull: res.list.detailFull === true,
     }));
   }
 }
