@@ -255,7 +255,7 @@ mod tests {
             command_id: "ai.quick-ask".into(),
             item: Item {
                 id: "ai.answer".into(),
-                title: "正在回答…".into(),
+                title: "AI 回答".into(),
                 subtitle: None,
                 actions: vec![],
                 payload: serde_json::Value::Null,

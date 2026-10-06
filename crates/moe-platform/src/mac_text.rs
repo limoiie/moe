@@ -251,6 +251,10 @@ impl Clipboard for MacClipboard {
         pasteboard.setString_forType(&NSString::from_str(text), ty);
     }
 
+    fn read_text(&self) -> Option<String> {
+        clipboard_read_text().filter(|text| !text.is_empty())
+    }
+
     fn paste(&self) {
         const VK_V: CGKeyCode = 9; // kVK_ANSI_V
         let Ok(source) = CGEventSource::new(CGEventSourceStateID::CombinedSessionState) else {
@@ -262,6 +266,21 @@ impl Clipboard for MacClipboard {
                 event.post(CGEventTapLocation::HID);
             }
         }
+    }
+
+    fn copy(&self) {
+        const VK_C: CGKeyCode = 8; // kVK_ANSI_C
+        let Ok(source) = CGEventSource::new(CGEventSourceStateID::CombinedSessionState) else {
+            return;
+        };
+        for keydown in [true, false] {
+            if let Ok(event) = CGEvent::new_keyboard_event(source.clone(), VK_C, keydown) {
+                event.set_flags(CGEventFlags::CGEventFlagCommand);
+                event.post(CGEventTapLocation::HID);
+            }
+        }
+        // 合成事件异步投递：等目标应用把选区放进剪贴板，再让调用方读回
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     fn restore(&self, snapshot: Self::Snapshot) {

@@ -430,17 +430,8 @@ impl AiShell {
                 );
             });
         }
-        // 占位帧：有选区时注明，让用户知道上下文已附上（第一个增量到达后即被替换）
-        let placeholder = if selection.is_some_and(|s| !s.trim().is_empty()) {
-            "已附上选中文字，正在回答…"
-        } else {
-            "正在回答…"
-        };
-        ActionResult::detail(vec![answer_item(
-            placeholder,
-            conversation_id.as_deref(),
-            true,
-        )])
+        // 占位帧：正文留空——「正在生成」行内指示已经是唯一的状态反馈
+        ActionResult::detail(vec![answer_item("", conversation_id.as_deref(), true)])
     }
 
     /// 历史搜索：列表随输入重跑（CommandMeta.live），标题模糊匹配、最近优先。
