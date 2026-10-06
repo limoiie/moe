@@ -42,9 +42,18 @@ pub fn chat_body(model: &str, question: &str) -> serde_json::Value {
 /// 请求体：messages 已按 OpenAI 格式构造（含附件的多模态 parts，ADR-0010），
 /// 历史按时间正序交给端点。
 pub fn chat_body_from_messages(model: &str, messages: Vec<serde_json::Value>) -> serde_json::Value {
+    chat_body_with_stream(model, messages, true)
+}
+
+/// 同上，但可关流（阻塞式单发请求用 `stream: false`，AI 命令的 invoke 路径，ADR-0024）。
+pub fn chat_body_with_stream(
+    model: &str,
+    messages: Vec<serde_json::Value>,
+    stream: bool,
+) -> serde_json::Value {
     serde_json::json!({
         "model": model,
-        "stream": true,
+        "stream": stream,
         "messages": messages,
     })
 }
@@ -98,6 +107,18 @@ mod tests {
         assert_eq!(body["stream"], true);
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"], "你好");
+    }
+
+    /// 关流（AI 命令的阻塞 invoke，ADR-0024）。
+    #[test]
+    fn builds_non_stream_body() {
+        let body = chat_body_with_stream(
+            "m",
+            vec![serde_json::json!({ "role": "user", "content": "hi" })],
+            false,
+        );
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["messages"][0]["content"], "hi");
     }
 
     /// 多轮历史（含附件 parts）原样进入请求体，顺序不乱（IIE4AD-360/358）。

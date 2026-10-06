@@ -190,36 +190,39 @@ fn persist_assistant(conversation_id: Option<&str>, text: &str) {
     }
 }
 
-/// 进行中的生成：会话 id → 取消标记（IIE4AD-365）。
+/// 进行中的生成：登记键 → 取消标记（IIE4AD-365）。
+/// 键在聊天流 = 会话 id；AI 命令流 = 每次运行的唯一键（ADR-0024）。
 fn active_streams() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     static ACTIVE: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
     ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 登记一次生成（无持久化会话时不可中断，返回 None）。
-fn begin_stream(conversation_id: Option<&str>) -> Option<Arc<AtomicBool>> {
-    let conversation_id = conversation_id?;
+/// 登记一次生成（空键不登记、不可中断，返回 None）。
+fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
+    if key.is_empty() {
+        return None;
+    }
     let flag = Arc::new(AtomicBool::new(false));
     active_streams()
         .lock()
         .expect("streams poisoned")
-        .insert(conversation_id.to_string(), Arc::clone(&flag));
+        .insert(key.to_string(), Arc::clone(&flag));
     Some(flag)
 }
 
 /// 收尾：从登记表移除（worker 结束/被中止时调用）。
-fn end_stream(conversation_id: Option<&str>) {
-    let Some(conversation_id) = conversation_id else {
+fn end_stream(key: &str) {
+    if key.is_empty() {
         return;
-    };
+    }
     active_streams()
         .lock()
         .expect("streams poisoned")
-        .remove(conversation_id);
+        .remove(key);
 }
 
 /// 标记全部进行中的生成为取消；worker 在下一个 SSE 行处收尾。返回中止数量。
-fn stop_all_streams() -> usize {
+pub(crate) fn stop_all_streams() -> usize {
     let streams = active_streams().lock().expect("streams poisoned");
     for flag in streams.values() {
         flag.store(true, Ordering::Relaxed);
@@ -227,25 +230,48 @@ fn stop_all_streams() -> usize {
     streams.len()
 }
 
-/// 请求 + SSE 循环：增量逐段 emit（pending=true），结束后落库（有会话时）。
-/// 被停止（IIE4AD-365）时保留已生成部分并落库，仅中止后续读取。
-fn run_stream(
-    base_url: &str,
-    key: &str,
-    body: serde_json::Value,
-    command_id: &str,
-    conversation_id: Option<String>,
-    emitter: Arc<dyn Emitter>,
-) {
-    let cancel = begin_stream(conversation_id.as_deref());
+/// 帧构造器：全文 + pending → Item（聊天流 / AI 命令流各自的卡片形状）。
+pub(crate) type FrameBuilder = Arc<dyn Fn(&str, bool) -> Item + Send + Sync>;
+/// 流收尾钩子：全文 → ()（落库 / 自动回写回调）。
+pub(crate) type StreamFinish = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// 一次流式请求的完整规格（聊天流与 AI 命令流共用，ADR-0024）。
+pub(crate) struct StreamRequest {
+    pub base_url: String,
+    pub key: String,
+    pub body: serde_json::Value,
+    pub command_id: String,
+    pub stream_key: String,
+    pub item_of: FrameBuilder,
+    pub persist: StreamFinish,
+    pub on_done: StreamFinish,
+}
+
+/// 收尾钩子的空实现（不落库、无完成回调的流）。
+pub(crate) fn noop_sink(_text: &str) {}
+
+/// 请求 + SSE 循环：增量逐段 emit（pending=true）；自然完成时落库并回调 `on_done`。
+/// 被停止（IIE4AD-365）时保留已生成部分并落库、标记已停止，**不**触发 `on_done`。
+pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
+    let StreamRequest {
+        base_url,
+        key,
+        body,
+        command_id,
+        stream_key,
+        item_of,
+        persist,
+        on_done,
+    } = request;
+    let cancel = begin_stream(&stream_key);
     let emit = |text: String, pending: bool| {
         emitter.emit(CommandEvent::ItemUpdated {
-            command_id: command_id.to_string(),
-            item: answer_item(&text, conversation_id.as_deref(), pending),
+            command_id: command_id.clone(),
+            item: item_of(&text, pending),
         });
     };
     let fail = |text: String| {
-        persist_assistant(conversation_id.as_deref(), &text);
+        persist(&text);
         emit(text, false);
     };
 
@@ -257,20 +283,20 @@ fn run_stream(
         Ok(client) => client,
         Err(err) => {
             fail(format!("## 请求失败\n\n无法初始化 HTTP 客户端：{err}"));
-            end_stream(conversation_id.as_deref());
+            end_stream(&stream_key);
             return;
         }
     };
     let response = client
-        .post(chat_completions_url(base_url))
-        .bearer_auth(key)
+        .post(chat_completions_url(&base_url))
+        .bearer_auth(&key)
         .json(&body)
         .send();
     let response = match response {
         Ok(response) => response,
         Err(err) => {
             fail(format!("## 请求失败\n\n```\n{err}\n```"));
-            end_stream(conversation_id.as_deref());
+            end_stream(&stream_key);
             return;
         }
     };
@@ -283,7 +309,7 @@ fn run_stream(
             .take(500)
             .collect();
         fail(format!("## 端点返回 {status}\n\n```\n{body}\n```"));
-        end_stream(conversation_id.as_deref());
+        end_stream(&stream_key);
         return;
     }
 
@@ -307,7 +333,7 @@ fn run_stream(
             SseLine::Ignore => {}
         }
     }
-    end_stream(conversation_id.as_deref());
+    end_stream(&stream_key);
 
     if stopped {
         let text = if acc.is_empty() {
@@ -315,17 +341,19 @@ fn run_stream(
         } else {
             format!("{acc}\n\n_（已停止生成）_")
         };
-        persist_assistant(conversation_id.as_deref(), &text);
+        persist(&text);
         emit(text, false);
     } else if acc.is_empty() {
         fail("（端点没有返回内容）".into());
     } else {
-        persist_assistant(conversation_id.as_deref(), &acc);
-        emit(acc, false);
+        persist(&acc);
+        emit(acc.clone(), false);
+        on_done(&acc);
     }
 }
 
-const SETUP_MD: &str = "## 还没有配置 AI 端点\n\n\
+/// 未配置端点的引导卡（AI 问答与 AI 命令共用，ADR-0024）。
+pub(crate) const SETUP_MD: &str = "## 还没有配置 AI 端点\n\n\
 1. 运行命令「Moe: 打开配置文件」，填入：\n\n\
 ```toml\n\
 [ai]\n\
@@ -335,7 +363,8 @@ model = \"deepseek-chat\"\n\
 2. 存 API key：输入 `key <你的key>` 回车（只存本地密钥文件，不回显；也可设 `MOE_AI_API_KEY` 环境变量）。\n\n\
 支持任意 OpenAI 兼容端点（DeepSeek / OpenRouter / 本地 llama.cpp 等）。";
 
-const KEY_MISSING_MD: &str = "## 端点已配置，但还缺 API key\n\n\
+/// 缺 API key 的引导卡（同上共用）。
+pub(crate) const KEY_MISSING_MD: &str = "## 端点已配置，但还缺 API key\n\n\
 输入 `key <你的key>` 回车即可存入本地密钥文件（0600，不回显）；也可设 `MOE_AI_API_KEY` 环境变量。";
 
 /// 选中文字作为上下文时的长度上限（字符）。
@@ -466,13 +495,29 @@ impl AiShell {
         if let Some(emitter) = emitter {
             let body = ask_body(&model, &display, text, &attachments);
             let conversation_id_in_thread = conversation_id.clone();
+            let stream_key = conversation_id_in_thread.clone().unwrap_or_default();
+            let item_of: FrameBuilder = {
+                let conversation_id = conversation_id_in_thread.clone();
+                Arc::new(move |text, pending| {
+                    answer_item(text, conversation_id.as_deref(), pending)
+                })
+            };
+            let persist: StreamFinish = {
+                let conversation_id = conversation_id_in_thread.clone();
+                Arc::new(move |text| persist_assistant(conversation_id.as_deref(), text))
+            };
             std::thread::spawn(move || {
                 run_stream(
-                    &base_url,
-                    &key,
-                    body,
-                    "ai.quick-ask",
-                    conversation_id_in_thread,
+                    StreamRequest {
+                        base_url,
+                        key,
+                        body,
+                        command_id: "ai.quick-ask".into(),
+                        stream_key,
+                        item_of,
+                        persist,
+                        on_done: Arc::new(noop_sink),
+                    },
                     emitter,
                 );
             });
@@ -732,13 +777,27 @@ impl Extension for AiShell {
             messages.iter().map(attachment::expand_message).collect(),
         );
         let conversation = conversation_id.clone();
+        let stream_key = conversation.clone();
+        let item_of: FrameBuilder = {
+            let conversation = conversation.clone();
+            Arc::new(move |text, pending| answer_item(text, Some(&conversation), pending))
+        };
+        let persist: StreamFinish = {
+            let conversation = conversation.clone();
+            Arc::new(move |text| persist_assistant(Some(&conversation), text))
+        };
         std::thread::spawn(move || {
             run_stream(
-                &base_url,
-                &key,
-                body,
-                SIDE_COMMAND_ID,
-                Some(conversation),
+                StreamRequest {
+                    base_url,
+                    key,
+                    body,
+                    command_id: SIDE_COMMAND_ID.into(),
+                    stream_key,
+                    item_of,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                },
                 emitter,
             );
         });
@@ -771,15 +830,17 @@ impl Extension for AiShell {
     }
 }
 
+/// `stop_all_streams` 作用于**全局**注册表：并行跑的两个流测试会互相取消对方的流
+/// （一个测试的 stop 会把另一个测试刚登记的取消位一并标记），导致偶发失败。串行化。
+/// pub(crate)：AI 命令（ai_commands.rs）的流测试共用同一把锁。
+#[cfg(test)]
+pub(crate) static STREAM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use moe_core::contract::Extension;
     use std::time::Instant;
-
-    /// `stop_all_streams` 作用于**全局**注册表：并行跑的两个流测试会互相取消对方的流
-    /// （一个测试的 stop 会把另一个测试刚登记的取消位一并标记），导致偶发失败。串行化。
-    static STREAM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// 同款守卫：fallback 合成的 id 必须可路由；标题剥离附件 mention（IIE4AD-358）。
     #[test]
@@ -980,13 +1041,13 @@ mod tests {
     #[test]
     fn stop_all_streams_marks_active_flags() {
         let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
-        let flag = begin_stream(Some("test-stop-conv")).expect("登记取消位");
+        let flag = begin_stream("test-stop-conv").expect("登记取消位");
         assert!(!flag.load(Ordering::Relaxed));
         assert!(stop_all_streams() >= 1, "应至少命中刚登记的取消位");
         assert!(flag.load(Ordering::Relaxed), "取消位应被标记");
-        end_stream(Some("test-stop-conv"));
-        // 无持久化会话（id 为空）时不可中断
-        assert!(begin_stream(None).is_none());
+        end_stream("test-stop-conv");
+        // 空键不登记、不可中断
+        assert!(begin_stream("").is_none());
     }
 
     /// 端到端：慢速 SSE 流中途 `stop_generation` → 及时收尾，末帧 pending=false 且标记已停止。
@@ -1022,8 +1083,10 @@ mod tests {
         struct Recorder(Mutex<Vec<Item>>);
         impl Emitter for Recorder {
             fn emit(&self, event: CommandEvent) {
-                let CommandEvent::ItemUpdated { item, .. } = event;
-                self.0.lock().unwrap().push(item);
+                match event {
+                    CommandEvent::ItemUpdated { item, .. } => self.0.lock().unwrap().push(item),
+                    CommandEvent::WriteBack { .. } => {}
+                }
             }
         }
         let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
@@ -1032,13 +1095,23 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let base_url = format!("http://{addr}/v1");
         std::thread::spawn(move || {
+            // 不存在的会话：落库是 no-op（db 层的悬空行防护），不会污染真实历史
+            let conversation = "stop-e2e";
+            let item_of: FrameBuilder =
+                Arc::new(move |text, pending| answer_item(text, Some(conversation), pending));
+            let persist: StreamFinish =
+                Arc::new(move |text| persist_assistant(Some(conversation), text));
             run_stream(
-                &base_url,
-                "test-key",
-                serde_json::json!({}),
-                "ai.quick-ask",
-                // 不存在的会话：落库是 no-op（db 层的悬空行防护），不会污染真实历史
-                Some("stop-e2e".into()),
+                StreamRequest {
+                    base_url,
+                    key: "test-key".into(),
+                    body: serde_json::json!({}),
+                    command_id: "ai.quick-ask".into(),
+                    stream_key: "stop-e2e".into(),
+                    item_of,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                },
                 emitter,
             );
             let _ = done_tx.send(());

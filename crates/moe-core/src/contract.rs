@@ -189,7 +189,15 @@ impl std::error::Error for MoeError {}
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum CommandEvent {
-    ItemUpdated { command_id: String, item: Item },
+    ItemUpdated {
+        command_id: String,
+        item: Item,
+    },
+    /// 后台生成**自然完成**后的自动回写请求（AI 命令流式完成 → 替换选区，ADR-0024）。
+    /// 平台层拦截执行（回写 + 收起面板），不转发给 UI；被停止（Esc）的生成不发。
+    WriteBack {
+        text: String,
+    },
 }
 
 /// 增量事件出口。worker 线程也会发事件，因此要求线程安全。
@@ -315,6 +323,16 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["itemUpdated"]["commandId"], "ai.quick-ask");
         assert_eq!(json["itemUpdated"]["item"]["id"], "ai.answer");
+    }
+
+    /// 自动回写事件（ADR-0024）：形状稳定，平台层拦截用。
+    #[test]
+    fn write_back_event_serializes() {
+        let json = serde_json::to_value(CommandEvent::WriteBack {
+            text: "改写后的文本".into(),
+        })
+        .unwrap();
+        assert_eq!(json["writeBack"]["text"], "改写后的文本");
     }
 
     /// 选择上下文（ADR-0021）：文字 + 文件同进同出，camelCase 形状稳定。

@@ -450,6 +450,7 @@ mod tests {
                 assert_eq!(command_id, "stream.ask");
                 assert_eq!(item.id, "stream.item");
             }
+            CommandEvent::WriteBack { .. } => panic!("StreamingToy 不发 WriteBack"),
         }
     }
 

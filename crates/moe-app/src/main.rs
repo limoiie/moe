@@ -118,6 +118,13 @@ struct TauriEventEmitter(AppHandle);
 
 impl CommandEmitter for TauriEventEmitter {
     fn emit(&self, event: CommandEvent) {
+        // AI 命令流式完成后的自动回写（ADR-0024）：写回宿主应用并收起面板，不转发给 UI。
+        if let CommandEvent::WriteBack { text } = &event {
+            if let Err(err) = deliver_writeback(&self.0, text.clone()) {
+                eprintln!("moe: 自动回写失败: {err}");
+            }
+            return;
+        }
         let _ = self.0.emit("command-event", event);
     }
 }
