@@ -398,7 +398,14 @@ function renderDetail() {
   const v = view.get();
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
   const shape = pageShapeOf(item, v.detailFull === true, v.items.length);
-  if (detailMode === "message" || previewDismissed || shape === "list" || !item) {
+  // 两栏页面的详情栏是页面的一部分（不可收起）：previewDismissed 只作用于整屏详情
+  const dismissible = shape === "detail";
+  if (
+    detailMode === "message" ||
+    (dismissible && previewDismissed) ||
+    shape === "list" ||
+    !item
+  ) {
     if (detailMode !== "message") clearDetail();
     return;
   }
@@ -414,10 +421,18 @@ function renderDetail() {
   }
 }
 
-/** Esc 的第一层：消费掉可见的详情（返回 true 表示已消费）。 */
+/**
+ * Esc/Backspace 的第一层：消费掉可收起的详情（返回 true 表示已消费）。
+ * 只有「整屏详情」可以收起（收掉后能看到那条结果行）；两栏页面的详情栏
+ * 是页面的一部分，不收起——Back 直接回根（ADR-0018）。
+ */
 function dismissDetail(): boolean {
   if (detailMode === "none") return false;
-  if (detailMode === "preview") previewDismissed = true;
+  const v = view.get();
+  const item = v.mode === "items" ? v.items[v.focus] : undefined;
+  const shape = pageShapeOf(item, v.detailFull === true, v.items.length);
+  if (shape !== "detail") return false;
+  previewDismissed = true;
   clearDetail();
   return true;
 }
