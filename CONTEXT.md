@@ -60,6 +60,10 @@ _Avoid_: 执行、打开、启用
 对同一 Focused Item 的具名替代操作，各有固定快捷键（如 ⌥Enter 复制纯文本、复制 HTML 等）。主副之分是 Command 的一致语义约定，不由各 Extension 自定。
 _Avoid_: 右键菜单
 
+**Copy（复制）**:
+SecondaryCopy（默认 ⌥Enter）的默认语义：把 Focused Item 的文本写入系统剪贴板，**不动宿主应用**（与 Write Back 相对，ADR-0002 增补）。
+_Avoid_: 剪贴、拷贝到剪贴板
+
 **Selection（选区）**:
 指用户在其他应用中选中的文字。Moe 自身的列表选择不叫 Selection，叫 Focus。
 _Avoid_: 用 Selection 指代 Focused Item

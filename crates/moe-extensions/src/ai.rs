@@ -426,8 +426,13 @@ impl Extension for AiShell {
             "write-back" => Ok(ActionResult::WriteBack {
                 text: item.detail.clone().unwrap_or_else(|| item.title.clone()),
             }),
-            // 真剪贴板写入接 moe-platform 后替换（M3a 后续）。
-            "copy" => Ok(ActionResult::Silent),
+            // ⌥⏎ 复制：写系统剪贴板（平台能力），不回写宿主应用
+            "copy" => {
+                let text = item.detail.clone().unwrap_or_else(|| item.title.clone());
+                moe_platform::clipboard::copy(&text)
+                    .map_err(|err| MoeError::Internal(err.to_string()))?;
+                Ok(ActionResult::Silent)
+            }
             // 侧栏开窗：载荷原样交给平台的 chat 窗口。
             "materialize" => Ok(ActionResult::OpenSideView {
                 payload: item.payload.clone(),

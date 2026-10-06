@@ -60,6 +60,7 @@ const q = document.querySelector<HTMLInputElement>("#query")!;
 const listEl = document.querySelector<HTMLUListElement>("#list")!;
 const detailEl = document.querySelector<HTMLDivElement>("#detail")!;
 const hintsEl = document.querySelector<HTMLElement>("#hints")!;
+const toastEl = document.querySelector<HTMLDivElement>("#toast")!;
 
 const view = store<View>({
   mode: "commands",
@@ -71,6 +72,21 @@ const view = store<View>({
 
 /// 当前详情卡片对应的 item（流式事件据此重渲）
 let detailItemId: string | null = null;
+/** 详情卡片的形态：preview（焦点预览，列表仍在）/ message（全屏卡片，如错误）。 */
+type DetailMode = "none" | "preview" | "message";
+let detailMode: DetailMode = "none";
+/** Esc 收起预览后，直到焦点变化才重新展开（Raycast 同款层级）。 */
+let previewDismissed = false;
+
+// ---- 轻量反馈（⌥⏎ 复制等无 UI 结果的动作）----
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+function toast(text: string) {
+  toastEl.textContent = text;
+  toastEl.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 1200);
+}
 
 // ---- Hints Bar：键位语义来自 Rust 统一键位表，视图层不自行发明 ----
 
@@ -146,6 +162,63 @@ function render() {
       return li;
     }),
   );
+  renderDetail();
+}
+
+// ---- 详情卡片：焦点预览（列表共存）/ 全屏消息（错误等）----
+
+const DETAIL_MESSAGE_CLASS =
+  "md min-h-0 flex-1 overflow-y-auto px-4 pb-3 text-sm text-zinc-200";
+const DETAIL_PREVIEW_CLASS =
+  "md max-h-[55%] flex-none overflow-y-auto border-b border-zinc-800 px-4 pb-2 pt-3 text-sm text-zinc-200";
+
+function paintDetail(markdown: string, itemId: string | null) {
+  const nearBottom =
+    detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
+  detailEl.innerHTML = DOMPurify.sanitize(
+    marked.parse(markdown, { async: false }),
+  );
+  detailItemId = itemId;
+  if (nearBottom) detailEl.scrollTop = detailEl.scrollHeight;
+}
+
+function clearDetail() {
+  detailMode = "none";
+  detailItemId = null;
+  detailEl.className = "md hidden";
+  detailEl.replaceChildren();
+}
+
+/** 全屏卡片（错误、回写失败等）：隐藏列表。 */
+function showMessage(markdown: string) {
+  detailMode = "message";
+  detailEl.className = DETAIL_MESSAGE_CLASS;
+  paintDetail(markdown, null);
+  listEl.classList.add("hidden");
+}
+
+/** 焦点预览：items 模式下焦点项有 detail 就展示（列表保持可见）。 */
+function renderDetail() {
+  const v = view.get();
+  const item = v.mode === "items" ? v.items[v.focus] : undefined;
+  const preview = item?.detail;
+  if (detailMode === "message" || previewDismissed || !preview) {
+    if (detailMode !== "message") clearDetail();
+    return;
+  }
+  detailMode = "preview";
+  detailEl.className = DETAIL_PREVIEW_CLASS;
+  paintDetail(preview, item.id);
+  listEl.classList.remove("hidden");
+}
+
+/** Esc 的第一层：消费掉可见的详情（返回 true 表示已消费）。 */
+function dismissDetail(): boolean {
+  if (detailMode === "none") return false;
+  if (detailMode === "preview") previewDismissed = true;
+  clearDetail();
+  listEl.classList.remove("hidden");
+  return true;
 }
 
 view.subscribe(render);
@@ -157,24 +230,6 @@ function primaryOf(item: Item) {
 }
 function secondaryOf(item: Item) {
   return item.actions.find((a) => a.kind === "secondary");
-}
-
-function showDetail(markdown: string, sourceItemId: string | null = null) {
-  const nearBottom =
-    detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
-  detailEl.innerHTML = DOMPurify.sanitize(
-    marked.parse(markdown, { async: false }),
-  );
-  detailEl.classList.remove("hidden");
-  listEl.classList.add("hidden");
-  detailItemId = sourceItemId;
-  if (nearBottom) detailEl.scrollTop = detailEl.scrollHeight;
-}
-function hideDetail() {
-  detailEl.classList.add("hidden");
-  detailEl.innerHTML = "";
-  listEl.classList.remove("hidden");
-  detailItemId = null;
 }
 
 function applyResult(res: ActionResult, commandId: string, live = false) {
@@ -192,6 +247,8 @@ function applyResult(res: ActionResult, commandId: string, live = false) {
   }
   if ("list" in res) {
     const items = res.list.items;
+    clearDetail();
+    previewDismissed = false;
     view.update((v) => ({
       ...v,
       mode: "items",
@@ -200,10 +257,6 @@ function applyResult(res: ActionResult, commandId: string, live = false) {
       sourceCommandId: commandId,
       sourceLive: live,
     }));
-    const first = items[0];
-    if (first?.detail) {
-      showDetail(first.detail, first.id);
-    }
   }
 }
 
@@ -223,7 +276,7 @@ async function applyFocused(alt: boolean) {
       }
       applyResult(res, cmd.id, cmd.live);
     } catch (err) {
-      showDetail(`执行失败：${String(err)}`);
+      showMessage(`执行失败：${String(err)}`);
     }
     return;
   }
@@ -239,9 +292,10 @@ async function applyFocused(alt: boolean) {
         item,
         action,
       });
+      if (action.id === "copy") toast("已复制");
       applyResult(res, v.sourceCommandId, v.sourceLive);
     } catch (err) {
-      showDetail(`执行失败：${String(err)}`);
+      showMessage(`执行失败：${String(err)}`);
     }
     return;
   }
@@ -255,13 +309,15 @@ async function applyFocused(alt: boolean) {
       item,
       action,
     });
+    if (action.id === "copy") toast("已复制");
     applyResult(res, v.sourceCommandId, v.sourceLive);
   } catch (err) {
-    showDetail(`执行失败：${String(err)}`);
+    showMessage(`执行失败：${String(err)}`);
   }
 }
 
 function move(delta: number) {
+  previewDismissed = false;
   view.update((v) => {
     const len =
       v.mode === "commands" ? v.commands.length : v.mode === "items" ? v.items.length : v.actions.length;
@@ -307,15 +363,14 @@ async function rerunLive(query: string) {
     });
     applyResult(res, v.sourceCommandId, true);
   } catch (err) {
-    showDetail(`执行失败：${String(err)}`);
+    showMessage(`执行失败：${String(err)}`);
   }
 }
 
-// Esc 分层回退：detail → 结果层 → 输入 → 关面板（ADR-0006 Keymap::Back）
+// Esc 分层回退：预览/详情 → 结果层 → 输入 → 关面板（ADR-0006 Keymap::Back）
 async function back() {
   const v = view.get();
-  if (!detailEl.classList.contains("hidden")) {
-    hideDetail();
+  if (dismissDetail()) {
     return;
   }
   if (v.mode !== "commands") {
@@ -331,7 +386,8 @@ async function back() {
 }
 
 async function refresh(query: string) {
-  hideDetail();
+  clearDetail();
+  previewDismissed = false;
   const commands = await invoke<CommandMeta[]>("search_commands", { query });
   view.update((v) => ({ ...v, mode: "commands", commands, focus: 0 }));
 }
@@ -554,11 +610,8 @@ void listen<CommandEventPayload>("command-event", (event) => {
   if (idx === -1) return;
   const items = v.items.slice();
   items[idx] = payload.item;
+  // view 更新会触发 render() → 预览就地在流式事件上重渲（保持贴底）
   view.update((s) => ({ ...s, items }));
-  // 详情卡片开着且正是这个 item：流式重渲（自动滚底）
-  if (detailItemId === payload.item.id && payload.item.detail) {
-    showDetail(payload.item.detail, payload.item.id);
-  }
 });
 void listen("summon-authorized", () => hideBanner());
 

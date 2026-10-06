@@ -259,3 +259,16 @@ pub type MacTextTarget = HybridTextTarget<MacAx, MacClipboard>;
 pub fn mac_text_target() -> MacTextTarget {
     HybridTextTarget::new(MacAx, MacClipboard)
 }
+
+/// 写文本到系统剪贴板（「复制」类动作与回写降级共用同一实现，IIE4AD-364）。
+pub fn copy_text(text: &str) {
+    MacClipboard.set_text(text);
+}
+
+/// 读回剪贴板文本（测试与诊断用）。
+pub fn clipboard_read_text() -> Option<String> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    // SAFETY: extern static 的读取。
+    let ty = unsafe { NSPasteboardTypeString };
+    pasteboard.stringForType(ty).map(|text| text.to_string())
+}
