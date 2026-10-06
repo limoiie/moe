@@ -5,6 +5,66 @@ body {
   background: transparent;
 }
 
+/* 键位块（shadcn Kbd 同款）：每键一个方块，字符居中、行内基线对齐 */
+.moe-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+}
+.moe-keys-sep {
+  margin: 0 2px;
+  font-size: 10px;
+  line-height: 1;
+  color: #52525b;
+}
+.moe-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid rgb(82 82 91 / 0.55);
+  border-radius: 5px;
+  background: rgb(39 39 42 / 0.85);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.25);
+  color: #d4d4d8;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* 底部悬浮动作条（Raycast 同款）：主操作 + 动作，浮在列表之上 */
+.moe-action-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.moe-action-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgb(82 82 91 / 0.55);
+  border-radius: 8px;
+  background: rgb(39 39 42 / 0.82);
+  padding: 4px 8px;
+  color: #e4e4e7;
+  font-size: 12px;
+  line-height: 1;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 6px 18px rgb(0 0 0 / 0.45),
+    0 1px 0 rgb(255 255 255 / 0.04) inset;
+}
+.moe-action-bar button:hover {
+  background: rgb(63 63 70 / 0.92);
+}
+.moe-action-bar button:disabled {
+  opacity: 0.45;
+}
+
 /* 生成中的行内指示：三点跳动 + 文案（面板与侧栏共用） */
 .moe-generating {
   display: inline-flex;

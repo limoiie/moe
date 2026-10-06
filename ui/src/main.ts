@@ -6,7 +6,8 @@ import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
-import { generalActionOf } from "./keymap";
+import { kbdEl } from "./kbd";
+import { GENERAL_KEY_LABELS, generalActionOf, type EntryAction } from "./keymap";
 import { store } from "./store";
 
 // ---- 类型：镜像 moe-core 的 serde camelCase 契约（ADR-0006）----
@@ -51,13 +52,19 @@ type ActionResult =
 
 // ---- 视图状态 ----
 
+/** actions 层的条目：Focused Item 的动作，或平台通用动作（Browse/New，ADR-0014）。 */
+interface ActionRow {
+  action: Action;
+  platform?: EntryAction;
+}
+
 type Mode = "commands" | "items" | "actions";
 interface View {
   mode: Mode;
   focus: number;
   commands: CommandMeta[];
   items: Item[];
-  actions: Action[];
+  actions: ActionRow[];
   /** actions 模式下来自哪个 item；items 模式的来源 Command。 */
   sourceCommandId?: string;
   /** 来源 Command 的图标（结果项未自带图标时的回退）。 */
@@ -74,7 +81,7 @@ interface View {
 const q = document.querySelector<HTMLInputElement>("#query")!;
 const listEl = document.querySelector<HTMLUListElement>("#list")!;
 const detailEl = document.querySelector<HTMLDivElement>("#detail")!;
-const hintsEl = document.querySelector<HTMLElement>("#hints")!;
+const actionBarEl = document.querySelector<HTMLDivElement>("#action-bar")!;
 const toastEl = document.querySelector<HTMLDivElement>("#toast")!;
 const toastIconEl = document.querySelector<HTMLSpanElement>("#toast-icon")!;
 const toastTextEl = document.querySelector<HTMLSpanElement>("#toast-text")!;
@@ -91,8 +98,6 @@ const view = store<View>({
 
 /// 当前详情卡片对应的 item（流式事件据此重渲）
 let detailItemId: string | null = null;
-/** Hints Bar 里的动态「Esc 停止」提示（仅在流式期间显示）。 */
-let stopHintEl: HTMLSpanElement | null = null;
 /** 详情卡片的形态：preview（焦点预览，列表仍在）/ message（全屏卡片，如错误）。 */
 type DetailMode = "none" | "preview" | "message";
 let detailMode: DetailMode = "none";
@@ -114,63 +119,86 @@ function toast(text: string) {
   }, 1200);
 }
 
-// ---- Hints Bar：键位语义来自 Rust 统一键位表，视图层不自行发明 ----
+// ---- 悬浮动作条（Raycast 同款）：主操作 + 动作，键位仍取自 Rust 统一键位表 ----
 
-const HINT_LABELS: Record<string, string> = {
-  navDown: "导航",
-  navUp: "导航",
-  apply: "应用",
-  secondaryCopy: "复制",
-  showAllActions: "动作",
-  browse: "浏览",
-  new: "新建",
-  back: "回退",
-  materialize: "侧栏",
-  attach: "附件",
-};
+/** 语义 → 展示串（如 apply → "⏎"、showAllActions → "⌘K / ⌘⇧P"）。 */
+const keyDisplay = new Map<string, string>();
 
-async function initHints() {
+async function initActionBar() {
   const entries = await invoke<[string, string][]>("keymap");
-  // 分组：导航 / 操作 / 回退（Raycast 同款：一组一个语义段，分隔线区隔）
-  const GROUP_OF: Record<string, number> = {
-    navDown: 0,
-    navUp: 0,
-    apply: 1,
-    secondaryCopy: 1,
-    showAllActions: 1,
-    browse: 1,
-    new: 1,
-    materialize: 1,
-    attach: 1,
-    back: 2,
-  };
-  const nodes: Node[] = [];
-  let lastGroup = -1;
   for (const [display, semantic] of entries) {
-    const group = GROUP_OF[semantic] ?? 1;
-    if (lastGroup !== -1 && group !== lastGroup) {
-      const divider = document.createElement("span");
-      divider.className = "h-3 w-px bg-zinc-700";
-      nodes.push(divider);
-    }
-    lastGroup = group;
-    const span = document.createElement("span");
-    const kbd = document.createElement("kbd");
-    kbd.className = "text-zinc-200";
-    kbd.textContent = display;
-    span.append(kbd, ` ${HINT_LABELS[semantic] ?? semantic}`);
-    nodes.push(span);
+    if (!keyDisplay.has(semantic)) keyDisplay.set(semantic, display);
   }
-  // 流式期间的动态键位：Esc = 停止生成（pending 时显示，IIE4AD-365）
-  const stop = document.createElement("span");
-  stop.className = "hidden";
-  const stopKey = document.createElement("kbd");
-  stopKey.className = "text-zinc-200";
-  stopKey.textContent = "Esc";
-  stop.append(stopKey, " 停止");
-  stopHintEl = stop;
-  nodes.push(stop);
-  hintsEl.replaceChildren(...nodes);
+  renderActionBar();
+}
+
+/** 焦点项的主操作（与 Apply 同一语义）：返回标题与点击时的落点。 */
+function primaryActionOf(): { title: string; keys: string; run: () => void; disabled: boolean } {
+  const v = view.get();
+  const applyKeys = keyDisplay.get("apply") ?? "⏎";
+  if (v.mode === "items") {
+    const item = v.items[v.focus];
+    // 生成中：主操作让位给停止（IIE4AD-365，Esc 的第一优先级）
+    if (item?.pending) {
+      return {
+        title: "停止生成",
+        keys: keyDisplay.get("back") ?? "Esc",
+        run: () => void stopGeneration(),
+        disabled: false,
+      };
+    }
+    const action = item ? primaryOf(item) : undefined;
+    return {
+      title: action?.title ?? "应用",
+      keys: action?.keybinding ?? applyKeys,
+      run: () => void applyFocused(false),
+      disabled: !action,
+    };
+  }
+  if (v.mode === "actions") {
+    const row = v.actions[v.focus];
+    return {
+      title: row?.action.title ?? "应用",
+      keys: row?.action.keybinding ?? applyKeys,
+      run: () => void applyFocused(false),
+      disabled: !row,
+    };
+  }
+  return { title: "应用", keys: applyKeys, run: () => void applyFocused(false), disabled: false };
+}
+
+function renderActionBar() {
+  const primary = primaryActionOf();
+  const primaryButton = document.createElement("button");
+  primaryButton.id = "primary-action";
+  primaryButton.disabled = primary.disabled;
+  primaryButton.title = `${primary.title}（${primary.keys}）`;
+  primaryButton.append(
+    document.createTextNode(primary.title),
+    kbdEl(primary.keys, { firstOnly: true }),
+  );
+  primaryButton.addEventListener("click", () => {
+    primary.run();
+    q.focus(); // 动作条不抢输入栏焦点（keyboard-first）
+  });
+
+  const actionsKeys = keyDisplay.get("showAllActions") ?? "⌘K";
+  const actionsButton = document.createElement("button");
+  actionsButton.id = "actions-action";
+  actionsButton.title = `全部动作（${actionsKeys}）`;
+  actionsButton.append(document.createTextNode("动作"), kbdEl(actionsKeys, { firstOnly: true }));
+  actionsButton.addEventListener("click", () => {
+    if (view.get().mode === "actions") closeActions();
+    else void openActions();
+    q.focus();
+  });
+
+  // 按钮不能抢走输入栏焦点（否则后续 Enter 会重复点击按钮）
+  for (const button of [primaryButton, actionsButton]) {
+    button.addEventListener("mousedown", (e) => e.preventDefault());
+  }
+
+  actionBarEl.replaceChildren(primaryButton, actionsButton);
 }
 
 // ---- 渲染 ----
@@ -207,10 +235,16 @@ function currentEntries(): Row[] {
       };
     });
   }
-  return v.actions.map((a) => ({
-    title: a.title,
-    key: a.keybinding ?? (a.kind === "primary" ? "⏎" : undefined),
-    icon: a.kind === "primary" ? "corner-down-left" : "copy",
+  return v.actions.map(({ action, platform }) => ({
+    title: action.title,
+    key: action.keybinding ?? (action.kind === "primary" ? "⏎" : undefined),
+    icon: platform
+      ? platform === "browse"
+        ? "history"
+        : "plus"
+      : action.kind === "primary"
+        ? "corner-down-left"
+        : "copy",
   }));
 }
 
@@ -242,10 +276,10 @@ function render() {
     }
     li.append(left);
     if (e.key) {
-      const k = document.createElement("kbd");
-      k.className = "shrink-0 text-xs text-zinc-400";
-      k.textContent = e.key;
-      li.append(k);
+      // 键位块（shadcn Kbd 同款）：与动作条、⌘K 面板保持同一种嵌键样式
+      const keys = kbdEl(e.key, { firstOnly: true });
+      keys.classList.add("shrink-0");
+      li.append(keys);
     }
     li.addEventListener("mousedown", () => {
       view.update((s) => ({ ...s, focus: i }));
@@ -256,9 +290,7 @@ function render() {
   // 键盘导航：焦点行始终留在视口内（长列表）
   rows[v.focus]?.scrollIntoView({ block: "nearest" });
   renderDetail();
-  // 流式占位项：显示「Esc 停止」
-  const pending = v.mode === "items" && v.items[v.focus]?.pending === true;
-  stopHintEl?.classList.toggle("hidden", !pending);
+  renderActionBar();
   updatePlaceholder();
 }
 
@@ -278,11 +310,12 @@ function updatePlaceholder() {
 
 // ---- 详情卡片：焦点预览（列表共存）/ 全屏消息（错误等）----
 
-const DETAIL_MESSAGE_CLASS =
-  "md min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-3 text-sm text-zinc-200";
 // 结果层多条：列表在左、详情在右（Raycast 同款左右分栏，IIE4AD 反馈 #1）
+// 底部留出悬浮动作条的高度（pb-14），最后一屏内容不被按钮遮住
+const DETAIL_MESSAGE_CLASS =
+  "md min-h-0 flex-1 overflow-y-auto px-4 pb-14 pt-3 text-sm text-zinc-200";
 const DETAIL_PREVIEW_CLASS =
-  "md w-[58%] shrink-0 overflow-y-auto border-l border-zinc-800 px-4 py-3 text-sm text-zinc-200";
+  "md w-[58%] shrink-0 overflow-y-auto border-l border-zinc-800 px-4 pb-14 pt-3 text-sm text-zinc-200";
 
 function paintDetail(markdown: string, itemId: string | null, pending: boolean) {
   const nearBottom =
@@ -486,10 +519,18 @@ async function applyFocused(alt: boolean) {
     }
     return;
   }
-  // actions 模式：⌘K 展开后的选择
-  const action = v.actions[v.focus];
+  // actions 模式：⌘K 展开后的选择（item 动作，或平台通用动作 Browse/New）
+  const row = v.actions[v.focus];
+  if (!row) return;
+  if (row.platform) {
+    // 平台通用动作（ADR-0014）：与 ⌘P/⌘N 同一条路径，没声明就给提示
+    closeActions();
+    await openEntry(row.platform);
+    return;
+  }
+  const action = row.action;
   const item = v.items[v.itemIndex ?? 0];
-  if (!action || !item || !v.sourceCommandId) return;
+  if (!item || !v.sourceCommandId) return;
   try {
     const res = await invoke<ActionResult>("run_item_action", {
       commandId: v.sourceCommandId,
@@ -512,16 +553,53 @@ function move(delta: number) {
   });
 }
 
-function openActions() {
+/**
+ * 打开动作层：Focused Item 的主/副操作，末尾附上该 Extension 真的
+ * 声明了的平台通用动作（Browse ⌘P / New ⌘N，ADR-0014）——所有可做的事都在这一层。
+ */
+async function openActions() {
   const v = view.get();
   if (v.mode !== "items") return;
+  const item = v.items[v.focus];
+  const rows: ActionRow[] = (item?.actions ?? []).map((action) => ({ action }));
+  if (v.sourceCommandId) {
+    const kinds: EntryAction[] = ["browse", "new"];
+    const found = await Promise.all(
+      kinds.map((kind) =>
+        invoke<CommandMeta | null>("entry_command", {
+          commandId: v.sourceCommandId,
+          kind,
+        }).catch(() => null),
+      ),
+    );
+    kinds.forEach((kind, index) => {
+      const entry = found[index];
+      if (!entry) return;
+      rows.push({
+        platform: kind,
+        action: {
+          id: `moe.platform.${kind}`,
+          title: kind === "browse" ? "浏览记录" : "新建记录",
+          kind: "secondary",
+          keybinding: GENERAL_KEY_LABELS[kind],
+        },
+      });
+    });
+  }
   view.update((s) => ({
     ...s,
     mode: "actions",
-    actions: s.items[s.focus]?.actions ?? [],
+    actions: rows,
     itemIndex: s.focus,
     focus: 0,
   }));
+}
+
+/** 动作层返回上一层（结果层）；Esc 与动作按钮都走这里。 */
+function closeActions() {
+  const v = view.get();
+  if (v.mode !== "actions") return;
+  view.update((s) => ({ ...s, mode: "items", focus: s.itemIndex ?? 0 }));
 }
 
 async function materialize() {
@@ -554,12 +632,17 @@ async function rerunLive(query: string) {
   }
 }
 
-// Esc 分层回退：停止生成 → 预览/详情 → 结果层 → 输入 → 关面板（ADR-0006 Keymap::Back）
+// Esc 分层回退：停止生成 → 动作层 → 预览/详情 → 结果层 → 输入 → 关面板（ADR-0006 Keymap::Back）
 async function back() {
   const v = view.get();
   // 流式生成中：Esc 的第一优先级是停止（IIE4AD-365）
   if (v.mode === "items" && v.items[v.focus]?.pending) {
     await stopGeneration();
+    return;
+  }
+  // 动作层是自己打开的一层：Esc 先收回结果层，再往下退（Raycast 同款）
+  if (v.mode === "actions") {
+    closeActions();
     return;
   }
   if (dismissDetail()) {
@@ -608,8 +691,9 @@ let attachBarToken = 0;
 
 /** Input Bar 前置图标：平时搜索，附件模式换纸夹（ADR-0012）。 */
 function renderInputIcon() {
+  // 与列表行同一列：尺寸/颜色对齐（ADR：Input Bar 与 Result List 同一网格）
   inputIconEl.replaceChildren(
-    iconEl(attaching ? "paperclip" : "search", { size: 18, className: "text-zinc-500" }),
+    iconEl(attaching ? "paperclip" : "search", { size: 16, className: "text-zinc-400" }),
   );
 }
 
@@ -705,7 +789,7 @@ window.addEventListener("keydown", (e) => {
   const general = generalActionOf(e);
   if (general) {
     e.preventDefault();
-    if (general === "actions") openActions();
+    if (general === "actions") void openActions();
     else void openEntry(general);
     return;
   }
@@ -720,7 +804,7 @@ window.addEventListener("keydown", (e) => {
     void applyFocused(e.altKey);
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
-    openActions();
+    void openActions();
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "m") {
     e.preventDefault();
     void materialize();
@@ -844,7 +928,7 @@ window.addEventListener("focus", () => {
   void refreshBanner();
 });
 
-await initHints();
+await initActionBar();
 renderInputIcon();
 await refresh("");
 await refreshBanner();

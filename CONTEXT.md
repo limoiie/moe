@@ -98,8 +98,11 @@ _Avoid_: 历史、列表视图（Browse 特指这个键位语义）
 与 Browse、Actions 一起构成跨 Command/子应用的三个通用动作（ADR-0014）。
 _Avoid_: 新建窗口、加号
 
-**Hints Bar（动作提示条）**:
-面板底部的常显区域，展示当前形态下可用的键位与动作，是 Show All Actions 之外的可发现性保障。
+**Action Bar（底部动作条）**:
+面板右下角悬浮的两个按钮：**主操作**（当前 Focused Item 的主操作，生成中变为「停止生成」）
+与**动作**（`⌘K` / `⌘⇧P`，展开全部动作）。浮在 Result List 之上（带阴影与模糊），
+取代过去的 Hints Bar：键位与动作统一收进这一处，不再常显整行提示（ADR-0015）。
+_Avoid_: 提示条、Hints Bar（旧名）
 
 **Write Back（回写）**:
 把命令结果交付回用户文本上下文的方式：有 Selection 则替换之，无则插入到光标处。只有回写类 Command 才有此行为。

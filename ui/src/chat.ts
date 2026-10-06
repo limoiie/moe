@@ -7,6 +7,7 @@ import "./styles.css";
 import { appendMention, validatePath } from "./attachment";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
+import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
 
 // ---- 类型：镜像 Rust 契约（ADR-0006）----
@@ -281,7 +282,7 @@ function openConfig() {
 
 function menuActions(): MenuAction[] {
   return [
-    { label: "新对话", icon: "plus", shortcut: "⌘N", run: newChat },
+    { label: "新对话", icon: "plus", shortcut: GENERAL_KEY_LABELS.new, run: newChat },
     { label: "打开配置文件", icon: "settings-2", run: openConfig },
     { label: "收起侧栏", icon: "close", shortcut: "Esc", run: () => void getCurrentWindow().hide() },
   ];
@@ -299,10 +300,9 @@ function renderActionsMenu() {
       label.textContent = action.label;
       button.append(label);
       if (action.shortcut) {
-        const kbd = document.createElement("span");
-        kbd.className = "shrink-0 text-[10px] text-zinc-500";
-        kbd.textContent = action.shortcut;
-        button.append(kbd);
+        const keys = kbdEl(action.shortcut, { firstOnly: true });
+        keys.classList.add("shrink-0");
+        button.append(keys);
       }
       button.addEventListener("click", () => {
         closeActionsMenu();
@@ -636,11 +636,12 @@ attachEl.addEventListener("click", () => {
 
 function updateSendUi() {
   sendEl.className = generating
-    ? "flex items-center gap-1 rounded-md bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-500"
-    : "flex items-center gap-1 rounded-md bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500";
+    ? "flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-500"
+    : "flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500";
   sendEl.replaceChildren(
     iconEl(generating ? "stop" : "send", { size: 13 }),
-    document.createTextNode(generating ? "停止" : "发送 ⏎"),
+    document.createTextNode(generating ? "停止" : "发送"),
+    kbdEl(generating ? "Esc" : "⏎", { firstOnly: true }),
   );
 }
 

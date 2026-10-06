@@ -6,6 +6,9 @@
 
 export type GeneralAction = "browse" | "actions" | "new";
 
+/** 需要 Extension 声明入口的两个通用动作（与 Rust `EntryKind` 一一对应）。 */
+export type EntryAction = Exclude<GeneralAction, "actions">;
+
 /** 展示串（tooltip/提示用），与 Rust 键位表一致。 */
 export const GENERAL_KEY_LABELS: Record<GeneralAction, string> = {
   browse: "⌘P",
