@@ -9,8 +9,10 @@ import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, type EntryAction } from "./keymap";
 import {
+  DETAIL_PANE_CLASS,
+  LIST_FULL_CLASS,
+  LIST_NARROW_CLASS,
   PANEL_SIZE,
-  SPLIT_PANE_CLASS,
   pageShapeOf,
   type PageShape,
 } from "./layout";
@@ -297,12 +299,9 @@ function updatePlaceholder() {
 
 // ---- 页面形态（ADR-0018）：列表 / 两栏 / 详情，三种形态共用一套排版 ----
 
-// 整屏详情（message）：底部留出悬浮动作条的高度（距下边 8px + 胶囊约 32px）
-const DETAIL_MESSAGE_CLASS =
-  "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-zinc-200";
-// 两栏页面：左侧列表 + 右侧详情（宽度与形态见 ui/src/layout.ts）
-const DETAIL_PREVIEW_CLASS =
-  `md ${SPLIT_PANE_CLASS} shrink-0 overflow-y-auto border-l border-zinc-800 px-4 pb-12 pt-3 text-sm text-zinc-200`;
+// 详情容器（两栏页面与详情整屏共用）：吃满列表剩下的宽度，底部留出悬浮动作条的高度。
+// 两栏页面的「窄列表 + 宽详情」由 layout.ts 的三个类决定，见那里的说明。
+const DETAIL_MESSAGE_CLASS = DETAIL_PANE_CLASS;
 
 /** 两栏页面里详情栏的头部：焦点项的图标 + 标题 + 副标题（与列表行同一套元素）。 */
 function detailHeaderEl(item: Item): HTMLElement {
@@ -371,7 +370,8 @@ function clearDetail() {
   detailParts = null;
   detailEl.className = "md hidden";
   detailEl.replaceChildren();
-  listEl.classList.remove("hidden");
+  // 回到单列：列表恢复满宽（形态由 layout.ts 统一决定）
+  listEl.className = LIST_FULL_CLASS;
 }
 
 /** 全屏卡片（错误、回写失败等）：隐藏列表。 */
@@ -398,10 +398,14 @@ function renderDetail() {
   }
   detailMode = "preview";
   const full = shape === "detail";
-  detailEl.className = full ? DETAIL_MESSAGE_CLASS : DETAIL_PREVIEW_CLASS;
+  detailEl.className = DETAIL_MESSAGE_CLASS;
   paintDetail(item.detail ?? "", item.id, item.pending === true, full ? undefined : item);
-  if (full) listEl.classList.add("hidden");
-  else listEl.classList.remove("hidden");
+  if (full) {
+    listEl.classList.add("hidden");
+  } else {
+    // 两栏：左侧换成窄栏，详情吃掉剩下的宽度
+    listEl.className = LIST_NARROW_CLASS;
+  }
 }
 
 /** Esc 的第一层：消费掉可见的详情（返回 true 表示已消费）。 */
@@ -409,7 +413,6 @@ function dismissDetail(): boolean {
   if (detailMode === "none") return false;
   if (detailMode === "preview") previewDismissed = true;
   clearDetail();
-  listEl.classList.remove("hidden");
   return true;
 }
 

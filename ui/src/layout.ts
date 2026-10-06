@@ -20,8 +20,19 @@ export const PANEL_SIZE: Record<PageShape, { width: number; height: number }> = 
   split: { width: 900, height: 540 },
 };
 
-/** 两栏页面里右侧详情栏的宽度（Raycast 同款：列表略宽于详情）。 */
-export const SPLIT_PANE_CLASS = "w-[46%]";
+// 三种形态的排版类：只在 render 里套用，别处不得自行拼宽度。
+
+/** 单列列表（list）：吃满宽度。 */
+export const LIST_FULL_CLASS =
+  "min-h-0 flex-1 overflow-y-auto px-2 pb-12";
+
+/** 两栏页面的左侧列表：**窄栏**（会话标题 + 时间够用），详情吃掉剩余宽度。 */
+export const LIST_NARROW_CLASS =
+  "min-h-0 w-[280px] shrink-0 overflow-y-auto border-r border-zinc-800 px-2 pb-12";
+
+/** 两栏页面的右侧详情（也是详情整屏用的容器）：吃满剩余宽度。 */
+export const DETAIL_PANE_CLASS =
+  "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-zinc-200";
 
 /**
  * 当前应该用哪种形态渲染。
