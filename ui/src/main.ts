@@ -62,6 +62,8 @@ interface View {
   sourceCommandId?: string;
   /** 来源 Command 的图标（结果项未自带图标时的回退）。 */
   sourceIcon?: string;
+  /** 来源 Command 的标题（Input Bar 的 placeholder；经 ⌘P/⌘N 入口进来时也在命令表之外）。 */
+  sourceTitle?: string;
   /** 来源 Command 是否 Live（输入变化即重跑列表）。 */
   sourceLive?: boolean;
   /** 结果声明的视图形态：true = 唯一一条即内容，详情占满面板（ADR-0013）。 */
@@ -270,7 +272,7 @@ function updatePlaceholder() {
     q.placeholder = "选择动作…";
   } else {
     const command = v.commands.find((c) => c.id === v.sourceCommandId);
-    q.placeholder = command ? command.title : "结果…";
+    q.placeholder = v.sourceTitle ?? command?.title ?? "结果…";
   }
 }
 
@@ -371,7 +373,13 @@ function secondaryOf(item: Item) {
   return item.actions.find((a) => a.kind === "secondary");
 }
 
-function applyResult(res: ActionResult, commandId: string, live = false, icon?: string) {
+function applyResult(
+  res: ActionResult,
+  commandId: string,
+  live = false,
+  icon?: string,
+  title?: string,
+) {
   if (typeof res === "string") {
     // silent：无需 UI 动作（openSideView 的开窗已由后端完成）
     return;
@@ -396,6 +404,7 @@ function applyResult(res: ActionResult, commandId: string, live = false, icon?: 
       sourceCommandId: commandId,
       sourceLive: live,
       sourceIcon: icon,
+      sourceTitle: title,
       detailFull: res.list.detailFull === true,
     }));
   }
@@ -432,7 +441,7 @@ async function openEntry(kind: "browse" | "new") {
       query: null,
     });
     if (command.live) q.value = "";
-    applyResult(res, command.id, command.live, command.icon);
+    applyResult(res, command.id, command.live, command.icon, command.title);
   } catch (err) {
     showMessage(`执行失败：${String(err)}`);
   }
@@ -452,7 +461,7 @@ async function applyFocused(alt: boolean) {
       if (cmd.live) {
         q.value = "";
       }
-      applyResult(res, cmd.id, cmd.live, cmd.icon);
+      applyResult(res, cmd.id, cmd.live, cmd.icon, cmd.title);
     } catch (err) {
       showMessage(`执行失败：${String(err)}`);
     }
@@ -471,7 +480,7 @@ async function applyFocused(alt: boolean) {
         action,
       });
       if (action.id === "copy") toast("已复制");
-      applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon);
+      applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
     } catch (err) {
       showMessage(`执行失败：${String(err)}`);
     }
@@ -488,7 +497,7 @@ async function applyFocused(alt: boolean) {
       action,
     });
     if (action.id === "copy") toast("已复制");
-    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon);
+    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
   } catch (err) {
     showMessage(`执行失败：${String(err)}`);
   }
@@ -525,7 +534,7 @@ async function materialize() {
       item,
       action,
     });
-    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon);
+    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
   }
 }
 
@@ -539,7 +548,7 @@ async function rerunLive(query: string) {
       query: query || null,
       record: false, // 重跑不算一次启动（frecency 语义）
     });
-    applyResult(res, v.sourceCommandId, true, v.sourceIcon);
+    applyResult(res, v.sourceCommandId, true, v.sourceIcon, v.sourceTitle);
   } catch (err) {
     showMessage(`执行失败：${String(err)}`);
   }
