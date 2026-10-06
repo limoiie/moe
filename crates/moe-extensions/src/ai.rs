@@ -359,6 +359,21 @@ fn question_with_selection(question: &str, selection: Option<&str>) -> String {
     format!("{question}\n\n以下是用户选中的文字，作为回答的上下文：\n```\n{excerpt}{suffix}\n```")
 }
 
+/// 发给模型的请求体（抽出以便测试）：问题（可带选区上下文）+ 附件展开。
+fn ask_body(
+    model: &str,
+    question: &str,
+    selection: Option<&str>,
+    attachments: &[AttachmentRef],
+) -> serde_json::Value {
+    let message = Message {
+        role: Role::User,
+        content: question_with_selection(question, selection),
+        attachments: attachments.to_vec(),
+    };
+    chat_body_from_messages(model, vec![attachment::expand_message(&message)])
+}
+
 impl AiShell {
     fn start_ask(
         &self,
@@ -402,12 +417,7 @@ impl AiShell {
         let model = config.ai.model_or_default().to_string();
 
         if let Some(emitter) = emitter {
-            let message = Message {
-                role: Role::User,
-                content: question_with_selection(&display, selection),
-                attachments,
-            };
-            let body = chat_body_from_messages(&model, vec![attachment::expand_message(&message)]);
+            let body = ask_body(&model, &display, selection, &attachments);
             let conversation_id_in_thread = conversation_id.clone();
             std::thread::spawn(move || {
                 run_stream(
@@ -420,8 +430,14 @@ impl AiShell {
                 );
             });
         }
+        // 占位帧：有选区时注明，让用户知道上下文已附上（第一个增量到达后即被替换）
+        let placeholder = if selection.is_some_and(|s| !s.trim().is_empty()) {
+            "已附上选中文字，正在回答…"
+        } else {
+            "正在回答…"
+        };
         ActionResult::detail(vec![answer_item(
-            "正在回答…",
+            placeholder,
             conversation_id.as_deref(),
             true,
         )])
@@ -986,6 +1002,18 @@ mod tests {
         }
         assert_eq!(ext.browse_command().unwrap().id, "ai.search-history");
         assert_eq!(ext.new_command().unwrap().id, "ai.new-chat");
+    }
+
+    /// 请求体组装：选区和问题都进 body（selection_becomes_question_context 只测拼接，这里测整条链路）。
+    #[test]
+    fn ask_body_carries_question_and_selection() {
+        let body = ask_body("m", "翻译", Some("hello world"), &[]);
+        let text = body.to_string();
+        assert!(text.contains("翻译"), "问题在 body：{text}");
+        assert!(text.contains("hello world"), "选区在 body：{text}");
+        // 无选区时没有上下文包装
+        let plain = ask_body("m", "翻译", None, &[]).to_string();
+        assert!(!plain.contains("选中的文字"), "无选区不加包装：{plain}");
     }
 
     /// 选中文字自动成为提问上下文（ADR-0002 增补）：拼接格式稳定，重复/空白/超长有边界。

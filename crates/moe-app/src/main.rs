@@ -298,6 +298,10 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
         // 先抓选区再显面板（面板成为 key 后系统焦点离开目标应用）
         let selection = state.text_target.read_selection().unwrap_or(None);
+        eprintln!(
+            "moe: 选区 {} 字符",
+            selection.as_deref().map(|s| s.chars().count()).unwrap_or(0)
+        );
         *state.selection.lock().expect("selection poisoned") = selection;
         *state.last_shown.lock().expect("last_shown poisoned") = Some(std::time::Instant::now());
     }
