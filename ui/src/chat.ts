@@ -45,6 +45,12 @@ interface SideOpenPayload {
 const SIDE_COMMAND_ID = "ai.side";
 
 const conversationsEl = document.querySelector<HTMLUListElement>("#conversations")!;
+const sidebarEl = document.querySelector<HTMLElement>("#sidebar")!;
+const toggleSidebarEl = document.querySelector<HTMLButtonElement>("#toggle-sidebar")!;
+const historyButtonEl = document.querySelector<HTMLButtonElement>("#history-button")!;
+const historyButtonWrapEl = document.querySelector<HTMLDivElement>("#history-button-wrap")!;
+const historyMenuEl = document.querySelector<HTMLDivElement>("#history-menu")!;
+const historyMenuListEl = document.querySelector<HTMLUListElement>("#history-menu-list")!;
 const filterEl = document.querySelector<HTMLInputElement>("#history-filter")!;
 const messagesEl = document.querySelector<HTMLElement>("#messages")!;
 const composerEl = document.querySelector<HTMLTextAreaElement>("#composer")!;
@@ -63,6 +69,8 @@ let streaming: HTMLElement | null = null;
 let sending = false;
 /** 后端仍在生成（收到 pending=false 或主动停止后结束）。 */
 let generating = false;
+/** 最近一次加载的会话列表（左栏与下拉共用，⌃[/⌃] 按它步进）。 */
+let conversations: Conversation[] = [];
 
 // ---- 固定图标 ----
 
@@ -70,6 +78,40 @@ newChatEl.replaceChildren(iconEl("plus", { size: 16 }));
 newChatEl.title = "新对话（⌘N）";
 closeEl.replaceChildren(iconEl("close", { size: 16 }));
 attachEl.replaceChildren(iconEl("paperclip", { size: 14 }), document.createTextNode("附件"));
+toggleSidebarEl.replaceChildren(iconEl("panel-left", { size: 16 }));
+historyButtonEl.replaceChildren(iconEl("history", { size: 16 }));
+
+// ---- 左侧历史面板：默认隐藏，⌘B 切换（偏好本地持久化）----
+
+const SIDEBAR_KEY = "moe.chatSidebar";
+
+function readSidebarPreference(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+let sidebarVisible = readSidebarPreference();
+
+function applySidebar() {
+  sidebarEl.style.display = sidebarVisible ? "" : "none";
+  toggleSidebarEl.classList.toggle("bg-zinc-700/60", sidebarVisible);
+}
+
+function toggleSidebar() {
+  sidebarVisible = !sidebarVisible;
+  applySidebar();
+  try {
+    localStorage.setItem(SIDEBAR_KEY, sidebarVisible ? "1" : "0");
+  } catch {
+    // 忽略：持久化失败不影响本次会话
+  }
+}
+
+toggleSidebarEl.addEventListener("click", toggleSidebar);
+applySidebar();
 
 function updateSendUi() {
   sendEl.className = generating
@@ -127,7 +169,7 @@ function setTitle(text: string) {
   titleEl.textContent = text;
 }
 
-// ---- 左栏：历史会话 ----
+// ---- 历史会话：左栏与悬停下拉共用同一份数据 ----
 
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
 filterEl.addEventListener("input", () => {
@@ -135,50 +177,114 @@ filterEl.addEventListener("input", () => {
   filterTimer = setTimeout(() => void loadConversations(), 80);
 });
 
+function conversationRow(conversation: Conversation, compact: boolean): HTMLLIElement {
+  const li = document.createElement("li");
+  const active = conversation.id === conversationId;
+  li.className =
+    "flex cursor-default items-center gap-2 rounded-lg px-2 " +
+    (compact ? "py-1 text-xs " : "py-1.5 text-xs ") +
+    (active ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300 hover:bg-zinc-800/70");
+  li.append(
+    iconEl("message-square", {
+      size: compact ? 13 : 14,
+      className: active ? "text-zinc-200" : "text-zinc-500",
+    }),
+  );
+  const label = document.createElement("span");
+  label.className = "min-w-0 flex-1 truncate";
+  label.textContent = conversation.title;
+  label.title = conversation.title;
+  li.append(label);
+  const time = document.createElement("span");
+  time.className = "shrink-0 text-[10px] text-zinc-500";
+  time.textContent = relativeTime(conversation.updatedUnix);
+  li.append(time);
+  li.addEventListener("click", () => {
+    void selectConversation(conversation.id);
+    hideHistoryMenu();
+  });
+  return li;
+}
+
+function emptyRow(text: string): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "px-2 py-3 text-xs text-zinc-600";
+  li.textContent = text;
+  return li;
+}
+
+function renderConversations() {
+  const query = filterEl.value.trim();
+  conversationsEl.replaceChildren(
+    ...(conversations.length > 0
+      ? conversations.map((conversation) => conversationRow(conversation, false))
+      : [
+          emptyRow(
+            query
+              ? "没有匹配的会话"
+              : "还没有历史会话：在下方输入即可开始新对话",
+          ),
+        ]),
+  );
+  historyMenuListEl.replaceChildren(
+    ...(conversations.length > 0
+      ? conversations.map((conversation) => conversationRow(conversation, true))
+      : [emptyRow("还没有历史会话")]),
+  );
+}
+
 async function loadConversations() {
   const query = filterEl.value.trim();
-  let list: Conversation[] = [];
   try {
-    list = await invoke<Conversation[]>("side_conversations", {
+    conversations = await invoke<Conversation[]>("side_conversations", {
       query: query || null,
     });
   } catch (err) {
     setError(`读取历史失败：${String(err)}`);
     return;
   }
-  if (list.length === 0) {
-    const hint = document.createElement("li");
-    hint.className = "px-2 py-3 text-xs text-zinc-600";
-    hint.textContent = query ? "没有匹配的会话" : "还没有历史会话";
-    conversationsEl.replaceChildren(hint);
-    return;
-  }
-  conversationsEl.replaceChildren(
-    ...list.map((conversation) => {
-      const li = document.createElement("li");
-      const active = conversation.id === conversationId;
-      li.className =
-        "flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-xs " +
-        (active ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300 hover:bg-zinc-800/70");
-      li.append(
-        iconEl("message-square", {
-          size: 14,
-          className: active ? "text-zinc-200" : "text-zinc-500",
-        }),
-      );
-      const label = document.createElement("span");
-      label.className = "min-w-0 flex-1 truncate";
-      label.textContent = conversation.title;
-      label.title = conversation.title;
-      li.append(label);
-      const time = document.createElement("span");
-      time.className = "shrink-0 text-[10px] text-zinc-500";
-      time.textContent = relativeTime(conversation.updatedUnix);
-      li.append(time);
-      li.addEventListener("click", () => void selectConversation(conversation.id));
-      return li;
-    }),
-  );
+  renderConversations();
+}
+
+// ---- 头部「最近会话」按钮：悬停下拉（点击也展开，选中/移开/Esc 收起）----
+
+let historyMenuTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showHistoryMenu() {
+  clearTimeout(historyMenuTimer);
+  historyMenuEl.classList.remove("hidden");
+  void loadConversations();
+}
+
+function hideHistoryMenu() {
+  clearTimeout(historyMenuTimer);
+  historyMenuEl.classList.add("hidden");
+}
+
+function scheduleHideHistoryMenu() {
+  clearTimeout(historyMenuTimer);
+  historyMenuTimer = setTimeout(hideHistoryMenu, 160);
+}
+
+historyButtonEl.addEventListener("mouseenter", showHistoryMenu);
+historyButtonEl.addEventListener("click", showHistoryMenu);
+historyButtonWrapEl.addEventListener("mouseenter", showHistoryMenu);
+historyButtonWrapEl.addEventListener("mouseleave", scheduleHideHistoryMenu);
+
+// ---- 会话步进：⌃[ / ⌃] 按当前列表（含筛选）前后切换 ----
+
+async function stepConversation(delta: number) {
+  if (conversations.length === 0) return;
+  const index = conversations.findIndex((c) => c.id === conversationId);
+  const next =
+    index === -1
+      ? delta > 0
+        ? 0
+        : conversations.length - 1
+      : Math.min(Math.max(index + delta, 0), conversations.length - 1);
+  const target = conversations[next];
+  if (!target || target.id === conversationId) return;
+  await selectConversation(target.id);
 }
 
 async function selectConversation(id: string) {
@@ -414,13 +520,31 @@ async function stopGeneration() {
 }
 
 window.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
+  const mod = e.metaKey || e.ctrlKey;
+  // ⌘B：切换左侧历史面板（默认隐藏）
+  if (mod && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    toggleSidebar();
+    return;
+  }
+  // ⌃[ / ⌃]：按当前列表（含筛选）前后切换会话
+  if (e.ctrlKey && (e.key === "[" || e.key === "]")) {
+    e.preventDefault();
+    void stepConversation(e.key === "]" ? 1 : -1);
+    return;
+  }
+  if (mod && e.key.toLowerCase() === "n") {
     e.preventDefault();
     newChat();
     return;
   }
-  if (e.key === "Escape" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w")) {
+  if (e.key === "Escape" || (mod && e.key.toLowerCase() === "w")) {
     e.preventDefault();
+    // 下拉开着先收下拉
+    if (!historyMenuEl.classList.contains("hidden")) {
+      hideHistoryMenu();
+      return;
+    }
     if (generating) {
       void stopGeneration();
       return;

@@ -10,8 +10,12 @@
       id="root"
       class="m-2 flex h-[calc(100vh-1rem)] overflow-hidden rounded-2xl border border-zinc-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur-xl"
     >
-      <!-- 左栏：历史会话（ADR-0004 的 Side View 形态） -->
-      <aside class="flex w-64 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950/40">
+      <!-- 左栏：历史会话（默认隐藏，⌘B 切换 / 头部时钟按钮悬停下拉） -->
+      <aside
+        id="sidebar"
+        class="flex w-64 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950/40"
+        style="display: none"
+      >
         <div data-tauri-drag-region class="flex items-center gap-1 px-3 pb-1 pt-3">
           <span data-tauri-drag-region class="flex-1 text-xs font-medium text-zinc-400">
             历史会话
@@ -39,13 +43,36 @@
           data-tauri-drag-region
           class="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-2 text-sm text-zinc-300"
         >
-          <span
-            id="chat-title"
-            data-tauri-drag-region
-            class="min-w-0 flex-1 truncate font-medium"
-          >
-            AI 对话
-          </span>
+          <div class="flex min-w-0 flex-1 items-center gap-1">
+            <button
+              id="toggle-sidebar"
+              title="历史面板（⌘B）"
+              class="rounded-md p-1 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
+            ></button>
+            <div id="history-button-wrap" class="relative">
+              <button
+                id="history-button"
+                title="最近会话（悬停展开）"
+                class="rounded-md p-1 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
+              ></button>
+              <div
+                id="history-menu"
+                class="absolute left-0 top-full z-20 mt-1 hidden w-72 overflow-hidden rounded-lg border border-zinc-700/60 bg-zinc-900/95 p-1 shadow-2xl backdrop-blur-xl"
+              >
+                <div class="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                  最近会话（⌃[ / ⌃] 切换）
+                </div>
+                <ul id="history-menu-list" class="max-h-72 overflow-y-auto"></ul>
+              </div>
+            </div>
+            <span
+              id="chat-title"
+              data-tauri-drag-region
+              class="min-w-0 flex-1 truncate font-medium"
+            >
+              AI 对话
+            </span>
+          </div>
           <button
             id="close"
             title="收起（Esc）"
