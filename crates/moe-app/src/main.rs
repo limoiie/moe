@@ -471,21 +471,55 @@ fn open_accessibility_settings() {
     }
 }
 
-/// 菜单栏常驻：tray 图标 + 菜单（显示面板 / 打开配置文件 / 退出）。
+/// 菜单栏常驻：tray 图标 + 菜单（显示面板 / AI 对话 / 开机自启 / 打开配置文件 / 退出）。
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem};
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
+    use tauri_plugin_autostart::ManagerExt as _;
+
+    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
 
     let show = MenuItem::with_id(app, "tray.show", "显示面板", true, None::<&str>)?;
+    let chat = MenuItem::with_id(app, "tray.chat", "AI 对话", true, None::<&str>)?;
+    let autostart = CheckMenuItem::with_id(
+        app,
+        "tray.autostart",
+        "开机自启",
+        true,
+        autostart_enabled,
+        None::<&str>,
+    )?;
     let config = MenuItem::with_id(app, "tray.config", "打开配置文件", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "tray.quit", "退出 Moe", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &config, &quit])?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&show, &chat, &autostart, &separator, &config, &quit])?;
 
-    let mut builder = TrayIconBuilder::new()
+    let autostart_item = autostart.clone();
+    let mut builder = TrayIconBuilder::with_id("moe-tray")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id().as_ref() {
+        .on_menu_event(move |app, event| match event.id().as_ref() {
             "tray.show" => toggle_panel(app),
+            // 空会话的侧栏：没在跑就起会话，历史从「AI: 搜索历史会话」找回
+            "tray.chat" => open_side_view(app, serde_json::json!({})),
+            "tray.autostart" => {
+                let currently = app.autolaunch().is_enabled().unwrap_or(false);
+                let result = if currently {
+                    app.autolaunch().disable()
+                } else {
+                    app.autolaunch().enable()
+                };
+                match result {
+                    Ok(()) => {
+                        let now = !currently;
+                        if let Err(err) = autostart_item.set_checked(now) {
+                            eprintln!("moe: 更新自启勾选失败: {err}");
+                        }
+                        eprintln!("moe: 开机自启已{}", if now { "开启" } else { "关闭" });
+                    }
+                    Err(err) => eprintln!("moe: 切换开机自启失败: {err}"),
+                }
+            }
             "tray.config" => {
                 if let Err(err) = moe_platform::config::open_in_editor() {
                     eprintln!("moe: 打开配置文件失败: {err}");
@@ -570,6 +604,11 @@ fn main() {
             eprintln!("moe: 已有实例在运行，转发请求：{argv:?}");
             toggle_panel(app);
         }))
+        // 开机自启（LaunchAgent；tray 里的勾选项，IIE4AD-362）
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(
             ShortcutBuilder::new()
                 .with_handler(|app, _shortcut, event| {

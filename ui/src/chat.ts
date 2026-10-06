@@ -38,6 +38,7 @@ const historyEl = document.querySelector<HTMLElement>("#history")!;
 const composerEl = document.querySelector<HTMLTextAreaElement>("#composer")!;
 const emptyEl = document.querySelector<HTMLDivElement>("#empty")!;
 const errorEl = document.querySelector<HTMLDivElement>("#error")!;
+const titleEl = document.querySelector<HTMLSpanElement>("#chat-title")!;
 
 /** 当前会话；null = 空状态（首次发送会自动新建）。 */
 let conversationId: string | null = null;
@@ -56,6 +57,20 @@ function setError(text: string | null) {
 
 function markdown(text: string): string {
   return DOMPurify.sanitize(marked.parse(text, { async: false }));
+}
+
+/** 标题：取第一条用户消息首行（与历史列表的会话标题规则一致）。 */
+function titleFrom(messages: Message[]): string | null {
+  const first = messages.find(
+    (message) => message.role === "user" && message.content.trim(),
+  );
+  if (!first) return null;
+  const line = first.content.trim().split("\n")[0];
+  return line.length > 24 ? `${line.slice(0, 24)}…` : line;
+}
+
+function setTitle(text: string) {
+  titleEl.textContent = text;
 }
 
 /** 追加一条消息，返回其根元素（失败时可整块移除回滚）。 */
@@ -102,6 +117,7 @@ async function loadHistory() {
   historyEl.replaceChildren();
   streaming = null;
   if (!conversationId) {
+    setTitle("新对话");
     emptyEl.textContent =
       "这是一段新对话：在下方输入即可开始；回答会按会话保存，之后可用「AI: 搜索历史会话」找回。";
     emptyEl.classList.remove("hidden");
@@ -113,6 +129,7 @@ async function loadHistory() {
     const messages = await invoke<Message[]>("side_messages", {
       conversationId,
     });
+    setTitle(titleFrom(messages) ?? "AI 对话");
     for (const message of messages) {
       appendMessage(message);
     }
@@ -131,6 +148,7 @@ async function send() {
   composerEl.value = "";
   emptyEl.classList.add("hidden");
   const row = appendMessage({ role: "user", content: message });
+  if (titleEl.textContent === "新对话") setTitle(titleFrom([{ role: "user", content: message }]) ?? "AI 对话");
   streaming = null;
   try {
     conversationId = await invoke<string>("side_send", {
@@ -249,6 +267,15 @@ window.addEventListener("focus", () => composerEl.focus());
 document
   .querySelector<HTMLButtonElement>("#send")!
   .addEventListener("click", () => void send());
+
+// 新对话：清空会话（首条消息发送时由后端新建并返回 id）
+document.querySelector<HTMLButtonElement>("#new-chat")!.addEventListener("click", () => {
+  conversationId = null;
+  streaming = null;
+  setError(null);
+  void loadHistory();
+});
+
 document
   .querySelector<HTMLButtonElement>("#close")!
   .addEventListener("click", () => void getCurrentWindow().hide());

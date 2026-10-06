@@ -14,7 +14,20 @@
         data-tauri-drag-region
         class="flex items-center justify-between border-b border-zinc-800 px-4 py-2 text-sm text-zinc-300"
       >
-        <span data-tauri-drag-region class="font-medium">Moe · AI 对话</span>
+        <span
+          id="chat-title"
+          data-tauri-drag-region
+          class="min-w-0 flex-1 truncate font-medium"
+        >
+          AI 对话
+        </span>
+        <button
+          id="new-chat"
+          class="shrink-0 rounded-md px-2 py-0.5 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
+          title="新对话"
+        >
+          ＋
+        </button>
         <button
           id="close"
           class="rounded-md px-2 py-0.5 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
