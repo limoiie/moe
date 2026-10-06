@@ -111,7 +111,9 @@ function toggleHistoryCard() {
 function rowClass(highlighted: boolean): string {
   return (
     "flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-xs " +
-    (highlighted ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300 hover:bg-zinc-800/70")
+    (highlighted
+      ? "bg-zinc-700/70 text-zinc-50"
+      : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60")
   );
 }
 
@@ -148,12 +150,6 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
     time.textContent = relativeTime(conversation.updatedUnix);
   }
   li.append(time);
-  li.addEventListener("mousemove", () => {
-    if (historyIndex !== index) {
-      historyIndex = index;
-      paintHistoryHighlight();
-    }
-  });
   li.addEventListener("click", () => {
     void selectConversation(conversation.id);
     closeHistoryCard();

@@ -252,7 +252,7 @@ function render() {
       "group flex cursor-default items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm " +
       (focused
         ? "bg-zinc-700/70 text-zinc-50"
-        : "text-zinc-300 hover:bg-zinc-800/60 hover:text-zinc-100");
+        : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
     li.append(
       iconEl(e.icon, {
         className: e.iconMuted
@@ -280,10 +280,6 @@ function render() {
     }
     li.addEventListener("mousedown", () => {
       view.update((s) => ({ ...s, focus: i }));
-    });
-    // 悬停即把焦点交给这一行（Raycast 同款）：详情预览跟随光标，不用先点一下
-    li.addEventListener("mousemove", () => {
-      if (view.get().focus !== i) view.update((s) => ({ ...s, focus: i }));
     });
     return li;
   });
@@ -644,7 +640,7 @@ function renderActionsCard() {
         "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
         (focused
           ? "bg-zinc-700/70 text-zinc-50"
-          : "text-zinc-300 hover:bg-zinc-800/60 hover:text-zinc-100");
+          : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
       li.append(
         iconEl(iconOfActionRow(row), {
           size: 15,
@@ -661,13 +657,6 @@ function renderActionsCard() {
         kbd.classList.add("shrink-0");
         li.append(kbd);
       }
-      li.addEventListener("mouseenter", () => {
-        if (actionsCardFocus !== index) {
-          actionsCardFocus = index;
-          renderActionsCard();
-          renderActionBar();
-        }
-      });
       li.addEventListener("click", () => void runActionRow(row));
       return li;
     }),
