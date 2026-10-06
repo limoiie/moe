@@ -2,9 +2,9 @@
 // 全部由这里统一决定——任何 Extension/子应用只要照常返回 Item（可选带 detail），
 // 就自动获得与其他页面完全一致的版式与交互，不需要在视图层做任何定制。
 //
-//   列表（list）  ：单列结果，无详情栏                       → 面板默认尺寸
-//   两栏（split） ：左侧列表 + 右侧详情（焦点项的 detail）   → 面板加宽加高
-//   详情（detail）：唯一一条结果本身即内容（AI 回答、通知）  → 详情占满，面板默认尺寸
+//   列表（list）  ：单列结果，无详情栏                       → 默认高度
+//   两栏（split） ：左侧列表 + 右侧详情（焦点项的 detail）   → 更高（两栏都读得下）
+//   详情（detail）：唯一一条结果本身即内容（AI 回答、通知）  → 详情占满，默认高度
 //
 // 这就是 Raycast 的 List / List+Detail / Detail：形态由数据（有没有 detail、
 // 是不是整屏）决定，不由各命令自己排版。
@@ -13,11 +13,15 @@ import type { Item } from "./types";
 
 export type PageShape = "list" | "split" | "detail";
 
-/** 面板尺寸（逻辑像素）：两栏页面需要更宽更高，列表/详情用默认尺寸。 */
-export const PANEL_SIZE: Record<PageShape, { width: number; height: number }> = {
-  list: { width: 750, height: 420 },
-  detail: { width: 750, height: 420 },
-  split: { width: 900, height: 540 },
+/** 面板宽度（逻辑像素）：**所有形态一致**（Raycast 同款：宽度恒定，高度随内容）。
+ * 根页面与两栏页面同宽，切换形态时宽度不跳。 */
+export const PANEL_WIDTH = 900;
+
+/** 面板高度（逻辑像素）：只有两栏页面更高——列表与详情都读得下。 */
+export const PANEL_HEIGHT: Record<PageShape, number> = {
+  list: 420,
+  detail: 420,
+  split: 540,
 };
 
 // 三种形态的排版类：只在 render 里套用，别处不得自行拼宽度。

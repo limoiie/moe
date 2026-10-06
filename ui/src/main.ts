@@ -12,7 +12,8 @@ import {
   DETAIL_PANE_CLASS,
   LIST_FULL_CLASS,
   LIST_NARROW_CLASS,
-  PANEL_SIZE,
+  PANEL_HEIGHT,
+  PANEL_WIDTH,
   pageShapeOf,
   type PageShape,
 } from "./layout";
@@ -187,14 +188,16 @@ function renderActionBar() {
 let currentShape: PageShape | null = null;
 
 /**
- * 按页面形态调整面板窗口（两栏页面需要更宽更高）。
+ * 按页面形态调整面板窗口（ADR-0018）：宽度恒定，只有两栏页面更高。
  * 形态不变不动窗口；失败不影响渲染（窗口尺寸只是体验）。
  */
 function applyPanelSize(shape: PageShape) {
   if (shape === currentShape) return;
   currentShape = shape;
-  const size = PANEL_SIZE[shape];
-  void invoke("resize_panel", { width: size.width, height: size.height }).catch(() => {
+  void invoke("resize_panel", {
+    width: PANEL_WIDTH,
+    height: PANEL_HEIGHT[shape],
+  }).catch(() => {
     // 忽略：拿不到窗口就不动它
   });
 }

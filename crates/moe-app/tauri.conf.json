@@ -5,8 +5,14 @@
   "identifier": "app.moe.desktop",
   "build": {
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": { "cwd": "../../ui", "script": "pnpm dev" },
-    "beforeBuildCommand": { "cwd": "../../ui", "script": "pnpm build" },
+    "beforeDevCommand": {
+      "cwd": "../../ui",
+      "script": "pnpm dev"
+    },
+    "beforeBuildCommand": {
+      "cwd": "../../ui",
+      "script": "pnpm build"
+    },
     "frontendDist": "../../ui/dist"
   },
   "app": {
@@ -15,7 +21,7 @@
       {
         "label": "panel",
         "title": "Moe",
-        "width": 750,
+        "width": 900,
         "height": 420,
         "center": true,
         "decorations": false,
