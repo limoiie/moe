@@ -188,7 +188,7 @@ function renderActionBar() {
 let currentShape: PageShape | null = null;
 
 /**
- * 按页面形态调整面板窗口（ADR-0018）：宽度恒定，只有两栏页面更高。
+ * 按页面形态调整面板窗口（ADR-0018）：尺寸恒定，形态切换时也保持同一尺寸。
  * 形态不变不动窗口；失败不影响渲染（窗口尺寸只是体验）。
  */
 function applyPanelSize(shape: PageShape) {
@@ -196,7 +196,7 @@ function applyPanelSize(shape: PageShape) {
   currentShape = shape;
   void invoke("resize_panel", {
     width: PANEL_WIDTH,
-    height: PANEL_HEIGHT[shape],
+    height: PANEL_HEIGHT,
   }).catch(() => {
     // 忽略：拿不到窗口就不动它
   });

@@ -13,16 +13,11 @@ import type { Item } from "./types";
 
 export type PageShape = "list" | "split" | "detail";
 
-/** 面板宽度（逻辑像素）：**所有形态一致**（Raycast 同款：宽度恒定，高度随内容）。
- * 根页面与两栏页面同宽，切换形态时宽度不跳。 */
-export const PANEL_WIDTH = 900;
+/** 面板宽度（逻辑像素）：所有形态一致（Raycast 同款：尺寸恒定）。 */
+export const PANEL_WIDTH = 768;
 
-/** 面板高度（逻辑像素）：只有两栏页面更高——列表与详情都读得下。 */
-export const PANEL_HEIGHT: Record<PageShape, number> = {
-  list: 420,
-  detail: 420,
-  split: 540,
-};
+/** 面板高度（逻辑像素）：所有形态一致。 */
+export const PANEL_HEIGHT = 540;
 
 // 三种形态的排版类：只在 render 里套用，别处不得自行拼宽度。
 

@@ -21,8 +21,8 @@
       {
         "label": "panel",
         "title": "Moe",
-        "width": 900,
-        "height": 420,
+        "width": 768,
+        "height": 540,
         "center": true,
         "decorations": false,
         "transparent": true,
