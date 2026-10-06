@@ -6,12 +6,12 @@ use moe_core::contract::{
 
 pub struct Echo;
 
-fn action(id: &str, title: &str, kind: ActionKind) -> Action {
+fn action(id: &str, title: &str, kind: ActionKind, keybinding: Option<&str>) -> Action {
     Action {
         id: id.into(),
         title: title.into(),
         kind,
-        keybinding: None,
+        keybinding: keybinding.map(Into::into),
     }
 }
 
@@ -81,8 +81,8 @@ impl Extension for Echo {
                         title: (*word).to_string(),
                         subtitle: Some("示例词".into()),
                         actions: vec![
-                            action("write-back", "回写该词", ActionKind::Primary),
-                            action("copy", "复制纯文本", ActionKind::Secondary),
+                            action("write-back", "回写该词", ActionKind::Primary, None),
+                            action("copy", "复制纯文本", ActionKind::Secondary, Some("⌥⏎")),
                         ],
                         payload: serde_json::json!({ "word": word }),
                         detail: None,
@@ -103,9 +103,42 @@ impl Extension for Echo {
             "write-back" => Ok(ActionResult::WriteBack {
                 text: item.title.clone(),
             }),
-            // 真剪贴板写入接 moe-platform 后替换（M2）。
-            "copy" => Ok(ActionResult::Silent),
+            // 与 AI 回答同一语义：只写剪贴板，不动宿主应用（ADR-0002 增补）
+            "copy" => {
+                moe_platform::clipboard::copy(&item.title)
+                    .map_err(|err| MoeError::Internal(err.to_string()))?;
+                Ok(ActionResult::Silent)
+            }
             _ => Err(MoeError::NotFound),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 契约一致性（ADR-0006）：Item 流里每个 item 都有 Primary 与副操作（⌥⏎ 复制）。
+    #[test]
+    fn list_items_follow_unified_action_semantics() {
+        let ext = Echo;
+        let ActionResult::List { items } = ext.invoke("echo.items", None, None).unwrap() else {
+            panic!("expected list");
+        };
+        assert!(!items.is_empty());
+        for item in &items {
+            assert!(
+                item.actions.iter().any(|a| a.kind == ActionKind::Primary),
+                "{} 缺 Primary",
+                item.id
+            );
+            let secondary = item
+                .actions
+                .iter()
+                .find(|a| a.kind == ActionKind::Secondary)
+                .expect("缺副操作");
+            assert_eq!(secondary.id, "copy");
+            assert_eq!(secondary.keybinding.as_deref(), Some("⌥⏎"));
         }
     }
 }
