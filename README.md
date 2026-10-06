@@ -64,6 +64,9 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
   「AI: 搜索历史会话」（**Live 列表**：进入后输入即筛标题）→ 右侧栏窗口，
   停在鼠标所在显示器右缘、可与全屏应用共存；侧栏内多轮续聊把整段会话作为上下文，
   历史存本地 SQLite（`data_dir/moe/moe.db`，`ai` Namespace），流式回答经
-  `command-event`（`commandId = ai.side`）逐段渲染。附件入口已占位（IIE4AD-358）。
+  `command-event`（`commandId = ai.side`）逐段渲染。
+- AI 附件（M3c，IIE4AD-358）：**⌘⇧A**（面板）或 **📎**（侧栏）输入/粘贴文件路径，
+  Enter 校验后插入 `@"path"` mention（ADR-0010）；文本 ≤512 KiB 内联、图片 ≤5 MiB
+  走多模态 base64，续聊时历史附件重新展开；超限/不可读在输入处内联提示。
 
 里程碑验收标准见 `docs/adr/0009-milestone-scope.md`。

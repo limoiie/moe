@@ -2053,9 +2053,11 @@ dependencies = [
 name = "moe-extensions"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "moe-core",
  "moe-platform",
  "reqwest 0.12.28",
+ "serde",
  "serde_json",
 ]
 

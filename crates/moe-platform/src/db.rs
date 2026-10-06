@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use moe_core::conversation::{Conversation, Message, Role};
+use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use rusqlite::Connection;
 
 pub struct Db {
@@ -48,12 +48,29 @@ impl Db {
                  conversation_id INTEGER NOT NULL,
                  role TEXT NOT NULL,
                  content TEXT NOT NULL,
+                 attachments TEXT NOT NULL DEFAULT '[]',
                  created_unix INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_messages_conversation
                  ON messages(conversation_id);",
         )
         .map_err(|err| err.to_string())?;
+        // 旧库升级：messages.attachments 是 IIE4AD-358 新增列。
+        let has_attachments = conn
+            .prepare("PRAGMA table_info(messages)")
+            .and_then(|mut stmt| {
+                let names = stmt
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(names.iter().any(|name| name == "attachments"))
+            })
+            .map_err(|err| err.to_string())?;
+        if !has_attachments {
+            conn.execute_batch(
+                "ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
+            )
+            .map_err(|err| err.to_string())?;
+        }
         Ok(Self { conn })
     }
 
@@ -75,20 +92,22 @@ impl Db {
         Ok(self.conn.last_insert_rowid().to_string())
     }
 
-    /// 追加消息（append-only）并 touch 会话的 `updated_unix`。
+    /// 追加消息（append-only）并 touch 会话的 `updated_unix`；附件只存引用（ADR-0010）。
     pub fn append_message(
         &self,
         conversation_id: &str,
         role: Role,
         content: &str,
+        attachments: &[AttachmentRef],
         now: SystemTime,
     ) -> Result<(), String> {
         let ts = unix_secs(now) as i64;
+        let attachments = serde_json::to_string(attachments).map_err(|err| err.to_string())?;
         self.conn
             .execute(
-                "INSERT INTO messages (conversation_id, role, content, created_unix)
-                 VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![conversation_id, role.as_str(), content, ts],
+                "INSERT INTO messages (conversation_id, role, content, attachments, created_unix)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![conversation_id, role.as_str(), content, attachments, ts],
             )
             .map_err(|err| err.to_string())?;
         self.conn
@@ -162,15 +181,19 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT role, content FROM messages WHERE conversation_id = ?1 ORDER BY id ASC",
+                "SELECT role, content, attachments FROM messages
+                 WHERE conversation_id = ?1 ORDER BY id ASC",
             )
             .map_err(|err| err.to_string())?;
         let iter = stmt
             .query_map(rusqlite::params![conversation_id], |row| {
                 let role: String = row.get(0)?;
+                let raw: String = row.get(2)?;
                 Ok(Message {
                     role: Role::parse(&role),
                     content: row.get(1)?,
+                    // 解析失败视作无附件（不因一行脏数据丢整段历史）
+                    attachments: serde_json::from_str(&raw).unwrap_or_default(),
                 })
             })
             .map_err(|err| err.to_string())?;
@@ -205,7 +228,7 @@ mod tests {
         let a = db.create_conversation("ai", "解释闭包", at(100)).unwrap();
         let b = db.create_conversation("ai", "写一段排序", at(200)).unwrap();
         // 追加消息会 touch a → a 最近更新
-        db.append_message(&a, Role::User, "解释闭包", at(300))
+        db.append_message(&a, Role::User, "解释闭包", &[], at(300))
             .unwrap();
 
         let list = db.conversations("ai", None, 10).unwrap();
@@ -222,8 +245,9 @@ mod tests {
         let db = db();
         let ai = db.create_conversation("ai", "hi", at(0)).unwrap();
         let other = db.create_conversation("echo", "hi", at(0)).unwrap();
-        db.append_message(&ai, Role::User, "问", at(1)).unwrap();
-        db.append_message(&ai, Role::Assistant, "答", at(2))
+        db.append_message(&ai, Role::User, "问", &[], at(1))
+            .unwrap();
+        db.append_message(&ai, Role::Assistant, "答", &[], at(2))
             .unwrap();
 
         let msgs = db.messages(&ai).unwrap();
@@ -231,6 +255,7 @@ mod tests {
         assert_eq!(msgs[0].role, Role::User);
         assert_eq!(msgs[1].role, Role::Assistant);
         assert_eq!(msgs[1].content, "答");
+        assert!(msgs[0].attachments.is_empty());
 
         let ai_list = db.conversations("ai", None, 10).unwrap();
         let echo_list = db.conversations("echo", None, 10).unwrap();
@@ -262,5 +287,79 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(db.conversations("ai", None, 3).unwrap().len(), 3);
+    }
+
+    /// 附件引用随消息落库（IIE4AD-358）。
+    #[test]
+    fn messages_round_trip_attachment_refs() {
+        let db = db();
+        let conv = db.create_conversation("ai", "看图", at(0)).unwrap();
+        let refs = vec![AttachmentRef {
+            name: "shot.png".into(),
+            path: "/tmp/shot.png".into(),
+        }];
+        db.append_message(&conv, Role::User, "这张图里是什么", &refs, at(1))
+            .unwrap();
+        db.append_message(&conv, Role::Assistant, "是一只猫", &[], at(2))
+            .unwrap();
+
+        let messages = db.messages(&conv).unwrap();
+        assert_eq!(messages[0].attachments, refs);
+        assert!(messages[1].attachments.is_empty());
+    }
+
+    /// 旧库（无 attachments 列）打开时自动升级，不丢历史。
+    #[test]
+    fn opens_legacy_db_and_migrates_attachments_column() {
+        let path = std::env::temp_dir().join(format!(
+            "moe-legacy-{}-{}.db",
+            std::process::id(),
+            "migrate"
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE conversations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     namespace TEXT NOT NULL,
+                     title TEXT NOT NULL,
+                     created_unix INTEGER NOT NULL,
+                     updated_unix INTEGER NOT NULL
+                 );
+                 CREATE TABLE messages (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     conversation_id INTEGER NOT NULL,
+                     role TEXT NOT NULL,
+                     content TEXT NOT NULL,
+                     created_unix INTEGER NOT NULL
+                 );
+                 INSERT INTO conversations (namespace, title, created_unix, updated_unix)
+                     VALUES ('ai', '老会话', 1, 1);
+                 INSERT INTO messages (conversation_id, role, content, created_unix)
+                     VALUES (1, 'user', '老消息', 1);",
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&path).unwrap();
+        let messages = db.messages("1").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "老消息");
+        assert!(messages[0].attachments.is_empty());
+        // 升级后的库可写入附件
+        db.append_message(
+            "1",
+            Role::User,
+            "新消息",
+            &[AttachmentRef {
+                name: "a.md".into(),
+                path: "/tmp/a.md".into(),
+            }],
+            at(2),
+        )
+        .unwrap();
+        assert_eq!(db.messages("1").unwrap()[1].attachments.len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 }

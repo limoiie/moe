@@ -4,12 +4,18 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
+import { appendMention, validatePath } from "./attachment";
 
 // ---- 类型：镜像 Rust 契约（ADR-0006）----
 
+interface AttachmentRef {
+  name: string;
+  path: string;
+}
 interface Message {
   role: "user" | "assistant";
   content: string;
+  attachments?: AttachmentRef[];
 }
 interface Item {
   id: string;
@@ -56,12 +62,25 @@ function markdown(text: string): string {
 function appendMessage(message: Message): HTMLElement {
   const row = document.createElement("div");
   if (message.role === "user") {
-    row.className = "flex justify-end";
+    row.className = "flex flex-col items-end gap-1";
     const card = document.createElement("div");
     card.className =
       "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-sky-600/80 px-3 py-2 text-sm text-white";
     card.textContent = message.content;
     row.append(card);
+    if (message.attachments?.length) {
+      const chips = document.createElement("div");
+      chips.className = "flex max-w-[85%] flex-wrap justify-end gap-1";
+      for (const reference of message.attachments) {
+        const chip = document.createElement("span");
+        chip.className =
+          "max-w-full truncate rounded-full border border-zinc-600/60 bg-zinc-800/70 px-2 py-0.5 text-[11px] text-zinc-300";
+        chip.textContent = `📎 ${reference.name}`;
+        chip.title = reference.path;
+        chips.append(chip);
+      }
+      row.append(chips);
+    }
   } else {
     row.className = "md text-sm text-zinc-200";
     row.innerHTML = markdown(message.content);
@@ -148,6 +167,65 @@ void listen<CommandEventPayload>("command-event", (event) => {
   const bubble = ensureStreamingBubble();
   bubble.innerHTML = markdown(update.item.detail ?? "");
   scrollToBottom();
+});
+
+// ---- 附件（📎 = 与面板 ⌘⇧A 同一条路径，ADR-0010）----
+
+const attachRowEl = document.querySelector<HTMLDivElement>("#attach-row")!;
+const attachPathEl = document.querySelector<HTMLInputElement>("#attach-path")!;
+const attachMsgEl = document.querySelector<HTMLSpanElement>("#attach-msg")!;
+const ATTACH_ROW_BASE =
+  "flex items-center gap-2 border-t border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs";
+
+function openAttachRow() {
+  attachRowEl.className = `${ATTACH_ROW_BASE} text-sky-200`;
+  attachPathEl.value = "";
+  attachMsgEl.textContent = "";
+  attachMsgEl.className = "shrink-0";
+  attachPathEl.focus();
+}
+
+function closeAttachRow() {
+  attachRowEl.className = "hidden";
+  attachMsgEl.textContent = "";
+}
+
+async function submitAttachPath() {
+  const raw = attachPathEl.value.trim();
+  if (!raw) {
+    closeAttachRow();
+    return;
+  }
+  try {
+    const info = await validatePath(raw);
+    composerEl.value = appendMention(composerEl.value, info.path);
+    closeAttachRow();
+    composerEl.focus();
+  } catch (err) {
+    attachMsgEl.className = "shrink-0 text-red-300";
+    attachMsgEl.textContent = String(err);
+  }
+}
+
+attachPathEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    e.stopPropagation();
+    void submitAttachPath();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeAttachRow();
+    composerEl.focus();
+  }
+});
+
+document.querySelector<HTMLButtonElement>("#attach")!.addEventListener("click", () => {
+  if (attachRowEl.className === "hidden") openAttachRow();
+  else {
+    closeAttachRow();
+    composerEl.focus();
+  }
 });
 
 // ---- 键盘：Enter 发送 / Shift+Enter 换行 / Esc 收起 ----

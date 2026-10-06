@@ -399,6 +399,13 @@ fn hide_panel(app: AppHandle) {
     hide_panel_blocking(&app);
 }
 
+/// 附件路径校验（IIE4AD-358）：只探测类型与大小上限，不读入内容；
+/// 错误直接回给面板/侧栏做内联提示。
+#[tauri::command]
+fn resolve_attachment(path: String) -> Result<moe_extensions::attachment::AttachmentInfo, String> {
+    moe_extensions::attachment::inspect(std::path::Path::new(&path))
+}
+
 /// 侧栏历史：某会话的全部消息（按时间正序）。
 #[tauri::command]
 fn side_messages(conversation_id: String) -> Result<Vec<moe_core::conversation::Message>, String> {
@@ -693,6 +700,7 @@ fn main() {
             invoke_command,
             run_item_action,
             hide_panel,
+            resolve_attachment,
             side_messages,
             side_send,
             summon_status,

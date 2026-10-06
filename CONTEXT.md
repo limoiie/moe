@@ -92,3 +92,8 @@ _Avoid_: 快速模式
 **Materialize（实体化）**:
 把 Command Panel 中的当前会话转为该 Extension 的 Side View 的动作。
 _Avoid_: 展开、弹出
+
+**Attachment（附件）**:
+提问时随消息携带的本地文件（v1：文本与图片）。在输入栏以 `@path` mention 表达（ADR-0010）；
+内容在请求时现读（文本内联、图片进多模态），历史里只存引用。
+_Avoid_: 上传、文件对象、upload

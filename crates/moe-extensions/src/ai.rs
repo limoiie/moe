@@ -13,14 +13,13 @@ use moe_core::contract::{
     Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, Extension, InputKind,
     Item, MoeError,
 };
-use moe_core::conversation::{Conversation, Message, Role};
+use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_platform::config::MoeConfig;
 use moe_platform::db::Db;
 use moe_platform::keychain;
 
-use crate::ai_client::{
-    SseLine, chat_body, chat_body_with_history, chat_completions_url, sse_delta,
-};
+use crate::ai_client::{SseLine, chat_body_from_messages, chat_completions_url, sse_delta};
+use crate::attachment;
 
 pub struct AiShell;
 
@@ -111,6 +110,18 @@ fn conversation_title(question: &str) -> String {
     title
 }
 
+/// 会话标题：问题首行，超长截断；纯附件（无文本）时用附件名。
+fn title_for(display: &str, attachments: &[AttachmentRef]) -> String {
+    let title = conversation_title(display);
+    if !title.is_empty() {
+        return title;
+    }
+    match attachments.first() {
+        Some(first) => format!("附件：{}", first.name),
+        None => "新对话".into(),
+    }
+}
+
 /// 列表副标题的相对时间。
 fn relative_time(updated_unix: u64, now_unix: u64) -> String {
     let secs = now_unix.saturating_sub(updated_unix);
@@ -129,14 +140,16 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-/// 提问即建会话（历史按 `ai` Namespace 隔离，ADR-0003）；存储不可用时降级为不持久化。
-fn persist_question(question: &str) -> Option<String> {
+/// 提问即建会话（历史按 `ai` Namespace 隔离，ADR-0003；附件只存引用，ADR-0010）；
+/// 存储不可用时降级为不持久化。
+fn persist_question(display: &str, attachments: &[AttachmentRef]) -> Option<String> {
     let db = Db::open_default().ok()?;
     let now = SystemTime::now();
     let id = db
-        .create_conversation("ai", &conversation_title(question), now)
+        .create_conversation("ai", &title_for(display, attachments), now)
         .ok()?;
-    db.append_message(&id, Role::User, question, now).ok()?;
+    db.append_message(&id, Role::User, display, attachments, now)
+        .ok()?;
     Some(id)
 }
 
@@ -146,7 +159,13 @@ fn persist_assistant(conversation_id: Option<&str>, text: &str) {
         return;
     };
     if let Ok(db) = Db::open_default() {
-        let _ = db.append_message(conversation_id, Role::Assistant, text, SystemTime::now());
+        let _ = db.append_message(
+            conversation_id,
+            Role::Assistant,
+            text,
+            &[],
+            SystemTime::now(),
+        );
     }
 }
 
@@ -236,11 +255,22 @@ const KEY_MISSING_MD: &str = "## 端点已配置，但还缺 API key\n\n\
 impl AiShell {
     fn start_ask(&self, question: &str, emitter: Option<Arc<dyn Emitter>>) -> ActionResult {
         let question = question.trim().to_string();
-        if question.is_empty() {
+        // 附件以 `@path` mention 表达（ADR-0010）：内容现读，引用随消息落库。
+        let (cleaned, paths) = attachment::parse_mentions(&question);
+        let display = if cleaned.is_empty() {
+            question.clone()
+        } else {
+            cleaned
+        };
+        if display.trim().is_empty() {
             return ActionResult::List {
                 items: vec![answer_item("在输入框里写下问题，再按 Enter。", None)],
             };
         }
+        let attachments: Vec<AttachmentRef> = paths
+            .iter()
+            .map(|path| attachment::ref_for_path(path))
+            .collect();
 
         let config = MoeConfig::load();
         if !config.ai.configured() {
@@ -255,13 +285,18 @@ impl AiShell {
         };
 
         // 提问即建会话；随后 ⌘M 可带同一会话进侧栏续聊。
-        let conversation_id = persist_question(&question);
+        let conversation_id = persist_question(&display, &attachments);
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
         let model = config.ai.model_or_default().to_string();
 
         if let Some(emitter) = emitter {
-            let body = chat_body(&model, &question);
+            let message = Message {
+                role: Role::User,
+                content: display.clone(),
+                attachments,
+            };
+            let body = chat_body_from_messages(&model, vec![attachment::expand_message(&message)]);
             let conversation_id_in_thread = conversation_id.clone();
             std::thread::spawn(move || {
                 run_stream(
@@ -358,11 +393,23 @@ impl Extension for AiShell {
     }
 
     fn fallback_command(&self, query: &str) -> Option<CommandMeta> {
+        // 标题剥离 mention（ADR-0010）：路径不当作提问内容展示。
+        let (cleaned, paths) = attachment::parse_mentions(query);
+        let title = match (cleaned.is_empty(), paths.is_empty()) {
+            (false, _) => format!("AI: 提问「{cleaned}」"),
+            (true, false) => "AI: 带附件的提问".into(),
+            (true, true) => format!("AI: 提问「{query}」"),
+        };
+        let subtitle = if paths.is_empty() {
+            "Enter 发送；回答可回写（⌥⏎ 复制 · ⌘M 侧栏）".to_string()
+        } else {
+            format!("{} 个附件；Enter 发送", paths.len())
+        };
         Some(CommandMeta {
             id: "ai.quick-ask".into(),
             extension_id: "ai".into(),
-            title: format!("AI: 提问「{query}」"),
-            subtitle: Some("Enter 发送；回答可回写（⌥⏎ 复制 · ⌘M 侧栏）".into()),
+            title,
+            subtitle: Some(subtitle),
             input: InputKind::Query,
             live: false,
         })
@@ -413,25 +460,48 @@ impl Extension for AiShell {
         };
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
+
+        // 附件 mention 与快捷提问同一语法（ADR-0010）。
+        let (cleaned, paths) = attachment::parse_mentions(message);
+        let display = if cleaned.is_empty() {
+            message.to_string()
+        } else {
+            cleaned
+        };
+        let attachments: Vec<AttachmentRef> = paths
+            .iter()
+            .map(|path| attachment::ref_for_path(path))
+            .collect();
+
         let conversation_id = if conversation_id.trim().is_empty() {
-            db.create_conversation("ai", &conversation_title(message), SystemTime::now())
+            db.create_conversation("ai", &title_for(&display, &attachments), SystemTime::now())
                 .map_err(MoeError::Internal)?
         } else {
             conversation_id.trim().to_string()
         };
 
-        // 先取历史再追加本条：端点收到的 messages 以新消息结尾。
+        // 先取历史再追加本条：端点收到的 messages 以新消息结尾（附件逐条现读展开）。
         let mut messages = db.messages(&conversation_id).map_err(MoeError::Internal)?;
-        db.append_message(&conversation_id, Role::User, message, SystemTime::now())
-            .map_err(MoeError::Internal)?;
+        db.append_message(
+            &conversation_id,
+            Role::User,
+            &display,
+            &attachments,
+            SystemTime::now(),
+        )
+        .map_err(MoeError::Internal)?;
         messages.push(Message {
             role: Role::User,
-            content: message.to_string(),
+            content: display,
+            attachments,
         });
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
         let model = config.ai.model_or_default().to_string();
-        let body = chat_body_with_history(&model, &messages);
+        let body = chat_body_from_messages(
+            &model,
+            messages.iter().map(attachment::expand_message).collect(),
+        );
         let conversation = conversation_id.clone();
         std::thread::spawn(move || {
             run_stream(
@@ -452,9 +522,9 @@ mod tests {
     use super::*;
     use moe_core::contract::Extension;
 
-    /// 同款守卫：fallback 合成的 id 必须可路由。
+    /// 同款守卫：fallback 合成的 id 必须可路由；标题剥离附件 mention（IIE4AD-358）。
     #[test]
-    fn fallback_command_is_invocable() {
+    fn fallback_command_is_invocable_and_strips_mentions() {
         let ext = AiShell;
         let fallback = ext.fallback_command("hello").expect("fallback");
         assert!(
@@ -462,6 +532,18 @@ mod tests {
             "fallback id 必须在 commands() 中可路由：{}",
             fallback.id
         );
+
+        let with_attachments = ext
+            .fallback_command("总结 @\"/tmp/a b.md\"")
+            .expect("fallback");
+        assert_eq!(with_attachments.title, "AI: 提问「总结」");
+        assert_eq!(
+            with_attachments.subtitle.as_deref(),
+            Some("1 个附件；Enter 发送")
+        );
+
+        let attachment_only = ext.fallback_command("@/tmp/a.md").expect("fallback");
+        assert_eq!(attachment_only.title, "AI: 带附件的提问");
     }
 
     /// 历史搜索是 Live 命令（输入变化即重跑列表）。
@@ -484,6 +566,18 @@ mod tests {
         let title = conversation_title(&long);
         assert_eq!(title.chars().count(), TITLE_CHARS + 1);
         assert!(title.ends_with('…'));
+    }
+
+    /// 纯附件会话：标题回退到附件名（IIE4AD-358）。
+    #[test]
+    fn title_falls_back_to_attachment_name() {
+        let refs = vec![AttachmentRef {
+            name: "shot.png".into(),
+            path: "/tmp/shot.png".into(),
+        }];
+        assert_eq!(title_for("总结图片", &refs), "总结图片");
+        assert_eq!(title_for("", &refs), "附件：shot.png");
+        assert_eq!(title_for("", &[]), "新对话");
     }
 
     #[test]

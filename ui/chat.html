@@ -29,6 +29,15 @@
         id="error"
         class="hidden border-t border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-200"
       ></div>
+      <div id="attach-row" class="hidden">
+        <input
+          id="attach-path"
+          class="min-w-0 flex-1 bg-transparent text-zinc-100 placeholder-zinc-500 outline-none"
+          placeholder="粘贴文件路径，Enter 添加附件（Esc 取消；支持 ~ 与空格路径）"
+          spellcheck="false"
+        />
+        <span id="attach-msg" class="shrink-0"></span>
+      </div>
       <footer class="border-t border-zinc-800 p-2">
         <textarea
           id="composer"
@@ -40,9 +49,8 @@
         <div class="flex items-center justify-between px-1">
           <button
             id="attach"
-            disabled
-            title="附件：IIE4AD-358 接入"
-            class="cursor-not-allowed rounded-md px-2 py-1 text-xs text-zinc-500"
+            title="添加附件（⌘⇧A 同款路径输入）"
+            class="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
           >
             📎 附件
           </button>

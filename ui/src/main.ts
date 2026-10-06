@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
+import { appendMention, humanBytes, validatePath } from "./attachment";
 import { store } from "./store";
 
 // ---- 类型：镜像 moe-core 的 serde camelCase 契约（ADR-0006）----
@@ -81,6 +82,7 @@ const HINT_LABELS: Record<string, string> = {
   showAllActions: "动作",
   back: "回退",
   materialize: "侧栏",
+  attach: "附件",
 };
 
 async function initHints() {
@@ -334,9 +336,102 @@ async function refresh(query: string) {
   view.update((v) => ({ ...v, mode: "commands", commands, focus: 0 }));
 }
 
+// ---- 附件输入（⌘⇧A）：复用同一 Input Bar 输入路径，Enter 插入 `@"path"` mention（ADR-0010）----
+
+const attachBarEl = document.querySelector<HTMLDivElement>("#attach")!;
+const attachTextEl = document.querySelector<HTMLSpanElement>("#attach-text")!;
+const QUERY_PLACEHOLDER = "搜索 Command…";
+const ATTACH_BAR_BASE =
+  "items-center justify-between gap-3 border-b px-4 py-2 text-xs";
+
+let attaching = false;
+let savedQuery = "";
+let attachBarToken = 0;
+
+function setAttachBar(kind: "hint" | "error", text: string) {
+  attachTextEl.textContent = text;
+  const palette =
+    kind === "error"
+      ? "border-red-500/30 bg-red-500/10 text-red-200"
+      : "border-sky-500/30 bg-sky-500/10 text-sky-200";
+  attachBarEl.className = `${ATTACH_BAR_BASE} flex ${palette}`;
+}
+
+function hideAttachBar() {
+  attachBarEl.className = `${ATTACH_BAR_BASE} hidden`;
+}
+
+function startAttach() {
+  if (attaching) return;
+  attaching = true;
+  savedQuery = q.value;
+  q.value = "";
+  q.placeholder = "粘贴文件路径，Enter 添加附件";
+  setAttachBar(
+    "hint",
+    "附件模式：粘贴文件路径，Enter 添加（Esc 取消；支持 ~ 与含空格路径）",
+  );
+  q.focus();
+}
+
+function cancelAttach() {
+  if (!attaching) return;
+  attaching = false;
+  q.value = savedQuery;
+  savedQuery = "";
+  q.placeholder = QUERY_PLACEHOLDER;
+  hideAttachBar();
+}
+
+async function submitAttach() {
+  const raw = q.value.trim();
+  if (!raw) {
+    cancelAttach();
+    return;
+  }
+  try {
+    const info = await validatePath(raw);
+    attaching = false;
+    q.value = appendMention(savedQuery, info.path);
+    savedQuery = "";
+    q.placeholder = QUERY_PLACEHOLDER;
+    const kind = info.kind === "image" ? "图片" : "文本";
+    setAttachBar(
+      "hint",
+      `已添加附件：${info.name}（${kind}，${humanBytes(info.bytes)}）`,
+    );
+    const token = ++attachBarToken;
+    window.setTimeout(() => {
+      if (!attaching && token === attachBarToken) hideAttachBar();
+    }, 3000);
+    // 列表跟随新查询（纯附件时会出现「AI: 带附件的提问」入口，避免误跑第一个命令）
+    void refresh(q.value);
+    q.focus();
+  } catch (err) {
+    setAttachBar("error", `附件添加失败：${String(err)}`);
+  }
+}
+
 // ---- 全局键盘事件（keyboard-first：所有能力都可达，鼠标仅冗余）----
 
 window.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "a") {
+    e.preventDefault();
+    if (attaching) cancelAttach();
+    else startAttach();
+    return;
+  }
+  if (attaching) {
+    // 附件模式下输入栏只服务路径：不触发任何面板语义
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void submitAttach();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelAttach();
+    }
+    return;
+  }
   if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
     e.preventDefault();
     move(1);
@@ -362,6 +457,7 @@ let debounce: ReturnType<typeof setTimeout> | undefined;
 q.addEventListener("input", () => {
   clearTimeout(debounce);
   debounce = setTimeout(() => {
+    if (attaching) return;
     const v = view.get();
     if (v.mode === "items" && v.sourceLive && v.sourceCommandId) {
       void rerunLive(q.value);
@@ -451,8 +547,9 @@ void listen<CommandEventPayload>("command-event", (event) => {
 void listen("summon-authorized", () => hideBanner());
 
 // 呼出时保留上次的输入与结果（用户可能在隐藏后补充输入），
-// 只刷新权限引导状态（可能刚去系统设置授过权）。
+// 只刷新权限引导状态（可能刚去系统设置授过权）；未完成的附件输入不跨呼出保留。
 window.addEventListener("focus", () => {
+  cancelAttach();
   void refreshBanner();
 });
 
