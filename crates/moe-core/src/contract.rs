@@ -34,6 +34,11 @@ pub struct Action {
     pub keybinding: Option<String>,
 }
 
+/// `Item.pending` 的 serde 辅助：false 时不下发（旧读取方不受影响）。
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Item {
@@ -48,6 +53,9 @@ pub struct Item {
     /// 详情内容（Markdown，详情视图卡片渲染）；流式回答在此累积。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// 仍在产出中（流式占位）：平台的键位层在 Esc 时优先请求停止生成（IIE4AD-365）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pending: bool,
 }
 
 /// Apply 或任一动作执行后的结果。输出类型不封闭枚举——List 中的 Item
@@ -176,6 +184,12 @@ pub trait Extension: Send + Sync {
     ) -> Result<String, MoeError> {
         Err(MoeError::NotFound)
     }
+
+    /// 请求停止本 Extension 正在进行的生成，返回被中止的生成数（默认无此能力）。
+    /// 平台级 Esc 在 Focused Item 为 `pending` 时优先调用它（IIE4AD-365）。
+    fn stop_generation(&self) -> usize {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +209,7 @@ mod tests {
                 actions: vec![],
                 payload: serde_json::Value::Null,
                 detail: None,
+                pending: false,
             },
         };
         let json = serde_json::to_value(&event).unwrap();

@@ -56,6 +56,11 @@ _Avoid_: 高亮项、选中项（"选中"保留给其他应用的文字选区）
 对 Focused Item 的主操作（Enter）：执行该 item 所代表动作的默认语义。
 _Avoid_: 执行、打开、启用
 
+**Stop（停止生成）**:
+流式产出中的 Item 标记为 `pending`；此时 Esc 的第一优先级是请求停止（平台级，一次停止全部进行中的生成），
+保留已生成部分而不是回滚（ADR-0006 增补）。
+_Avoid_: 取消、中断
+
 **Secondary Action（副操作）**:
 对同一 Focused Item 的具名替代操作，各有固定快捷键（如 ⌥Enter 复制纯文本、复制 HTML 等）。主副之分是 Command 的一致语义约定，不由各 Extension 自定。
 _Avoid_: 右键菜单

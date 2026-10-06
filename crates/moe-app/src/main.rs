@@ -399,6 +399,16 @@ fn hide_panel(app: AppHandle) {
     hide_panel_blocking(&app);
 }
 
+/// 停止进行中的生成（IIE4AD-365）：面板/侧栏在 Esc 时调用；返回被中止的生成数。
+#[tauri::command]
+fn stop_generation(state: State<'_, AppState>) -> usize {
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .stop_generation()
+}
+
 /// 附件路径校验（IIE4AD-358）：只探测类型与大小上限，不读入内容；
 /// 错误直接回给面板/侧栏做内联提示。
 #[tauri::command]
@@ -769,6 +779,7 @@ fn main() {
             invoke_command,
             run_item_action,
             hide_panel,
+            stop_generation,
             resolve_attachment,
             side_messages,
             side_send,

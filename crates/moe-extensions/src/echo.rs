@@ -86,6 +86,7 @@ impl Extension for Echo {
                         ],
                         payload: serde_json::json!({ "word": word }),
                         detail: None,
+                        pending: false,
                     })
                     .collect(),
             }),

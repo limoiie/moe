@@ -22,6 +22,8 @@ interface Item {
   actions: Action[];
   payload: unknown;
   detail?: string | null;
+  /** 仍在产出中（流式占位）：Esc 时优先请求停止生成。 */
+  pending?: boolean;
 }
 interface CommandMeta {
   id: string;
@@ -72,6 +74,8 @@ const view = store<View>({
 
 /// 当前详情卡片对应的 item（流式事件据此重渲）
 let detailItemId: string | null = null;
+/** Hints Bar 里的动态「Esc 停止」提示（仅在流式期间显示）。 */
+let stopHintEl: HTMLSpanElement | null = null;
 /** 详情卡片的形态：preview（焦点预览，列表仍在）/ message（全屏卡片，如错误）。 */
 type DetailMode = "none" | "preview" | "message";
 let detailMode: DetailMode = "none";
@@ -103,6 +107,14 @@ const HINT_LABELS: Record<string, string> = {
 
 async function initHints() {
   const entries = await invoke<[string, string][]>("keymap");
+  // 流式期间的动态键位：Esc = 停止生成（pending 时显示，IIE4AD-365）
+  const stop = document.createElement("span");
+  stop.className = "hidden";
+  const stopKey = document.createElement("kbd");
+  stopKey.className = "text-zinc-200";
+  stopKey.textContent = "Esc";
+  stop.append(stopKey, " 停止");
+  stopHintEl = stop;
   hintsEl.replaceChildren(
     ...entries.map(([display, semantic]) => {
       const span = document.createElement("span");
@@ -112,6 +124,7 @@ async function initHints() {
       span.append(kbd, ` ${HINT_LABELS[semantic] ?? semantic}`);
       return span;
     }),
+    stop,
   );
 }
 
@@ -163,6 +176,9 @@ function render() {
     }),
   );
   renderDetail();
+  // 流式占位项：显示「Esc 停止」
+  const pending = v.mode === "items" && v.items[v.focus]?.pending === true;
+  stopHintEl?.classList.toggle("hidden", !pending);
 }
 
 // ---- 详情卡片：焦点预览（列表共存）/ 全屏消息（错误等）----
@@ -367,9 +383,14 @@ async function rerunLive(query: string) {
   }
 }
 
-// Esc 分层回退：预览/详情 → 结果层 → 输入 → 关面板（ADR-0006 Keymap::Back）
+// Esc 分层回退：停止生成 → 预览/详情 → 结果层 → 输入 → 关面板（ADR-0006 Keymap::Back）
 async function back() {
   const v = view.get();
+  // 流式生成中：Esc 的第一优先级是停止（IIE4AD-365）
+  if (v.mode === "items" && v.items[v.focus]?.pending) {
+    await stopGeneration();
+    return;
+  }
   if (dismissDetail()) {
     return;
   }
@@ -390,6 +411,16 @@ async function refresh(query: string) {
   previewDismissed = false;
   const commands = await invoke<CommandMeta[]>("search_commands", { query });
   view.update((v) => ({ ...v, mode: "commands", commands, focus: 0 }));
+}
+
+/** 停止进行中的生成（平台级：不区分扩展/会话，IIE4AD-365）。 */
+async function stopGeneration() {
+  try {
+    const stopped = await invoke<number>("stop_generation");
+    toast(stopped > 0 ? "已停止生成" : "没有进行中的生成");
+  } catch (err) {
+    showMessage(`停止失败：${String(err)}`);
+  }
 }
 
 // ---- 附件输入（⌘⇧A）：复用同一 Input Bar 输入路径，Enter 插入 `@"path"` mention（ADR-0010）----

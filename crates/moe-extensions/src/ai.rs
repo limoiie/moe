@@ -5,9 +5,11 @@
 //! - 流式走 `CommandEvent::ItemUpdated`：invoke 立即返回占位 item，
 //!   worker 线程收 SSE 并逐段 emit（就地在详情卡片/侧栏重渲）。
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
     Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, Extension, InputKind,
@@ -32,7 +34,7 @@ const HISTORY_LIMIT: usize = 20;
 /// 会话标题长度（超出截断并加省略号）。
 const TITLE_CHARS: usize = 40;
 
-fn answer_item(detail: &str, conversation_id: Option<&str>) -> Item {
+fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> Item {
     Item {
         id: "ai.answer".into(),
         title: "AI 回答".into(),
@@ -59,6 +61,7 @@ fn answer_item(detail: &str, conversation_id: Option<&str>) -> Item {
         ],
         payload: conversation_payload(conversation_id),
         detail: Some(detail.into()),
+        pending,
     }
 }
 
@@ -85,6 +88,7 @@ fn history_item(conversation: Conversation, now_unix: u64) -> Item {
         }],
         payload,
         detail: None,
+        pending: false,
     }
 }
 
@@ -97,6 +101,7 @@ fn notice_item(title: &str, detail: &str) -> Item {
         actions: vec![],
         payload: serde_json::Value::Null,
         detail: Some(detail.into()),
+        pending: false,
     }
 }
 
@@ -169,7 +174,45 @@ fn persist_assistant(conversation_id: Option<&str>, text: &str) {
     }
 }
 
-/// 请求 + SSE 循环：增量逐段 emit，结束后落库（有会话时）。
+/// 进行中的生成：会话 id → 取消标记（IIE4AD-365）。
+fn active_streams() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    static ACTIVE: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 登记一次生成（无持久化会话时不可中断，返回 None）。
+fn begin_stream(conversation_id: Option<&str>) -> Option<Arc<AtomicBool>> {
+    let conversation_id = conversation_id?;
+    let flag = Arc::new(AtomicBool::new(false));
+    active_streams()
+        .lock()
+        .expect("streams poisoned")
+        .insert(conversation_id.to_string(), Arc::clone(&flag));
+    Some(flag)
+}
+
+/// 收尾：从登记表移除（worker 结束/被中止时调用）。
+fn end_stream(conversation_id: Option<&str>) {
+    let Some(conversation_id) = conversation_id else {
+        return;
+    };
+    active_streams()
+        .lock()
+        .expect("streams poisoned")
+        .remove(conversation_id);
+}
+
+/// 标记全部进行中的生成为取消；worker 在下一个 SSE 行处收尾。返回中止数量。
+fn stop_all_streams() -> usize {
+    let streams = active_streams().lock().expect("streams poisoned");
+    for flag in streams.values() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    streams.len()
+}
+
+/// 请求 + SSE 循环：增量逐段 emit（pending=true），结束后落库（有会话时）。
+/// 被停止（IIE4AD-365）时保留已生成部分并落库，仅中止后续读取。
 fn run_stream(
     base_url: &str,
     key: &str,
@@ -178,21 +221,27 @@ fn run_stream(
     conversation_id: Option<String>,
     emitter: Arc<dyn Emitter>,
 ) {
-    let emit = |text: String| {
+    let cancel = begin_stream(conversation_id.as_deref());
+    let emit = |text: String, pending: bool| {
         emitter.emit(CommandEvent::ItemUpdated {
             command_id: command_id.to_string(),
-            item: answer_item(&text, conversation_id.as_deref()),
+            item: answer_item(&text, conversation_id.as_deref(), pending),
         });
     };
     let fail = |text: String| {
         persist_assistant(conversation_id.as_deref(), &text);
-        emit(text);
+        emit(text, false);
     };
 
-    let client = match reqwest::blocking::Client::builder().build() {
+    let client = match reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(300))
+        .build()
+    {
         Ok(client) => client,
         Err(err) => {
             fail(format!("## 请求失败\n\n无法初始化 HTTP 客户端：{err}"));
+            end_stream(conversation_id.as_deref());
             return;
         }
     };
@@ -205,6 +254,7 @@ fn run_stream(
         Ok(response) => response,
         Err(err) => {
             fail(format!("## 请求失败\n\n```\n{err}\n```"));
+            end_stream(conversation_id.as_deref());
             return;
         }
     };
@@ -217,25 +267,45 @@ fn run_stream(
             .take(500)
             .collect();
         fail(format!("## 端点返回 {status}\n\n```\n{body}\n```"));
+        end_stream(conversation_id.as_deref());
         return;
     }
 
     let mut acc = String::new();
+    let mut stopped = false;
     for line in BufReader::new(response).lines() {
+        if cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            stopped = true;
+            break;
+        }
         let Ok(line) = line else { break };
         match sse_delta(&line) {
             SseLine::Delta(delta) => {
                 acc.push_str(&delta);
-                emit(acc.clone());
+                emit(acc.clone(), true);
             }
             SseLine::Done => break,
             SseLine::Ignore => {}
         }
     }
-    if acc.is_empty() {
+    end_stream(conversation_id.as_deref());
+
+    if stopped {
+        let text = if acc.is_empty() {
+            "（已停止生成）".to_string()
+        } else {
+            format!("{acc}\n\n_（已停止生成）_")
+        };
+        persist_assistant(conversation_id.as_deref(), &text);
+        emit(text, false);
+    } else if acc.is_empty() {
         fail("（端点没有返回内容）".into());
     } else {
         persist_assistant(conversation_id.as_deref(), &acc);
+        emit(acc, false);
     }
 }
 
@@ -264,7 +334,7 @@ impl AiShell {
         };
         if display.trim().is_empty() {
             return ActionResult::List {
-                items: vec![answer_item("在输入框里写下问题，再按 Enter。", None)],
+                items: vec![answer_item("在输入框里写下问题，再按 Enter。", None, false)],
             };
         }
         let attachments: Vec<AttachmentRef> = paths
@@ -275,12 +345,12 @@ impl AiShell {
         let config = MoeConfig::load();
         if !config.ai.configured() {
             return ActionResult::List {
-                items: vec![answer_item(SETUP_MD, None)],
+                items: vec![answer_item(SETUP_MD, None, false)],
             };
         }
         let Some(key) = keychain::ai_api_key() else {
             return ActionResult::List {
-                items: vec![answer_item(KEY_MISSING_MD, None)],
+                items: vec![answer_item(KEY_MISSING_MD, None, false)],
             };
         };
 
@@ -310,7 +380,7 @@ impl AiShell {
             });
         }
         ActionResult::List {
-            items: vec![answer_item("正在回答…", conversation_id.as_deref())],
+            items: vec![answer_item("正在回答…", conversation_id.as_deref(), true)],
         }
     }
 
@@ -520,12 +590,18 @@ impl Extension for AiShell {
         });
         Ok(conversation_id)
     }
+
+    /// 停止进行中的生成（IIE4AD-365）：标记取消位，worker 在下一个 SSE 行处收尾并落库已生成部分。
+    fn stop_generation(&self) -> usize {
+        stop_all_streams()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use moe_core::contract::Extension;
+    use std::time::Instant;
 
     /// 同款守卫：fallback 合成的 id 必须可路由；标题剥离附件 mention（IIE4AD-358）。
     #[test]
@@ -622,10 +698,99 @@ mod tests {
         );
     }
 
+    /// 停止生成：登记后请求停止应命中取消位（IIE4AD-365）。
+    #[test]
+    fn stop_all_streams_marks_active_flags() {
+        let flag = begin_stream(Some("test-stop-conv")).expect("登记取消位");
+        assert!(!flag.load(Ordering::Relaxed));
+        assert!(stop_all_streams() >= 1, "应至少命中刚登记的取消位");
+        assert!(flag.load(Ordering::Relaxed), "取消位应被标记");
+        end_stream(Some("test-stop-conv"));
+        // 无持久化会话（id 为空）时不可中断
+        assert!(begin_stream(None).is_none());
+    }
+
+    /// 端到端：慢速 SSE 流中途 `stop_generation` → 及时收尾，末帧 pending=false 且标记已停止。
+    #[test]
+    fn stop_generation_stops_running_stream() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0u8; 2048];
+            let _ = socket.read(&mut buf); // 请求头
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+            for index in 0..500 {
+                let delta = format!(
+                    "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{index},\"}}}}]}}\n\n"
+                );
+                if socket.write_all(delta.as_bytes()).is_err() {
+                    break; // 客户端断开（被停止）
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        struct Recorder(Mutex<Vec<Item>>);
+        impl Emitter for Recorder {
+            fn emit(&self, event: CommandEvent) {
+                let CommandEvent::ItemUpdated { item, .. } = event;
+                self.0.lock().unwrap().push(item);
+            }
+        }
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let base_url = format!("http://{addr}/v1");
+        std::thread::spawn(move || {
+            run_stream(
+                &base_url,
+                "test-key",
+                serde_json::json!({}),
+                "ai.quick-ask",
+                // 不存在的会话：落库是 no-op（db 层的悬空行防护），不会污染真实历史
+                Some("stop-e2e".into()),
+                emitter,
+            );
+            let _ = done_tx.send(());
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while recorder.0.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!recorder.0.lock().unwrap().is_empty(), "应先收到流式增量");
+        assert!(stop_all_streams() >= 1, "应命中进行中的生成");
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("停止后应立即收尾");
+
+        let items = recorder.0.lock().unwrap();
+        let last = items.last().expect("至少一帧");
+        assert!(!last.pending, "末帧应为 pending=false");
+        assert!(
+            last.detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("已停止生成"),
+            "末帧应标记已停止：{:?}",
+            last.detail
+        );
+        assert!(items.len() < 400, "不应跑完整个流：{} 帧", items.len());
+        let _ = server.join();
+    }
+
     /// 回答 item 的 ⌘M（materialize）同样带回会话 id，侧栏定位到同一会话。
     #[test]
     fn answer_item_carries_conversation_id_on_materialize() {
-        let item = answer_item("正文", Some("9"));
+        let item = answer_item("正文", Some("9"), false);
         assert_eq!(item.payload["conversationId"], "9");
         let action = item
             .actions

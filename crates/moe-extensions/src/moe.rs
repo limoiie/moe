@@ -18,6 +18,7 @@ fn info_item(text: &str) -> Item {
         actions: vec![],
         payload: serde_json::Value::Null,
         detail: Some(text.into()),
+        pending: false,
     }
 }
 

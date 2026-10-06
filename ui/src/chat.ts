@@ -23,6 +23,8 @@ interface Item {
   subtitle?: string;
   payload: unknown;
   detail?: string | null;
+  /** 仍在产出中（流式占位）。 */
+  pending?: boolean;
 }
 interface CommandEventPayload {
   itemUpdated?: { commandId: string; item: Item };
@@ -45,6 +47,20 @@ let conversationId: string | null = null;
 /** 正在流式更新的回答气泡。 */
 let streaming: HTMLElement | null = null;
 let sending = false;
+/** 后端仍在生成（收到 pending=false 或主动停止后结束）。 */
+let generating = false;
+
+const sendEl = document.querySelector<HTMLButtonElement>("#send")!;
+const SEND_CLASS =
+  "rounded-md bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500";
+const STOP_CLASS =
+  "rounded-md bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-500";
+
+/** 发送/停止按钮随生成状态切换（IIE4AD-365）。 */
+function updateSendUi() {
+  sendEl.textContent = generating ? "停止" : "发送 ⏎";
+  sendEl.className = generating ? STOP_CLASS : SEND_CLASS;
+}
 
 function scrollToBottom() {
   historyEl.scrollTop = historyEl.scrollHeight;
@@ -116,6 +132,8 @@ function ensureStreamingBubble(): HTMLElement {
 async function loadHistory() {
   historyEl.replaceChildren();
   streaming = null;
+  generating = false;
+  updateSendUi();
   if (!conversationId) {
     setTitle("新对话");
     emptyEl.textContent =
@@ -156,11 +174,15 @@ async function send() {
       message,
     });
     ensureStreamingBubble();
+    generating = true;
+    updateSendUi();
   } catch (err) {
     // 失败回滚：这条消息没有落库，恢复输入避免用户重打。
     row.remove();
     composerEl.value = message;
     setError(String(err));
+    generating = false;
+    updateSendUi();
   } finally {
     sending = false;
   }
@@ -185,6 +207,11 @@ void listen<CommandEventPayload>("command-event", (event) => {
   const bubble = ensureStreamingBubble();
   bubble.innerHTML = markdown(update.item.detail ?? "");
   scrollToBottom();
+  // 末帧（pending=false）标志生成结束（IIE4AD-365）
+  if (update.item.pending === false && generating) {
+    generating = false;
+    updateSendUi();
+  }
 });
 
 // ---- 附件（📎 = 与面板 ⌘⇧A 同一条路径，ADR-0010）----
@@ -246,7 +273,7 @@ document.querySelector<HTMLButtonElement>("#attach")!.addEventListener("click", 
   }
 });
 
-// ---- 键盘：Enter 发送 / Shift+Enter 换行 / Esc 收起 ----
+// ---- 键盘：Enter 发送 / Shift+Enter 换行 / Esc 停止或收起 ----
 
 composerEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -255,23 +282,41 @@ composerEl.addEventListener("keydown", (e) => {
   }
 });
 
+/** 停止生成（平台级：停止所有进行中的生成，IIE4AD-365）。 */
+async function stopGeneration() {
+  try {
+    await invoke<number>("stop_generation");
+  } catch (err) {
+    setError(String(err));
+  }
+  generating = false;
+  updateSendUi();
+}
+
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w")) {
     e.preventDefault();
+    if (generating) {
+      void stopGeneration();
+      return;
+    }
     void getCurrentWindow().hide();
   }
 });
 
 window.addEventListener("focus", () => composerEl.focus());
 
-document
-  .querySelector<HTMLButtonElement>("#send")!
-  .addEventListener("click", () => void send());
+sendEl.addEventListener("click", () => {
+  if (generating) void stopGeneration();
+  else void send();
+});
 
 // 新对话：清空会话（首条消息发送时由后端新建并返回 id）
 document.querySelector<HTMLButtonElement>("#new-chat")!.addEventListener("click", () => {
   conversationId = null;
   streaming = null;
+  generating = false;
+  updateSendUi();
   setError(null);
   void loadHistory();
 });

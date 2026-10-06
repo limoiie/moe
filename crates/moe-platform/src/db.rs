@@ -106,7 +106,8 @@ impl Db {
         self.conn
             .execute(
                 "INSERT INTO messages (conversation_id, role, content, attachments, created_unix)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                 SELECT ?1, ?2, ?3, ?4, ?5
+                 WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ?1)",
                 rusqlite::params![conversation_id, role.as_str(), content, attachments, ts],
             )
             .map_err(|err| err.to_string())?;
@@ -306,6 +307,15 @@ mod tests {
         let messages = db.messages(&conv).unwrap();
         assert_eq!(messages[0].attachments, refs);
         assert!(messages[1].attachments.is_empty());
+    }
+
+    /// 不存在的会话不能落消息（悬空行防护；测试/异步入库都不会污染库）。
+    #[test]
+    fn append_to_missing_conversation_is_noop() {
+        let db = db();
+        db.append_message("424242", Role::User, "悬空", &[], at(1))
+            .unwrap();
+        assert!(db.messages("424242").unwrap().is_empty());
     }
 
     /// 旧库（无 attachments 列）打开时自动升级，不丢历史。

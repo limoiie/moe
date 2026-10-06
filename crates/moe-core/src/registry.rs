@@ -116,6 +116,14 @@ impl Registry {
             .side_continue(conversation_id, message, emitter)
     }
 
+    /// 停止所有扩展进行中的生成，返回中止数量（IIE4AD-365）。
+    pub fn stop_generation(&self) -> usize {
+        self.extensions
+            .iter()
+            .map(|extension| extension.stop_generation())
+            .sum()
+    }
+
     pub fn invoke(
         &self,
         command_id: &str,
@@ -229,6 +237,7 @@ mod tests {
                         ],
                         payload: serde_json::Value::Null,
                         detail: None,
+                        pending: false,
                     }],
                 }),
                 "toy.hello" => Ok(ActionResult::WriteBack { text: "hi".into() }),
@@ -301,6 +310,7 @@ mod tests {
                 actions: vec![action("write-back", ActionKind::Primary)],
                 payload: serde_json::Value::Null,
                 detail: None,
+                pending: false,
             };
             emitter.emit(CommandEvent::ItemUpdated {
                 command_id: command_id.to_string(),
@@ -388,6 +398,7 @@ mod tests {
                         actions: vec![],
                         payload: serde_json::Value::Null,
                         detail: None,
+                        pending: false,
                     },
                 });
                 Ok(if conversation_id.is_empty() {
@@ -422,6 +433,39 @@ mod tests {
             r.side_continue("nope", "1", "x", Arc::new(NoopEmitter)),
             Err(MoeError::NotFound)
         ));
+    }
+
+    /// 停止生成按扩展聚合（IIE4AD-365）：默认实现返回 0，不会报错。
+    #[test]
+    fn stop_generation_sums_extension_counts() {
+        struct StopToy;
+        impl Extension for StopToy {
+            fn id(&self) -> &str {
+                "stop"
+            }
+            fn title(&self) -> &str {
+                "Stop"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&str>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+            fn stop_generation(&self) -> usize {
+                2
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(StopToy));
+        r.register(Box::new(Toy));
+        assert_eq!(r.stop_generation(), 2);
     }
 
     #[test]
