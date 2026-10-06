@@ -147,6 +147,14 @@ struct SummonStatusPayload {
 
 /// 把面板移到鼠标所在显示器（含全屏虚拟屏）并居中。
 fn place_on_active_screen(window: &tauri::WebviewWindow) {
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    center_at_cursor(window, size.width as f64, size.height as f64);
+}
+
+/// 把窗口居中到鼠标所在显示器（物理像素尺寸，调用方给）。
+fn center_at_cursor(window: &tauri::WebviewWindow, width: f64, height: f64) {
     let Ok(cursor) = window.cursor_position() else {
         return;
     };
@@ -155,7 +163,7 @@ fn place_on_active_screen(window: &tauri::WebviewWindow) {
         .ok()
         .flatten()
         .or_else(|| window.primary_monitor().ok().flatten());
-    let (Some(monitor), Ok(size)) = (monitor, window.outer_size()) else {
+    let Some(monitor) = monitor else {
         return;
     };
     let pos = monitor.position();
@@ -163,9 +171,21 @@ fn place_on_active_screen(window: &tauri::WebviewWindow) {
     let (x, y) = centered_on(
         (pos.x, pos.y),
         (msize.width, msize.height),
-        (size.width, size.height),
+        (width as u32, height as u32),
     );
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+/// 按页面形态调整面板尺寸（逻辑像素，ADR-0018）：两栏页面更宽更高。
+/// 尺寸由 UI 从 `ui/src/layout.ts` 的形态表算出，这里只负责改窗口并重新居中。
+#[tauri::command]
+fn resize_panel(window: tauri::WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|err| err.to_string())?;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    center_at_cursor(&window, width * scale, height * scale);
+    Ok(())
 }
 
 /// 菜单栏在屏幕顶部占用的高度（物理像素）。
@@ -872,6 +892,7 @@ fn main() {
             keymap,
             search_commands,
             entry_command,
+            resize_panel,
             invoke_command,
             run_item_action,
             hide_panel,

@@ -9,40 +9,7 @@ import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
-
-// ---- 类型：镜像 Rust 契约（ADR-0006）----
-
-interface AttachmentRef {
-  name: string;
-  path: string;
-}
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  attachments?: AttachmentRef[];
-}
-interface Conversation {
-  id: string;
-  namespace: string;
-  title: string;
-  updatedUnix: number;
-}
-interface Item {
-  id: string;
-  title: string;
-  subtitle?: string;
-  icon?: string;
-  payload: unknown;
-  detail?: string | null;
-  /** 仍在产出中（流式占位）。 */
-  pending?: boolean;
-}
-interface CommandEventPayload {
-  itemUpdated?: { commandId: string; item: Item };
-}
-interface SideOpenPayload {
-  conversationId?: string | null;
-}
+import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
 
 /** 侧栏续聊事件约定（moe-extensions::ai::SIDE_COMMAND_ID）。 */
 const SIDE_COMMAND_ID = "ai.side";

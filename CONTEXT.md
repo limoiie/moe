@@ -42,6 +42,12 @@ _Avoid_: 搜索框、地址栏
 Input Bar 之下随输入实时更新的候选列表；其中当前被选中的一个称为 Focused Item。
 _Avoid_: 下拉列表
 
+**Page Shape（页面形态）**:
+结果页只有三种形态：**列表**（list，单列）、**两栏**（split，左列表 + 右详情）、
+**详情**（detail，唯一一条结果整屏）。由平台在一处判定与渲染（`ui/src/layout.ts`），
+连同分栏比例与面板窗口尺寸都是全局统一；Extension 只提供内容（Item 可带 `detail`），不自己排版（ADR-0018）。
+_Avoid_: 布局模板、视图模式
+
 **Live List（实时列表）**:
 Command 的一种列表语义（`CommandMeta.live`）：进入该 Command 后，Input Bar 的每次变化
 都会用新查询重跑本 Command（如「AI: 搜索历史会话」随输入筛标题）。非 Live 的 Command

@@ -8,47 +8,20 @@ import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, type EntryAction } from "./keymap";
+import {
+  PANEL_SIZE,
+  SPLIT_PANE_CLASS,
+  pageShapeOf,
+  type PageShape,
+} from "./layout";
 import { store } from "./store";
-
-// ---- 类型：镜像 moe-core 的 serde camelCase 契约（ADR-0006）----
-
-type ActionKind = "primary" | "secondary";
-interface Action {
-  id: string;
-  title: string;
-  kind: ActionKind;
-  keybinding?: string | null;
-}
-interface Item {
-  id: string;
-  title: string;
-  subtitle?: string;
-  /** 图标语义名（ADR-0012）；缺省时用来源 Command 的图标。 */
-  icon?: string;
-  actions: Action[];
-  payload: unknown;
-  detail?: string | null;
-  /** 仍在产出中（流式占位）：Esc 时优先请求停止生成。 */
-  pending?: boolean;
-}
-interface CommandMeta {
-  id: string;
-  extensionId: string;
-  title: string;
-  subtitle?: string;
-  /** 图标语义名（ADR-0012）。 */
-  icon?: string;
-  input: "none" | "query" | "selection";
-  /** Live 列表：进入后输入变化即重跑（如历史搜索）。 */
-  live: boolean;
-}
-// 外部 tagged 枚举：单位变体（silent）序列化为裸字符串；
-// openSideView/writeBack 等带载荷变体为对象（侧栏开窗由后端执行）。
-type ActionResult =
-  | string
-  | { writeBack: { text: string } }
-  | { list: { items: Item[]; detailFull?: boolean } }
-  | { openSideView: { payload: unknown } };
+import type {
+  Action,
+  ActionResult,
+  CommandEventPayload,
+  CommandMeta,
+  Item,
+} from "./types";
 
 // ---- 视图状态 ----
 
@@ -208,6 +181,22 @@ function renderActionBar() {
 
 // ---- 渲染 ----
 
+/** 当前页面形态：list/split/detail（细节见 ui/src/layout.ts）。 */
+let currentShape: PageShape | null = null;
+
+/**
+ * 按页面形态调整面板窗口（两栏页面需要更宽更高）。
+ * 形态不变不动窗口；失败不影响渲染（窗口尺寸只是体验）。
+ */
+function applyPanelSize(shape: PageShape) {
+  if (shape === currentShape) return;
+  currentShape = shape;
+  const size = PANEL_SIZE[shape];
+  void invoke("resize_panel", { width: size.width, height: size.height }).catch(() => {
+    // 忽略：拿不到窗口就不动它
+  });
+}
+
 interface Row {
   title: string;
   subtitle?: string;
@@ -242,6 +231,14 @@ function currentEntries(): Row[] {
 
 function render() {
   const v = view.get();
+  // 页面形态决定窗口尺寸（ADR-0018）：两栏页面加宽加高，其余用默认尺寸。
+  // 只在形态变化时调 IPC，避免每次渲染都去动窗口。
+  const shape = pageShapeOf(
+    v.mode === "items" ? v.items[v.focus] : undefined,
+    v.detailFull === true,
+    v.items.length,
+  );
+  applyPanelSize(shape);
   const rows = currentEntries().map((e, i) => {
     const focused = i === v.focus;
     const li = document.createElement("li");
@@ -298,22 +295,52 @@ function updatePlaceholder() {
   }
 }
 
-// ---- 详情卡片：焦点预览（列表共存）/ 全屏消息（错误等）----
+// ---- 页面形态（ADR-0018）：列表 / 两栏 / 详情，三种形态共用一套排版 ----
 
-// 结果层多条：列表在左、详情在右（Raycast 同款左右分栏，IIE4AD 反馈 #1）
-// 底部留出悬浮动作条的高度（距下边 8px + 胶囊约 32px），最后一屏内容不被按钮遮住
+// 整屏详情（message）：底部留出悬浮动作条的高度（距下边 8px + 胶囊约 32px）
 const DETAIL_MESSAGE_CLASS =
   "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-zinc-200";
+// 两栏页面：左侧列表 + 右侧详情（宽度与形态见 ui/src/layout.ts）
 const DETAIL_PREVIEW_CLASS =
-  "md w-[58%] shrink-0 overflow-y-auto border-l border-zinc-800 px-4 pb-12 pt-3 text-sm text-zinc-200";
+  `md ${SPLIT_PANE_CLASS} shrink-0 overflow-y-auto border-l border-zinc-800 px-4 pb-12 pt-3 text-sm text-zinc-200`;
 
-function paintDetail(markdown: string, itemId: string | null, pending: boolean) {
+/** 两栏页面里详情栏的头部：焦点项的图标 + 标题 + 副标题（与列表行同一套元素）。 */
+function detailHeaderEl(item: Item): HTMLElement {
+  const header = document.createElement("div");
+  header.className =
+    "mb-3 flex items-center gap-2.5 border-b border-zinc-800 pb-2.5 text-sm not-prose";
+  header.append(
+    iconEl(item.icon, { size: 15, className: "shrink-0 text-zinc-500" }),
+  );
+  const title = document.createElement("span");
+  title.className = "min-w-0 flex-1 truncate font-medium text-zinc-100";
+  title.textContent = item.title;
+  header.append(title);
+  if (item.subtitle) {
+    const sub = document.createElement("span");
+    sub.className = "shrink-0 text-xs text-zinc-500";
+    sub.textContent = item.subtitle;
+    header.append(sub);
+  }
+  return header;
+}
+
+function paintDetail(
+  markdown: string,
+  itemId: string | null,
+  pending: boolean,
+  headerItem?: Item,
+) {
   const nearBottom =
     detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
   const parts = ensureDetailParts();
-  parts.body.innerHTML = DOMPurify.sanitize(
-    marked.parse(markdown, { async: false }),
-  );
+  const body = parts.body;
+  body.replaceChildren();
+  if (headerItem) body.append(detailHeaderEl(headerItem));
+  const prose = document.createElement("div");
+  prose.className = "md";
+  prose.innerHTML = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
+  body.append(prose);
   // 生成中的行内指示（像 ChatGPT 的加载点，而不是把状态写成正文）：
   // 正文与指示分开，流式事件只换正文，三点动画不被重建打断
   parts.indicator.classList.toggle("hidden", !pending);
@@ -356,22 +383,23 @@ function showMessage(markdown: string) {
 }
 
 /**
- * items 模式的详情：
- * - 结果声明 detailFull（如 AI 回答、通知）→ 整屏就是内容，生成状态用行内指示；
- * - 否则（如历史搜索）→ 左列表、右预览。
+ * items 模式的详情栏（ADR-0018）：形态由 `pageShapeOf` 统一决定，
+ * 扩展只负责给内容（item.detail），不用自己排版。
+ * - detail：整屏就是内容（AI 回答、通知），生成中在正文末尾显示行内指示；
+ * - split ：左列表 + 右详情，详情顶部带焦点项的标题/副标题（与列表同一套图标与文案）。
  */
 function renderDetail() {
   const v = view.get();
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
-  const hasContent = !!item && (item.detail != null || item.pending === true);
-  if (detailMode === "message" || previewDismissed || !hasContent) {
+  const shape = pageShapeOf(item, v.detailFull === true, v.items.length);
+  if (detailMode === "message" || previewDismissed || shape === "list" || !item) {
     if (detailMode !== "message") clearDetail();
     return;
   }
-  const full = v.detailFull === true && v.items.length === 1;
   detailMode = "preview";
+  const full = shape === "detail";
   detailEl.className = full ? DETAIL_MESSAGE_CLASS : DETAIL_PREVIEW_CLASS;
-  paintDetail(item.detail ?? "", item.id, item.pending === true);
+  paintDetail(item.detail ?? "", item.id, item.pending === true, full ? undefined : item);
   if (full) listEl.classList.add("hidden");
   else listEl.classList.remove("hidden");
 }
@@ -1015,10 +1043,6 @@ bannerActionEl.addEventListener("click", () => {
 });
 
 // 流式命令事件：按 item id 就地更新（如 AI 回答逐字到达）
-interface CommandEventPayload {
-  itemUpdated?: { commandId: string; item: Item };
-}
-
 void listen<CommandEventPayload>("command-event", (event) => {
   const payload = event.payload?.itemUpdated;
   if (!payload) return;
