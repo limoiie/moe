@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
+import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { store } from "./store";
 
@@ -269,16 +270,19 @@ function updatePlaceholder() {
 // ---- 详情卡片：焦点预览（列表共存）/ 全屏消息（错误等）----
 
 const DETAIL_MESSAGE_CLASS =
-  "md min-h-0 flex-1 overflow-y-auto px-4 pb-3 text-sm text-zinc-200";
+  "md min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-3 text-sm text-zinc-200";
+// 结果层多条：列表在左、详情在右（Raycast 同款左右分栏，IIE4AD 反馈 #1）
 const DETAIL_PREVIEW_CLASS =
-  "md max-h-[55%] flex-none overflow-y-auto border-b border-zinc-800 px-4 pb-2 pt-3 text-sm text-zinc-200";
+  "md w-[58%] shrink-0 overflow-y-auto border-l border-zinc-800 px-4 py-3 text-sm text-zinc-200";
 
-function paintDetail(markdown: string, itemId: string | null) {
+function paintDetail(markdown: string, itemId: string | null, pending: boolean) {
   const nearBottom =
     detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
   detailEl.innerHTML = DOMPurify.sanitize(
     marked.parse(markdown, { async: false }),
   );
+  // 生成中的行内指示（像 ChatGPT 的加载点，而不是把状态写成正文）
+  if (pending) detailEl.append(generatingEl());
   detailItemId = itemId;
   if (nearBottom) detailEl.scrollTop = detailEl.scrollHeight;
 }
@@ -288,29 +292,36 @@ function clearDetail() {
   detailItemId = null;
   detailEl.className = "md hidden";
   detailEl.replaceChildren();
+  listEl.classList.remove("hidden");
 }
 
 /** 全屏卡片（错误、回写失败等）：隐藏列表。 */
 function showMessage(markdown: string) {
   detailMode = "message";
   detailEl.className = DETAIL_MESSAGE_CLASS;
-  paintDetail(markdown, null);
+  paintDetail(markdown, null, false);
   listEl.classList.add("hidden");
 }
 
-/** 焦点预览：items 模式下焦点项有 detail 就展示（列表保持可见）。 */
+/**
+ * items 模式的详情：
+ * - 只有一条结果（如 AI 回答）→ 整屏就是内容，生成状态用行内指示；
+ * - 多条结果（如历史搜索）→ 左列表、右预览。
+ */
 function renderDetail() {
   const v = view.get();
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
-  const preview = item?.detail;
-  if (detailMode === "message" || previewDismissed || !preview) {
+  const hasContent = !!item && (item.detail != null || item.pending === true);
+  if (detailMode === "message" || previewDismissed || !hasContent) {
     if (detailMode !== "message") clearDetail();
     return;
   }
+  const full = v.items.length === 1;
   detailMode = "preview";
-  detailEl.className = DETAIL_PREVIEW_CLASS;
-  paintDetail(preview, item.id);
-  listEl.classList.remove("hidden");
+  detailEl.className = full ? DETAIL_MESSAGE_CLASS : DETAIL_PREVIEW_CLASS;
+  paintDetail(item.detail ?? "", item.id, item.pending === true);
+  if (full) listEl.classList.add("hidden");
+  else listEl.classList.remove("hidden");
 }
 
 /** Esc 的第一层：消费掉可见的详情（返回 true 表示已消费）。 */
