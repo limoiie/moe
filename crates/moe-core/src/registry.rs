@@ -1,6 +1,6 @@
 use crate::contract::{
     Action, ActionResult, CommandMeta, CommandSection, Emitter, EntryKind, Extension, Item,
-    MoeError, NoopEmitter,
+    MoeError, NoopEmitter, Selection,
 };
 use crate::frecency::FrecencyLookup;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
@@ -66,7 +66,7 @@ impl Registry {
     pub fn search(
         &self,
         query: &str,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
         frecency: &dyn FrecencyLookup,
     ) -> Vec<CommandSection> {
         let q = query.trim();
@@ -178,7 +178,7 @@ impl Registry {
         &self,
         command_id: &str,
         query: Option<&str>,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError> {
         self.invoke_streaming(command_id, query, selection, Arc::new(NoopEmitter))
     }
@@ -187,7 +187,7 @@ impl Registry {
         &self,
         command_id: &str,
         query: Option<&str>,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
         emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         self.find(command_id)
@@ -275,7 +275,7 @@ mod tests {
             &self,
             command_id: &str,
             _query: Option<&str>,
-            _selection: Option<&str>,
+            _selection: Option<&Selection>,
         ) -> Result<ActionResult, MoeError> {
             match command_id {
                 "toy.list" => Ok(ActionResult::list(vec![Item {
@@ -341,7 +341,7 @@ mod tests {
             &self,
             _command_id: &str,
             _query: Option<&str>,
-            _selection: Option<&str>,
+            _selection: Option<&Selection>,
         ) -> Result<ActionResult, MoeError> {
             // 覆盖了 invoke_streaming，默认路径不应被走到
             Err(MoeError::Internal(
@@ -352,7 +352,7 @@ mod tests {
             &self,
             command_id: &str,
             _query: Option<&str>,
-            _selection: Option<&str>,
+            _selection: Option<&Selection>,
             emitter: Arc<dyn Emitter>,
         ) -> Result<ActionResult, MoeError> {
             let item = Item {
@@ -432,7 +432,7 @@ mod tests {
                 &self,
                 _command_id: &str,
                 _query: Option<&str>,
-                _selection: Option<&str>,
+                _selection: Option<&Selection>,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -507,7 +507,7 @@ mod tests {
                 &self,
                 _command_id: &str,
                 _query: Option<&str>,
-                _selection: Option<&str>,
+                _selection: Option<&Selection>,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -539,14 +539,14 @@ mod tests {
                 &self,
                 _command_id: &str,
                 _query: Option<&str>,
-                _selection: Option<&str>,
+                _selection: Option<&Selection>,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
             fn fallback_command(
                 &self,
                 query: &str,
-                _selection: Option<&str>,
+                _selection: Option<&Selection>,
             ) -> Option<CommandMeta> {
                 Some(CommandMeta {
                     id: "fb.ask".into(),
@@ -594,7 +594,7 @@ mod tests {
                 &self,
                 _command_id: &str,
                 _query: Option<&str>,
-                _selection: Option<&str>,
+                _selection: Option<&Selection>,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -729,7 +729,7 @@ mod tests {
                 &self,
                 _command_id: &str,
                 _query: Option<&str>,
-                _selection: Option<&str>,
+                _selection: Option<&Selection>,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }

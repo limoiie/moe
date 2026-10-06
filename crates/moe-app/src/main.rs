@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use moe_core::contract::Emitter as CommandEmitter;
 use moe_core::contract::{
-    Action, ActionResult, CommandEvent, CommandMeta, CommandSection, EntryKind, Item,
+    Action, ActionResult, CommandEvent, CommandMeta, CommandSection, EntryKind, Item, Selection,
 };
 use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
@@ -126,8 +126,9 @@ struct AppState {
     registry: Mutex<Registry>,
     config: MoeConfig,
     listener: Mutex<Box<dyn SummonListener>>,
-    /// 呼出面板前抓取的选区（非激活面板成为 key 后 AX 焦点会离开目标应用）。
-    selection: Mutex<Option<String>>,
+    /// 呼出面板前抓取的选择上下文（面板成为 key 后 AX 焦点会离开目标应用）：
+    /// 文字选区 + Finder 选中文件（ADR-0021）。
+    selection: Mutex<Option<Selection>>,
     /// 选区读取与回写的平台实现（ADR-0002）。
     text_target: Box<dyn moe_platform::TextTarget>,
     /// 命令使用记录（平台级，IIE4AD-346）；锁顺序：先 frecency 后 registry。
@@ -298,13 +299,16 @@ fn refresh_window_shadow(window: &tauri::WebviewWindow) {
 /// 必须在主线程调用：先抓选区，再定位并展示面板。
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
-        // 先抓选区再显面板（面板成为 key 后系统焦点离开目标应用）
-        let selection = state.text_target.read_selection().unwrap_or(None);
+        // 先抓选择上下文再显面板（面板成为 key 后系统焦点离开目标应用）：
+        // 文字选区 + Finder 选中文件（ADR-0021）。
+        let text = state.text_target.read_selection().unwrap_or(None);
+        let files = moe_platform::files::finder_selection();
         eprintln!(
-            "moe: 选区 {} 字符",
-            selection.as_deref().map(|s| s.chars().count()).unwrap_or(0)
+            "moe: 选区 {} 字符，Finder 文件 {} 个",
+            text.as_deref().map(|s| s.chars().count()).unwrap_or(0),
+            files.len()
         );
-        *state.selection.lock().expect("selection poisoned") = selection;
+        *state.selection.lock().expect("selection poisoned") = Some(Selection { text, files });
         *state.last_shown.lock().expect("last_shown poisoned") = Some(std::time::Instant::now());
     }
     place_on_active_screen(window);
@@ -420,11 +424,11 @@ fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandSect
     let selection = state.selection.lock().expect("selection poisoned").clone();
     // 锁顺序：先 frecency 后 registry（invoke 路径不嵌套持锁）
     let frecency = state.frecency.lock().expect("frecency poisoned");
-    state.registry.lock().expect("registry poisoned").search(
-        &query,
-        selection.as_deref(),
-        &*frecency,
-    )
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .search(&query, selection.as_ref(), &*frecency)
 }
 
 /// 通用动作 Browse（⌘P）/ New（⌘N）的入口查询（ADR-0014）：
@@ -457,7 +461,7 @@ fn invoke_command(
         .registry
         .lock()
         .expect("registry poisoned")
-        .invoke_streaming(&command_id, query.as_deref(), selection.as_deref(), emitter)
+        .invoke_streaming(&command_id, query.as_deref(), selection.as_ref(), emitter)
         .map_err(|e| e.to_string())?;
 
     // Live 列表随输入重跑时不算一次「启动」（frecency 语义，IIE4AD-360）。

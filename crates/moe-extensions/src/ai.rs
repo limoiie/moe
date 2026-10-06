@@ -7,13 +7,14 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
     Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, Extension, InputKind,
-    Item, MoeError,
+    Item, MoeError, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_platform::config::MoeConfig;
@@ -375,31 +376,51 @@ fn ask_body(
 }
 
 impl AiShell {
+    /// 附件 = 输入里的 `@path` mention + 呼出前选中的文件（ADR-0021），按路径去重。
+    fn attachments_with(
+        mention_paths: &[PathBuf],
+        selected_files: &[String],
+    ) -> Vec<AttachmentRef> {
+        let mut seen = std::collections::HashSet::new();
+        let mut refs = Vec::new();
+        let all = mention_paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .chain(selected_files.iter().cloned());
+        for path in all {
+            if seen.insert(path.clone()) {
+                refs.push(attachment::ref_for_path(Path::new(&path)));
+            }
+        }
+        refs
+    }
+
     fn start_ask(
         &self,
         question: &str,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
         emitter: Option<Arc<dyn Emitter>>,
     ) -> ActionResult {
         let question = question.trim().to_string();
         // 附件以 `@path` mention 表达（ADR-0010）：内容现读，引用随消息落库。
+        // 呼出前在 Finder 里选中的文件同样成为附件（ADR-0021），与 mention 按路径去重。
         let (cleaned, paths) = attachment::parse_mentions(&question);
+        let selected_files: Vec<String> = selection.map(|s| s.files.clone()).unwrap_or_default();
+        let attachments = Self::attachments_with(&paths, &selected_files);
+        let text = selection.and_then(|s| s.text());
         let display = if cleaned.is_empty() {
             question.clone()
         } else {
             cleaned
         };
         if display.trim().is_empty() {
-            return ActionResult::detail(vec![answer_item(
-                "在输入框里写下问题，再按 Enter。",
-                None,
-                false,
-            )]);
+            let hint = if attachments.is_empty() {
+                "在输入框里写下问题，再按 Enter。"
+            } else {
+                "在输入框里写下问题，再按 Enter（已附上选中文件）。"
+            };
+            return ActionResult::detail(vec![answer_item(hint, None, false)]);
         }
-        let attachments: Vec<AttachmentRef> = paths
-            .iter()
-            .map(|path| attachment::ref_for_path(path))
-            .collect();
 
         let config = MoeConfig::load();
         if !config.ai.configured() {
@@ -417,7 +438,7 @@ impl AiShell {
         let model = config.ai.model_or_default().to_string();
 
         if let Some(emitter) = emitter {
-            let body = ask_body(&model, &display, selection, &attachments);
+            let body = ask_body(&model, &display, text, &attachments);
             let conversation_id_in_thread = conversation_id.clone();
             std::thread::spawn(move || {
                 run_stream(
@@ -516,7 +537,7 @@ impl Extension for AiShell {
         &self,
         command_id: &str,
         query: Option<&str>,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
             "ai.quick-ask" => Ok(self.start_ask(query.unwrap_or_default(), selection, None)),
@@ -547,7 +568,7 @@ impl Extension for AiShell {
         &self,
         command_id: &str,
         query: Option<&str>,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
         emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
@@ -559,22 +580,26 @@ impl Extension for AiShell {
     }
 
     /// 搜索无匹配时的「捕获式」命令（如 AI: 提问「…」）；
-    /// 有 Selection 时副标题注明「选中文字将作为上下文」。
-    fn fallback_command(&self, query: &str, selection: Option<&str>) -> Option<CommandMeta> {
+    /// 副标题注明上下文：选中文字 / 选中文件（Finder）各有提示。
+    fn fallback_command(&self, query: &str, selection: Option<&Selection>) -> Option<CommandMeta> {
         // 标题剥离 mention（ADR-0010）：路径不当作提问内容展示。
         let (cleaned, paths) = attachment::parse_mentions(query);
-        let title = match (cleaned.is_empty(), paths.is_empty()) {
-            (false, _) => format!("AI: 提问「{cleaned}」"),
-            (true, false) => "AI: 带附件的提问".into(),
-            (true, true) => format!("AI: 提问「{query}」"),
+        let selected_files = selection.map(|s| s.files.len()).unwrap_or(0);
+        let title = match (cleaned.is_empty(), paths.is_empty(), selected_files) {
+            (false, _, _) => format!("AI: 提问「{cleaned}」"),
+            (true, false, _) | (true, true, 1..) => "AI: 带附件的提问".into(),
+            (true, true, _) => format!("AI: 提问「{query}」"),
         };
-        let subtitle = if paths.is_empty() {
-            match selection.map(str::trim).filter(|s| !s.is_empty()) {
-                Some(_) => "已附上选中文字作为上下文；Enter 发送".to_string(),
-                None => "Enter 发送；回答可回写（⌥⏎ 复制 · ⌘M 侧栏）".to_string(),
-            }
-        } else {
-            format!("{} 个附件；Enter 发送", paths.len())
+        let total_files = paths.len() + selected_files;
+        let has_text = selection
+            .and_then(|s| s.text())
+            .map(str::trim)
+            .is_some_and(|t| !t.is_empty());
+        let subtitle = match (total_files > 0, has_text) {
+            (true, true) => format!("已附上 {total_files} 个附件与选中文字；Enter 发送"),
+            (true, false) => format!("{total_files} 个附件；Enter 发送"),
+            (false, true) => "已附上选中文字作为上下文；Enter 发送".to_string(),
+            (false, false) => "Enter 发送；回答可回写（⌥⏎ 复制 · ⌘M 侧栏）".to_string(),
         };
         Some(CommandMeta {
             id: "ai.quick-ask".into(),
@@ -731,6 +756,62 @@ mod tests {
 
         let attachment_only = ext.fallback_command("@/tmp/a.md", None).expect("fallback");
         assert_eq!(attachment_only.title, "AI: 带附件的提问");
+    }
+
+    /// 选中文件（ADR-0021）：fallback 提示文件数，纯文件选择与文字选区可叠加。
+    #[test]
+    fn fallback_advertises_selected_files() {
+        let ext = AiShell;
+        let files = Selection {
+            text: None,
+            files: vec!["/tmp/a.md".into(), "/tmp/b.png".into()],
+        };
+        // 空输入 + 选中文件：带附件的提问入口
+        let files_only = ext.fallback_command("", Some(&files)).expect("fallback");
+        assert_eq!(files_only.title, "AI: 带附件的提问");
+        assert_eq!(files_only.subtitle.as_deref(), Some("2 个附件；Enter 发送"));
+        // 问题 + 选中文件：附件与选中文字提示叠加
+        let both = ext
+            .fallback_command(
+                "总结",
+                Some(&Selection {
+                    text: Some("选中文字".into()),
+                    files: files.files.clone(),
+                }),
+            )
+            .expect("fallback");
+        assert_eq!(both.title, "AI: 提问「总结」");
+        assert_eq!(
+            both.subtitle.as_deref(),
+            Some("已附上 2 个附件与选中文字；Enter 发送")
+        );
+    }
+
+    /// 附件合并（ADR-0021）：mention 与选中文件按路径去重，保序。
+    #[test]
+    fn attachments_merge_mentions_and_selected_files_dedup() {
+        let refs = AiShell::attachments_with(
+            &[PathBuf::from("/tmp/a.md"), PathBuf::from("/tmp/dup.md")],
+            &["/tmp/dup.md".into(), "/tmp/c.png".into()],
+        );
+        let paths: Vec<&str> = refs.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, ["/tmp/a.md", "/tmp/dup.md", "/tmp/c.png"]);
+        assert_eq!(refs[1].name, "dup.md");
+    }
+
+    /// 纯文件选择 + 空问题：不直接发请求，提示写下问题（文件已在手上）。
+    #[test]
+    fn ask_with_only_files_guides_for_a_question() {
+        let selection = Selection {
+            text: None,
+            files: vec!["/tmp/a.md".into()],
+        };
+        let ActionResult::List { items, .. } = AiShell.start_ask("   ", Some(&selection), None)
+        else {
+            panic!("expected list");
+        };
+        let detail = items[0].detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("已附上选中文件"), "{detail}");
     }
 
     /// 历史搜索是 Live 命令（输入变化即重跑列表）。

@@ -130,6 +130,27 @@ pub struct CommandSection {
     pub items: Vec<CommandMeta>,
 }
 
+/// 呼出面板前抓到的「选择」上下文（ADR-0021）：文字选区与（Finder）选中的文件
+/// 可以同时存在；文件是绝对路径（POSIX）。传给 fallback / invoke 的语义同 ADR-0002/0019 的选区。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Selection {
+    pub text: Option<String>,
+    pub files: Vec<String>,
+}
+
+impl Selection {
+    /// 文字选区（trim 后仍为空视作无）。
+    pub fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+
+    /// 是否夹带了文件选择。
+    pub fn has_files(&self) -> bool {
+        !self.files.is_empty()
+    }
+}
+
 /// 平台通用入口（ADR-0014）：三个通用动作 Browse（⌘P）/ New（⌘N）
 /// 的落地方式——平台定键位与路由，入口由 Extension 声明。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,7 +215,7 @@ pub trait Extension: Send + Sync {
         &self,
         command_id: &str,
         query: Option<&str>,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError>;
 
     /// 带增量事件的执行入口；默认回落 [`Extension::invoke`]（非流式扩展不需实现）。
@@ -202,15 +223,20 @@ pub trait Extension: Send + Sync {
         &self,
         command_id: &str,
         query: Option<&str>,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
         _emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         self.invoke(command_id, query, selection)
     }
 
     /// 搜索无匹配时提供的「捕获式」命令（如 AI: 提问「…」）；默认无。
-    /// `selection` 是呼出面板前抓到的选区，供扩展在副标题里提示「已附上下文」等。
-    fn fallback_command(&self, _query: &str, _selection: Option<&str>) -> Option<CommandMeta> {
+    /// `selection` 是呼出面板前抓到的选择上下文（文字选区 + Finder 选中文件），
+    /// 供扩展在副标题里提示「已附上下文/文件」等。
+    fn fallback_command(
+        &self,
+        _query: &str,
+        _selection: Option<&Selection>,
+    ) -> Option<CommandMeta> {
         None
     }
 
@@ -277,6 +303,25 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["itemUpdated"]["commandId"], "ai.quick-ask");
         assert_eq!(json["itemUpdated"]["item"]["id"], "ai.answer");
+    }
+
+    /// 选择上下文（ADR-0021）：文字 + 文件同进同出，camelCase 形状稳定。
+    #[test]
+    fn selection_round_trips_through_serde() {
+        let selection = Selection {
+            text: Some("hello".into()),
+            files: vec!["/tmp/a b.md".into()],
+        };
+        let json = serde_json::to_value(&selection).unwrap();
+        assert_eq!(json["text"], "hello");
+        assert_eq!(json["files"][0], "/tmp/a b.md");
+        let back: Selection = serde_json::from_value(json).unwrap();
+        assert_eq!(back, selection);
+        assert_eq!(back.text(), Some("hello"));
+        assert!(back.has_files());
+        // 空上下文（只有文件 / 只有文字）都能表达
+        assert!(!Selection::default().has_files());
+        assert_eq!(Selection::default().text(), None);
     }
 
     fn answer() -> Item {

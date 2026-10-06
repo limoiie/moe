@@ -5,6 +5,7 @@
 pub mod clipboard;
 pub mod config;
 pub mod db;
+pub mod files;
 pub mod keychain;
 #[cfg(target_os = "macos")]
 pub mod mac;

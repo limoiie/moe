@@ -87,8 +87,9 @@ SecondaryCopy（默认 ⌥Enter）的默认语义：把 Focused Item 的文本�
 _Avoid_: 剪贴、拷贝到剪贴板
 
 **Selection（选区）**:
-指用户在其他应用中选中的文字。Moe 自身的列表选择不叫 Selection，叫 Focus。
-呼出面板前抓到的选区会随提问自动成为 AI 的上下文（ADR-0002 增补）。
+指用户在其他应用中选中的内容：文字选区，或 Finder 里选中的文件（ADR-0021）。
+Moe 自身的列表选择不叫 Selection，叫 Focus。
+呼出面板前抓到的选区会随提问自动成为 AI 的上下文；选中的文件会成为提问附件。
 _Avoid_: 用 Selection 指代 Focused Item
 
 **Keymap（统一键位表）**:

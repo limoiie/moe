@@ -3,7 +3,9 @@
 //! - 「Moe: 打开配置文件」（常规命令）
 //! - `key <你的key>`（捕获式 fallback）：把 API key 存入本地密钥文件（0600），不回显
 
-use moe_core::contract::{ActionResult, CommandMeta, Extension, InputKind, Item, MoeError};
+use moe_core::contract::{
+    ActionResult, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
+};
 use moe_platform::keychain;
 
 pub struct Moe;
@@ -73,7 +75,7 @@ impl Extension for Moe {
         &self,
         command_id: &str,
         query: Option<&str>,
-        _selection: Option<&str>,
+        _selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
             "moe.open-config" => {
@@ -98,7 +100,7 @@ impl Extension for Moe {
         }
     }
 
-    fn fallback_command(&self, query: &str, _selection: Option<&str>) -> Option<CommandMeta> {
+    fn fallback_command(&self, query: &str, _selection: Option<&Selection>) -> Option<CommandMeta> {
         if !is_key_capture(query) {
             return None;
         }

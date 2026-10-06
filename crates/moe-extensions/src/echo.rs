@@ -1,7 +1,7 @@
 //! Echo：Command 契约的活文档——一个 Extension 如何产出 WriteBack 与 Item 流。
 
 use moe_core::contract::{
-    Action, ActionKind, ActionResult, CommandMeta, Extension, InputKind, Item, MoeError,
+    Action, ActionKind, ActionResult, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
 };
 
 pub struct Echo;
@@ -66,13 +66,13 @@ impl Extension for Echo {
         &self,
         command_id: &str,
         query: Option<&str>,
-        selection: Option<&str>,
+        selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError> {
         let text = query.unwrap_or_default().to_string();
         match command_id {
             "echo.write-back" => Ok(ActionResult::WriteBack { text }),
             "echo.shout" => Ok(ActionResult::WriteBack {
-                text: match selection {
+                text: match selection.and_then(|s| s.text()) {
                     Some(sel) => sel.to_uppercase(),
                     None => "MOE WAS HERE".to_string(),
                 },
