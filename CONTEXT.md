@@ -93,7 +93,8 @@ Moe 自身的列表选择不叫 Selection，叫 Focus。
 _Avoid_: 用 Selection 指代 Focused Item
 
 **Keymap（统一键位表）**:
-跨所有 Extension 完全一致的平台级键位语义（导航、Apply、副操作、Esc 分层回退、展开全部动作）。Extension 不得覆写，只能为自己的 Command 注册具名动作（动作可附带快捷键）。
+跨所有 Extension 完全一致的平台级键位语义（导航、Apply、副操作、Esc 分层回退、展开全部动作、
+Browse/New/Delete/DeleteAll 四个通用动作）。Extension 不得覆写，只能为自己的 Command 注册具名动作（动作可附带快捷键）。
 _Avoid_: 快捷映射、绑定
 
 **Show All Actions（展开全部动作）**:
@@ -108,8 +109,14 @@ _Avoid_: 历史、列表视图（Browse 特指这个键位语义）
 
 **New（新建记录）**:
 平台通用动作，默认 ⌘N：新建一条记录（AI = 新会话）。入口同样由 Extension 声明（`new_command`）；
-与 Browse、Actions 一起构成跨 Command/子应用的三个通用动作（ADR-0014）。
+与 Browse、Actions 一起构成跨 Command/子应用的通用动作（ADR-0014）。
 _Avoid_: 新建窗口、加号
+
+**Delete / DeleteAll（删除槽）**:
+平台通用动作，默认 ⌃X / ⌃⇧X：删除当前记录 / 删除全部记录（AI = 当前会话 / 全部会话）。
+由 Extension 的 `delete_item` / `delete_all` 钩子实现，返回实际删除条数（ADR-0022）。
+只在结果层/列表上下文拦截；命令层与编辑器里放行原生剪切。
+_Avoid_: 清空、删除键
 
 **Action Bar（底部动作条）**:
 面板右下角悬浮的两个按钮：**主操作**（当前 Focused Item 的主操作，生成中变为「停止生成」）

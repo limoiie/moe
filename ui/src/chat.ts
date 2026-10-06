@@ -192,6 +192,71 @@ async function loadConversations() {
   renderConversations();
 }
 
+/** 侧栏删除槽（ADR-0022）：历史卡开着时作用于卡内焦点行 / 全部，删完刷新卡片。 */
+async function deleteInCard(all: boolean) {
+  const target = conversations[historyIndex];
+  if (!all && !target) return;
+  try {
+    const count = all
+      ? await invoke<number>("delete_all", { commandId: "ai.search-history" })
+      : await invoke<number>("delete_item", {
+          commandId: "ai.search-history",
+          item: conversationItem(target),
+        });
+    if (!count) return;
+    toast(all ? `已删除 ${count} 个会话` : "已删除会话");
+    // 当前会话被删：退回空状态，避免后续消息写进已不存在的会话
+    if (all || target.id === conversationId) newChat();
+    else await loadConversations();
+  } catch (err) {
+    setError(String(err));
+  }
+}
+
+/** 侧栏删除槽（ADR-0022）：卡片关着时作用于当前会话 / 全部会话。 */
+async function deleteCurrent(all: boolean) {
+  try {
+    if (all) {
+      const count = await invoke<number>("delete_all", { commandId: "ai.search-history" });
+      if (!count) {
+        toast("没有可删除的会话", "alert");
+        return;
+      }
+      toast(`已删除 ${count} 个会话`);
+      newChat();
+      return;
+    }
+    if (!conversationId) return;
+    const item = {
+      id: `ai.conversation.${conversationId}`,
+      title: titleEl.textContent ?? "",
+      actions: [],
+      payload: { conversationId },
+      pending: false,
+    };
+    const count = await invoke<number>("delete_item", {
+      commandId: "ai.search-history",
+      item,
+    });
+    if (!count) return;
+    toast("已删除当前会话");
+    newChat();
+  } catch (err) {
+    setError(String(err));
+  }
+}
+
+/** 历史条目 → 删除钩子要的 Item（payload 携带 conversationId，其余字段合成）。 */
+function conversationItem(conversation: Conversation) {
+  return {
+    id: `ai.conversation.${conversation.id}`,
+    title: conversation.title,
+    actions: [],
+    payload: { conversationId: conversation.id },
+    pending: false,
+  };
+}
+
 historyButtonEl.addEventListener("click", () => {
   closeActionsMenu();
   toggleHistoryCard();
@@ -653,6 +718,20 @@ window.addEventListener("keydown", (e) => {
   if (general === "new") {
     e.preventDefault();
     newChat();
+    return;
+  }
+  // 删除槽（ADR-0022）：⌃X 删当前会话 / 历史卡焦点行，⌃⇧X 删全部会话。
+  // 语义与命令盘同源（./keymap），落点由本视图决定。
+  // 编辑器（composer/附件输入）聚焦时放行原生剪切，不误删会话。
+  if (general === "delete" || general === "deleteAll") {
+    const target = e.target as HTMLElement | null;
+    const inEditor =
+      target &&
+      (target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && !historyOpen));
+    if (inEditor) return;
+    e.preventDefault();
+    if (historyOpen) void deleteInCard(general === "deleteAll");
+    else void deleteCurrent(general === "deleteAll");
     return;
   }
   // ⌃[ / ⌃]：按当前列表（含筛选）前后切换会话

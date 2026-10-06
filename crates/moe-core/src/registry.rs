@@ -146,6 +146,20 @@ impl Registry {
         }
     }
 
+    /// 删除当前记录（通用动作 Delete，⌃X，ADR-0022）：按命令所属 Extension 路由。
+    pub fn delete_item(&self, command_id: &str, item: &Item) -> Result<usize, MoeError> {
+        self.find(command_id)
+            .ok_or(MoeError::NotFound)?
+            .delete_item(command_id, item)
+    }
+
+    /// 删除全部记录（通用动作 DeleteAll，⌃⇧X，ADR-0022）：同上路由。
+    pub fn delete_all(&self, command_id: &str) -> Result<usize, MoeError> {
+        self.find(command_id)
+            .ok_or(MoeError::NotFound)?
+            .delete_all(command_id)
+    }
+
     pub fn find_extension(&self, extension_id: &str) -> Option<&dyn Extension> {
         self.extensions
             .iter()
@@ -637,6 +651,79 @@ mod tests {
         assert!(r.entry_command("toy.hello", EntryKind::Browse).is_none());
         // 不存在的命令：None（不 panic）
         assert!(r.entry_command("nope.nope", EntryKind::Browse).is_none());
+    }
+
+    /// 删除槽（ADR-0022）：按命令所属 Extension 路由；未实现的扩展 NotFound，不 panic。
+    #[test]
+    fn delete_routes_to_extension_or_not_found() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct DeleteToy {
+            deleted: AtomicUsize,
+        }
+        impl Extension for DeleteToy {
+            fn id(&self) -> &str {
+                "del"
+            }
+            fn title(&self) -> &str {
+                "Delete"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![CommandMeta {
+                    id: "del.list".into(),
+                    extension_id: "del".into(),
+                    title: "Del List".into(),
+                    subtitle: None,
+                    icon: None,
+                    input: InputKind::None,
+                    live: false,
+                }]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&Selection>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+            fn delete_item(&self, _command_id: &str, item: &Item) -> Result<usize, MoeError> {
+                if item.payload.is_null() {
+                    return Err(MoeError::NotFound);
+                }
+                Ok(self.deleted.fetch_add(1, Ordering::SeqCst) + 1)
+            }
+            fn delete_all(&self, _command_id: &str) -> Result<usize, MoeError> {
+                Ok(7)
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(DeleteToy {
+            deleted: AtomicUsize::new(0),
+        }));
+        let item = Item {
+            id: "del.1".into(),
+            title: "条目".into(),
+            subtitle: None,
+            icon: None,
+            actions: vec![],
+            payload: serde_json::json!({ "conversationId": "1" }),
+            detail: None,
+            pending: false,
+        };
+        assert_eq!(r.delete_item("del.list", &item).unwrap(), 1);
+        assert_eq!(r.delete_all("del.list").unwrap(), 7);
+        // 未实现删除的扩展 / 不存在的命令：NotFound
+        let mut plain = Registry::new();
+        plain.register(Box::new(Toy));
+        assert!(matches!(
+            plain.delete_all("toy.hello"),
+            Err(MoeError::NotFound)
+        ));
+        assert!(matches!(
+            plain.delete_item("nope.nope", &item),
+            Err(MoeError::NotFound)
+        ));
     }
 
     /// 把 section 列表拍平成命令列表（断言用）。

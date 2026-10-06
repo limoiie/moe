@@ -92,9 +92,11 @@ let actionsCardOpen = false;
 // ---- 轻量反馈（⌥⏎ 复制等无 UI 结果的动作）----
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
-function toast(text: string) {
+function toast(text: string, icon = "check") {
   toastTextEl.textContent = text;
-  toastIconEl.replaceChildren(iconEl("check", { size: 14, className: "text-emerald-400" }));
+  toastIconEl.replaceChildren(
+    iconEl(icon, { size: 14, className: icon === "check" ? "text-emerald-400" : "text-amber-400" }),
+  );
   toastEl.classList.remove("hidden");
   toastEl.classList.add("flex");
   clearTimeout(toastTimer);
@@ -774,6 +776,39 @@ async function rerunLive(query: string) {
   }
 }
 
+/** 删除槽（ADR-0022）：⌃X 删焦点记录、⌃⇧X 删全部；成功后重跑当前列表。 */
+async function deleteFocused(all: boolean) {
+  const v = view.get();
+  if (!v.sourceCommandId) return;
+  const item = v.items[v.focus];
+  if (!all && !item) return;
+  try {
+    const count = all
+      ? await invoke<number>("delete_all", { commandId: v.sourceCommandId })
+      : await invoke<number>("delete_item", {
+          commandId: v.sourceCommandId,
+          item,
+        });
+    if (!count) {
+      toast("没有可删除的记录", "alert");
+      return;
+    }
+    toast(all ? `已删除 ${count} 条记录` : "已删除 1 条记录");
+    if (v.sourceLive) {
+      await rerunLive(q.value);
+    } else {
+      const res = await invoke<ActionResult>("invoke_command", {
+        commandId: v.sourceCommandId,
+        query: null,
+        record: false,
+      });
+      applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
+    }
+  } catch (err) {
+    toast(`删除失败：${String(err)}`, "alert");
+  }
+}
+
 // Esc / 空输入 Backspace 的分层回退：停止生成 → 动作面板 → 预览/详情 → 结果层 → 清空输入 →（可关面板）
 // 空 Backspace 传 quit:false：根层停在原地，不关面板（关面板只归 Esc）
 async function back(options: { quit?: boolean } = {}) {
@@ -936,13 +971,20 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  // 通用动作（ADR-0014）：Browse ⌘P / Actions ⌘⇧P / New ⌘N。
-  // 语义由共享键位模块识别，落点由本表面决定（面板 = 动作面板 / Extension 声明的入口）。
+  // 通用动作（ADR-0014/0022）：Browse ⌘P / Actions ⌘⇧P / New ⌘N /
+  // Delete ⌃X / DeleteAll ⌃⇧X。语义由共享键位模块识别，落点由本表面决定。
   const general = generalActionOf(e);
   if (general) {
+    if (general === "delete" || general === "deleteAll") {
+      // 删除槽只在结果层生效（ADR-0022）；命令层放行给输入框的原生剪切
+      const v = view.get();
+      if (v.mode !== "items" || !v.sourceCommandId) return;
+    }
     e.preventDefault();
     if (general === "actions") toggleActionsCard();
-    else void openEntry(general);
+    else if (general === "delete" || general === "deleteAll") {
+      void deleteFocused(general === "deleteAll");
+    } else void openEntry(general);
     return;
   }
   // 空输入时的 Backspace = Back（分层回退，ADR-0017）：

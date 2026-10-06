@@ -177,6 +177,39 @@ impl Db {
         Ok(rows)
     }
 
+    /// 删除一个会话及其全部消息，返回删除的会话条数（不存在为 0）。
+    pub fn delete_conversation(&self, conversation_id: &str) -> Result<usize, String> {
+        self.conn
+            .execute(
+                "DELETE FROM messages WHERE conversation_id = ?1",
+                rusqlite::params![conversation_id],
+            )
+            .map_err(|err| err.to_string())?;
+        self.conn
+            .execute(
+                "DELETE FROM conversations WHERE id = ?1",
+                rusqlite::params![conversation_id],
+            )
+            .map_err(|err| err.to_string())
+    }
+
+    /// 删除 Namespace 下全部会话及其消息（ADR-0022 的 DeleteAll），返回删除的会话条数。
+    pub fn delete_all_conversations(&self, namespace: &str) -> Result<usize, String> {
+        self.conn
+            .execute(
+                "DELETE FROM messages WHERE conversation_id IN
+                 (SELECT id FROM conversations WHERE namespace = ?1)",
+                rusqlite::params![namespace],
+            )
+            .map_err(|err| err.to_string())?;
+        self.conn
+            .execute(
+                "DELETE FROM conversations WHERE namespace = ?1",
+                rusqlite::params![namespace],
+            )
+            .map_err(|err| err.to_string())
+    }
+
     /// 会话里最后一条 assistant 消息（历史预览用，IIE4AD-370）。
     pub fn last_assistant_message(&self, conversation_id: &str) -> Result<Option<String>, String> {
         let mut stmt = self
@@ -410,5 +443,44 @@ mod tests {
         .unwrap();
         assert_eq!(db.messages("1").unwrap()[1].attachments.len(), 1);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// 删除单个会话：消息级联删除，不存在返回 0，其他 Namespace 不受影响（ADR-0022）。
+    #[test]
+    fn delete_conversation_cascades_and_isolates() {
+        let db = db();
+        let a = db.create_conversation("ai", "会话 A", at(1)).unwrap();
+        let b = db.create_conversation("other", "别的扩展", at(1)).unwrap();
+        db.append_message(&a, Role::User, "问题", &[], at(2))
+            .unwrap();
+        db.append_message(&a, Role::Assistant, "回答", &[], at(3))
+            .unwrap();
+
+        assert_eq!(db.delete_conversation(&a).unwrap(), 1);
+        assert_eq!(db.conversations("ai", None, 10).unwrap().len(), 0);
+        assert!(db.messages(&a).unwrap().is_empty(), "消息级联删除");
+        assert_eq!(
+            db.conversations("other", None, 10).unwrap().len(),
+            1,
+            "Namespace 隔离"
+        );
+        // 再删一次：0（不存在）
+        assert_eq!(db.delete_conversation(&a).unwrap(), 0);
+        assert_eq!(db.delete_conversation(&b).unwrap(), 1);
+    }
+
+    /// 删除全部：只清本 Namespace，返回删除条数（ADR-0022）。
+    #[test]
+    fn delete_all_conversations_clears_only_own_namespace() {
+        let db = db();
+        db.create_conversation("ai", "一", at(1)).unwrap();
+        db.create_conversation("ai", "二", at(2)).unwrap();
+        db.create_conversation("other", "别的扩展", at(1)).unwrap();
+
+        assert_eq!(db.delete_all_conversations("ai").unwrap(), 2);
+        assert_eq!(db.conversations("ai", None, 10).unwrap().len(), 0);
+        assert_eq!(db.conversations("other", None, 10).unwrap().len(), 1);
+        // 空命名空间：0
+        assert_eq!(db.delete_all_conversations("ai").unwrap(), 0);
     }
 }

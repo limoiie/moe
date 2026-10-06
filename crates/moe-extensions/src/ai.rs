@@ -515,6 +515,16 @@ impl AiShell {
         };
         ActionResult::list(items)
     }
+
+    /// 删除注入版（ADR-0022）：按 payload 的 conversationId 定位；测试不碰真实数据目录。
+    fn delete_item_in(db: &Db, item: &Item) -> Result<usize, MoeError> {
+        let id = item
+            .payload
+            .get("conversationId")
+            .and_then(|v| v.as_str())
+            .ok_or(MoeError::NotFound)?;
+        db.delete_conversation(id).map_err(MoeError::Internal)
+    }
 }
 
 impl Extension for AiShell {
@@ -738,6 +748,26 @@ impl Extension for AiShell {
     /// 停止进行中的生成（IIE4AD-365）：标记取消位，worker 在下一个 SSE 行处收尾并落库已生成部分。
     fn stop_generation(&self) -> usize {
         stop_all_streams()
+    }
+
+    /// 删除当前记录（通用动作 Delete，⌃X，ADR-0022）：AI 历史里删一条会话。
+    fn delete_item(&self, command_id: &str, item: &Item) -> Result<usize, MoeError> {
+        if command_id != "ai.search-history" {
+            return Err(MoeError::NotFound);
+        }
+        let db = Db::open_default().map_err(MoeError::Internal)?;
+        Self::delete_item_in(&db, item)
+    }
+
+    /// 删除全部记录（通用动作 DeleteAll，⌃⇧X，ADR-0022）：清空 `ai` Namespace 全部会话。
+    fn delete_all(&self, command_id: &str) -> Result<usize, MoeError> {
+        if command_id != "ai.search-history" {
+            return Err(MoeError::NotFound);
+        }
+        Db::open_default()
+            .map_err(MoeError::Internal)?
+            .delete_all_conversations("ai")
+            .map_err(MoeError::Internal)
     }
 }
 
@@ -1068,6 +1098,75 @@ mod tests {
             .as_nanos();
         let path = std::env::temp_dir().join(format!("moe-{tag}-{nanos}.db"));
         (Db::open(&path).expect("temp db"), path)
+    }
+
+    /// 删除槽（ADR-0022）：单条删除按 payload 的 conversationId 定位；缺 id NotFound。
+    #[test]
+    fn delete_item_removes_the_conversation() {
+        let (db, path) = temp_db("delete");
+        let a = db
+            .create_conversation("ai", "会话 A", SystemTime::now())
+            .unwrap();
+        db.create_conversation("ai", "会话 B", SystemTime::now())
+            .unwrap();
+        let item = history_item(
+            Conversation {
+                id: a.clone(),
+                namespace: "ai".into(),
+                title: "会话 A".into(),
+                updated_unix: 1,
+            },
+            1,
+            None,
+        );
+        assert_eq!(AiShell::delete_item_in(&db, &item).unwrap(), 1);
+        assert_eq!(db.conversations("ai", None, 10).unwrap().len(), 1);
+        // 缺 conversationId：NotFound，不误删
+        let bare = history_item(
+            Conversation {
+                id: "9".into(),
+                namespace: "ai".into(),
+                title: "x".into(),
+                updated_unix: 1,
+            },
+            1,
+            None,
+        );
+        let bare = Item {
+            payload: serde_json::Value::Null,
+            ..bare
+        };
+        assert!(matches!(
+            AiShell::delete_item_in(&db, &bare),
+            Err(MoeError::NotFound)
+        ));
+        // 不支持的命令：NotFound（命令层不外露删除）
+        assert!(matches!(
+            AiShell.delete_item("ai.quick-ask", &item),
+            Err(MoeError::NotFound)
+        ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 删除全部（ADR-0022）：只清 `ai` Namespace，返回条数。
+    #[test]
+    fn delete_all_clears_ai_namespace() {
+        let (db, path) = temp_db("delete-all");
+        db.create_conversation("ai", "一", SystemTime::now())
+            .unwrap();
+        db.create_conversation("ai", "二", SystemTime::now())
+            .unwrap();
+        db.create_conversation("other", "别的扩展", SystemTime::now())
+            .unwrap();
+
+        assert_eq!(db.delete_all_conversations("ai").unwrap(), 2);
+        assert_eq!(db.conversations("ai", None, 10).unwrap().len(), 0);
+        assert_eq!(db.conversations("other", None, 10).unwrap().len(), 1);
+        assert!(matches!(
+            AiShell.delete_all("ai.quick-ask"),
+            Err(MoeError::NotFound)
+        ));
+        let _ = std::fs::remove_file(&path);
     }
 
     /// 回答/引导是详情整屏（ADR-0013）：面板里它就是正文，不该跟列表分栏。

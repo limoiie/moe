@@ -503,6 +503,32 @@ fn run_item_action(
     Ok(result)
 }
 
+/// 删除当前记录（通用动作 Delete，⌃X，ADR-0022）：返回实际删除条数。
+#[tauri::command]
+fn delete_item(
+    state: State<'_, AppState>,
+    command_id: String,
+    item: Item,
+) -> Result<usize, String> {
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .delete_item(&command_id, &item)
+        .map_err(|e| e.to_string())
+}
+
+/// 删除全部记录（通用动作 DeleteAll，⌃⇧X，ADR-0022）：返回实际删除条数。
+#[tauri::command]
+fn delete_all(state: State<'_, AppState>, command_id: String) -> Result<usize, String> {
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .delete_all(&command_id)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn hide_panel(app: AppHandle) {
     hide_panel_blocking(&app);
@@ -908,6 +934,8 @@ fn main() {
             resize_panel,
             invoke_command,
             run_item_action,
+            delete_item,
+            delete_all,
             hide_panel,
             stop_generation,
             resolve_attachment,

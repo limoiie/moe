@@ -1,7 +1,8 @@
 //! 平台级统一键位表（Keymap）。Extension 不得覆写，只能为自己的动作附带快捷键。
 //!
-//! 三个「通用动作」跨所有 Command / 子应用共用同一套键位语义（ADR-0014）：
-//! Browse（⌘P，记录列表）、Actions（⌘⇧P，动作清单）、New（⌘N，新建记录）。
+//! 通用动作跨所有 Command / 子应用共用同一套键位语义（ADR-0014/0022）：
+//! Browse（⌘P，记录列表）、Actions（⌘⇧P，动作清单）、New（⌘N，新建记录）、
+//! Delete（⌃X，删除当前记录）、DeleteAll（⌃⇧X，删除全部记录）。
 //! 平台只定键位与路由，具体入口由 Extension 声明。
 
 use serde::Serialize;
@@ -21,6 +22,10 @@ pub enum SystemKey {
     Browse,
     /// New：新建一条记录（AI = 新会话）。通用动作，默认 ⌘N。
     New,
+    /// Delete：删除当前记录（AI = 当前会话）。通用动作，默认 ⌃X（ADR-0022）。
+    Delete,
+    /// DeleteAll：删除全部记录（AI = 全部会话）。通用动作，默认 ⌃⇧X（ADR-0022）。
+    DeleteAll,
     /// Esc：分层回退（有输入→清空；有结果层→回上层；否则关面板）。
     Back,
     /// Materialize：转为该 Extension 的 Side View。
@@ -41,6 +46,8 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("⌘K / ⌘⇧P", K::ShowAllActions),
         ("⌘P", K::Browse),
         ("⌘N", K::New),
+        ("⌃X", K::Delete),
+        ("⌃⇧X", K::DeleteAll),
         ("Esc", K::Back),
         ("⌘M", K::Materialize),
         ("⌘⇧A", K::Attach),
@@ -64,10 +71,10 @@ mod tests {
             );
             seen.push(*key);
         }
-        assert_eq!(seen.len(), 10, "新增语义时同步 Hints Bar 的分组");
+        assert_eq!(seen.len(), 12, "新增语义时同步 Hints Bar 的分组");
     }
 
-    /// 三个通用动作的默认键位是跨 Command/子应用的契约（ADR-0014）。
+    /// 通用动作的默认键位是跨 Command/子应用的契约（ADR-0014/0022）。
     #[test]
     fn general_actions_keep_their_default_bindings() {
         let table = default_keymap();
@@ -81,5 +88,7 @@ mod tests {
         assert_eq!(display(SystemKey::Browse), "⌘P");
         assert_eq!(display(SystemKey::New), "⌘N");
         assert_eq!(display(SystemKey::ShowAllActions), "⌘K / ⌘⇧P");
+        assert_eq!(display(SystemKey::Delete), "⌃X");
+        assert_eq!(display(SystemKey::DeleteAll), "⌃⇧X");
     }
 }

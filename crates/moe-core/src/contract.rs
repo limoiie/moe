@@ -251,6 +251,18 @@ pub trait Extension: Send + Sync {
         None
     }
 
+    /// 删除当前记录（通用动作 Delete，默认 ⌃X，ADR-0022）：
+    /// 作用于给定 item（如 AI 历史里的某条会话），返回实际删除条数。默认无此能力。
+    fn delete_item(&self, _command_id: &str, _item: &Item) -> Result<usize, MoeError> {
+        Err(MoeError::NotFound)
+    }
+
+    /// 删除全部记录（通用动作 DeleteAll，默认 ⌃⇧X，ADR-0022）：
+    /// 作用于该 Command 的记录空间（Namespace 隔离），返回实际删除条数。默认无此能力。
+    fn delete_all(&self, _command_id: &str) -> Result<usize, MoeError> {
+        Err(MoeError::NotFound)
+    }
+
     /// Item 流的下一步：对 Item 执行其某个动作（默认无动作可执行）。
     fn run_item_action(
         &self,
