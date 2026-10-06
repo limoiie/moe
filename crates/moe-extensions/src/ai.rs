@@ -39,6 +39,7 @@ fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> It
         id: "ai.answer".into(),
         title: "AI 回答".into(),
         subtitle: None,
+        icon: Some("sparkles".into()),
         actions: vec![
             Action {
                 id: "write-back".into(),
@@ -73,13 +74,14 @@ fn conversation_payload(conversation_id: Option<&str>) -> serde_json::Value {
     }
 }
 
-/// 历史/续聊列表项：Apply 即在侧栏打开该会话。
-fn history_item(conversation: Conversation, now_unix: u64) -> Item {
+/// 历史/续聊列表项：Apply 即在侧栏打开该会话；`preview` 是最后一条回答的摘要（IIE4AD-370）。
+fn history_item(conversation: Conversation, now_unix: u64, preview: Option<String>) -> Item {
     let payload = conversation_payload(Some(&conversation.id));
     Item {
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
         subtitle: Some(relative_time(conversation.updated_unix, now_unix)),
+        icon: Some("message-square".into()),
         actions: vec![Action {
             id: "materialize".into(),
             title: "在侧栏打开".into(),
@@ -87,9 +89,21 @@ fn history_item(conversation: Conversation, now_unix: u64) -> Item {
             keybinding: Some("⏎".into()),
         }],
         payload,
-        detail: None,
+        detail: preview,
         pending: false,
     }
+}
+
+/// 历史预览摘要：去掉多余空白，按字符截断（不破坏多字节）。
+fn preview_excerpt(text: &str) -> String {
+    const LIMIT: usize = 240;
+    let cleaned: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.chars().count() <= LIMIT {
+        return cleaned;
+    }
+    let mut out: String = cleaned.chars().take(LIMIT).collect();
+    out.push('…');
+    out
 }
 
 /// 无动作的提示项（空历史、读取失败等）。
@@ -98,6 +112,7 @@ fn notice_item(title: &str, detail: &str) -> Item {
         id: "ai.notice".into(),
         title: title.into(),
         subtitle: None,
+        icon: Some("info".into()),
         actions: vec![],
         payload: serde_json::Value::Null,
         detail: Some(detail.into()),
@@ -395,7 +410,15 @@ impl AiShell {
                 )],
                 Ok(list) => list
                     .into_iter()
-                    .map(|conversation| history_item(conversation, now))
+                    .map(|conversation| {
+                        // 预览 = 最后一条回答的摘要（进焦点预览卡片，IIE4AD-370）
+                        let preview = db
+                            .last_assistant_message(&conversation.id)
+                            .ok()
+                            .flatten()
+                            .map(|text| preview_excerpt(&text));
+                        history_item(conversation, now, preview)
+                    })
                     .collect(),
                 Err(err) => vec![notice_item("读取历史失败", &err)],
             },
@@ -422,6 +445,7 @@ impl Extension for AiShell {
                 extension_id: "ai".into(),
                 title: "AI: Quick Ask".into(),
                 subtitle: Some("直接输入问题也可（无匹配时自动出现提问项）".into()),
+                icon: Some("sparkles".into()),
                 input: InputKind::Query,
                 live: false,
             },
@@ -430,6 +454,7 @@ impl Extension for AiShell {
                 extension_id: "ai".into(),
                 title: "AI: 搜索历史会话".into(),
                 subtitle: Some("输入即筛选标题；Enter 在侧栏打开".into()),
+                icon: Some("history".into()),
                 input: InputKind::Query,
                 live: true,
             },
@@ -480,6 +505,7 @@ impl Extension for AiShell {
             extension_id: "ai".into(),
             title,
             subtitle: Some(subtitle),
+            icon: Some("sparkles".into()),
             input: InputKind::Query,
             live: false,
         })
@@ -661,6 +687,16 @@ mod tests {
         assert_eq!(title_for("", &[]), "新对话");
     }
 
+    /// 预览摘要：空白归一 + 按字符截断（IIE4AD-370）。
+    #[test]
+    fn preview_excerpt_collapses_and_truncates() {
+        assert_eq!(preview_excerpt("第一行\n\n第二行"), "第一行 第二行");
+        let long = "字".repeat(300);
+        let excerpt = preview_excerpt(&long);
+        assert_eq!(excerpt.chars().count(), 241);
+        assert!(excerpt.ends_with('…'));
+    }
+
     #[test]
     fn relative_time_buckets() {
         assert_eq!(relative_time(100, 100), "刚刚");
@@ -683,8 +719,10 @@ mod tests {
                 updated_unix: 100,
             },
             160,
+            Some("上次回答的摘要".into()),
         );
         assert_eq!(item.subtitle.as_deref(), Some("1 分钟前"));
+        assert_eq!(item.detail.as_deref(), Some("上次回答的摘要"));
         let action = &item.actions[0];
         assert_eq!(action.kind, ActionKind::Primary);
         let result = AiShell

@@ -46,6 +46,9 @@ pub struct Item {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
+    /// 图标语义名（平台图标集，如 Lucide 的 "sparkles"；ADR-0012）。UI 决定具体图形，未知名回退默认。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// 第一个动作即 Apply 语义；Show All Actions（⌘K）展开全部。
     pub actions: Vec<Action>,
     /// 对 UI 不透明，动作执行时原样送回 Extension。
@@ -86,6 +89,9 @@ pub struct CommandMeta {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
+    /// 图标语义名（ADR-0012）。缺省时 UI 用来源 Command 的图标，再回退默认图形。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     pub input: InputKind,
     /// Live 列表：Input Bar 变化即用新查询重跑本命令（如历史搜索）；
     /// false 时输入只用于命令盘检索（默认）。
@@ -210,6 +216,7 @@ mod tests {
                 payload: serde_json::Value::Null,
                 detail: None,
                 pending: false,
+                icon: None,
             },
         };
         let json = serde_json::to_value(&event).unwrap();

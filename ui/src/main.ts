@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
+import { iconEl } from "./icons";
 import { store } from "./store";
 
 // ---- 类型：镜像 moe-core 的 serde camelCase 契约（ADR-0006）----
@@ -19,6 +20,8 @@ interface Item {
   id: string;
   title: string;
   subtitle?: string;
+  /** 图标语义名（ADR-0012）；缺省时用来源 Command 的图标。 */
+  icon?: string;
   actions: Action[];
   payload: unknown;
   detail?: string | null;
@@ -30,6 +33,8 @@ interface CommandMeta {
   extensionId: string;
   title: string;
   subtitle?: string;
+  /** 图标语义名（ADR-0012）。 */
+  icon?: string;
   input: "none" | "query" | "selection";
   /** Live 列表：进入后输入变化即重跑（如历史搜索）。 */
   live: boolean;
@@ -53,6 +58,8 @@ interface View {
   actions: Action[];
   /** actions 模式下来自哪个 item；items 模式的来源 Command。 */
   sourceCommandId?: string;
+  /** 来源 Command 的图标（结果项未自带图标时的回退）。 */
+  sourceIcon?: string;
   /** 来源 Command 是否 Live（输入变化即重跑列表）。 */
   sourceLive?: boolean;
   itemIndex?: number;
@@ -63,6 +70,10 @@ const listEl = document.querySelector<HTMLUListElement>("#list")!;
 const detailEl = document.querySelector<HTMLDivElement>("#detail")!;
 const hintsEl = document.querySelector<HTMLElement>("#hints")!;
 const toastEl = document.querySelector<HTMLDivElement>("#toast")!;
+const toastIconEl = document.querySelector<HTMLSpanElement>("#toast-icon")!;
+const toastTextEl = document.querySelector<HTMLSpanElement>("#toast-text")!;
+const inputIconEl = document.querySelector<HTMLSpanElement>("#input-icon")!;
+const bannerIconEl = document.querySelector<HTMLSpanElement>("#banner-icon")!;
 
 const view = store<View>({
   mode: "commands",
@@ -86,10 +97,15 @@ let previewDismissed = false;
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 function toast(text: string) {
-  toastEl.textContent = text;
+  toastTextEl.textContent = text;
+  toastIconEl.replaceChildren(iconEl("check", { size: 14, className: "text-emerald-400" }));
   toastEl.classList.remove("hidden");
+  toastEl.classList.add("flex");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 1200);
+  toastTimer = setTimeout(() => {
+    toastEl.classList.add("hidden");
+    toastEl.classList.remove("flex");
+  }, 1200);
 }
 
 // ---- Hints Bar：键位语义来自 Rust 统一键位表，视图层不自行发明 ----
@@ -107,6 +123,34 @@ const HINT_LABELS: Record<string, string> = {
 
 async function initHints() {
   const entries = await invoke<[string, string][]>("keymap");
+  // 分组：导航 / 操作 / 回退（Raycast 同款：一组一个语义段，分隔线区隔）
+  const GROUP_OF: Record<string, number> = {
+    navDown: 0,
+    navUp: 0,
+    apply: 1,
+    secondaryCopy: 1,
+    showAllActions: 1,
+    materialize: 1,
+    attach: 1,
+    back: 2,
+  };
+  const nodes: Node[] = [];
+  let lastGroup = -1;
+  for (const [display, semantic] of entries) {
+    const group = GROUP_OF[semantic] ?? 1;
+    if (lastGroup !== -1 && group !== lastGroup) {
+      const divider = document.createElement("span");
+      divider.className = "h-3 w-px bg-zinc-700";
+      nodes.push(divider);
+    }
+    lastGroup = group;
+    const span = document.createElement("span");
+    const kbd = document.createElement("kbd");
+    kbd.className = "text-zinc-200";
+    kbd.textContent = display;
+    span.append(kbd, ` ${HINT_LABELS[semantic] ?? semantic}`);
+    nodes.push(span);
+  }
   // 流式期间的动态键位：Esc = 停止生成（pending 时显示，IIE4AD-365）
   const stop = document.createElement("span");
   stop.className = "hidden";
@@ -115,45 +159,70 @@ async function initHints() {
   stopKey.textContent = "Esc";
   stop.append(stopKey, " 停止");
   stopHintEl = stop;
-  hintsEl.replaceChildren(
-    ...entries.map(([display, semantic]) => {
-      const span = document.createElement("span");
-      const kbd = document.createElement("kbd");
-      kbd.className = "text-zinc-200";
-      kbd.textContent = display;
-      span.append(kbd, ` ${HINT_LABELS[semantic] ?? semantic}`);
-      return span;
-    }),
-    stop,
-  );
+  nodes.push(stop);
+  hintsEl.replaceChildren(...nodes);
 }
 
 // ---- 渲染 ----
 
-function currentEntries(): { title: string; subtitle?: string; key?: string }[] {
+interface Row {
+  title: string;
+  subtitle?: string;
+  key?: string;
+  /** 语义名；undefined = 用来源 Command 的图标，仍无则回退。 */
+  icon?: string;
+  /** 回退图形（未指定图标）時淡化显示。 */
+  iconMuted?: boolean;
+}
+
+function currentEntries(): Row[] {
   const v = view.get();
   if (v.mode === "commands") {
-    return v.commands.map((c) => ({ title: c.title, subtitle: c.subtitle }));
-  }
-  if (v.mode === "items") {
-    return v.items.map((i) => ({
-      title: i.title,
-      subtitle: i.subtitle,
-      key: secondaryOf(i)?.keybinding ?? undefined,
+    return v.commands.map((c) => ({
+      title: c.title,
+      subtitle: c.subtitle,
+      icon: c.icon,
+      iconMuted: !c.icon,
     }));
   }
-  return v.actions.map((a) => ({ title: a.title, key: a.keybinding ?? undefined }));
+  if (v.mode === "items") {
+    return v.items.map((i) => {
+      const icon = i.icon ?? v.sourceIcon;
+      return {
+        title: i.title,
+        subtitle: i.subtitle,
+        key: secondaryOf(i)?.keybinding ?? undefined,
+        icon,
+        iconMuted: !icon,
+      };
+    });
+  }
+  return v.actions.map((a) => ({
+    title: a.title,
+    key: a.keybinding ?? (a.kind === "primary" ? "⏎" : undefined),
+    icon: a.kind === "primary" ? "corner-down-left" : "copy",
+  }));
 }
 
 function render() {
   const v = view.get();
   const rows = currentEntries().map((e, i) => {
+    const focused = i === v.focus;
     const li = document.createElement("li");
     li.className =
-      "flex items-baseline justify-between gap-4 rounded-lg px-3 py-1.5 text-sm " +
-      (i === v.focus ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300");
+      "flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm " +
+      (focused ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300");
+    li.append(
+      iconEl(e.icon, {
+        className: e.iconMuted
+          ? "text-zinc-600"
+          : focused
+            ? "text-zinc-200"
+            : "text-zinc-400",
+      }),
+    );
     const left = document.createElement("div");
-    left.className = "min-w-0 truncate";
+    left.className = "min-w-0 flex-1 truncate";
     left.textContent = e.title;
     if (e.subtitle) {
       const sub = document.createElement("span");
@@ -180,6 +249,21 @@ function render() {
   // 流式占位项：显示「Esc 停止」
   const pending = v.mode === "items" && v.items[v.focus]?.pending === true;
   stopHintEl?.classList.toggle("hidden", !pending);
+  updatePlaceholder();
+}
+
+/** Input Bar 的 placeholder 跟随当前层（Raycast 同款：进了哪个命令就显示哪个）。 */
+function updatePlaceholder() {
+  if (attaching) return; // 附件模式自己管
+  const v = view.get();
+  if (v.mode === "commands") {
+    q.placeholder = QUERY_PLACEHOLDER;
+  } else if (v.mode === "actions") {
+    q.placeholder = "选择动作…";
+  } else {
+    const command = v.commands.find((c) => c.id === v.sourceCommandId);
+    q.placeholder = command ? command.title : "结果…";
+  }
 }
 
 // ---- 详情卡片：焦点预览（列表共存）/ 全屏消息（错误等）----
@@ -249,7 +333,7 @@ function secondaryOf(item: Item) {
   return item.actions.find((a) => a.kind === "secondary");
 }
 
-function applyResult(res: ActionResult, commandId: string, live = false) {
+function applyResult(res: ActionResult, commandId: string, live = false, icon?: string) {
   if (typeof res === "string") {
     // silent：无需 UI 动作（openSideView 的开窗已由后端完成）
     return;
@@ -273,6 +357,7 @@ function applyResult(res: ActionResult, commandId: string, live = false) {
       focus: 0,
       sourceCommandId: commandId,
       sourceLive: live,
+      sourceIcon: icon,
     }));
   }
 }
@@ -291,7 +376,7 @@ async function applyFocused(alt: boolean) {
       if (cmd.live) {
         q.value = "";
       }
-      applyResult(res, cmd.id, cmd.live);
+      applyResult(res, cmd.id, cmd.live, cmd.icon);
     } catch (err) {
       showMessage(`执行失败：${String(err)}`);
     }
@@ -310,7 +395,7 @@ async function applyFocused(alt: boolean) {
         action,
       });
       if (action.id === "copy") toast("已复制");
-      applyResult(res, v.sourceCommandId, v.sourceLive);
+      applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon);
     } catch (err) {
       showMessage(`执行失败：${String(err)}`);
     }
@@ -327,7 +412,7 @@ async function applyFocused(alt: boolean) {
       action,
     });
     if (action.id === "copy") toast("已复制");
-    applyResult(res, v.sourceCommandId, v.sourceLive);
+    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon);
   } catch (err) {
     showMessage(`执行失败：${String(err)}`);
   }
@@ -364,7 +449,7 @@ async function materialize() {
       item,
       action,
     });
-    applyResult(res, v.sourceCommandId, v.sourceLive);
+    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon);
   }
 }
 
@@ -378,7 +463,7 @@ async function rerunLive(query: string) {
       query: query || null,
       record: false, // 重跑不算一次启动（frecency 语义）
     });
-    applyResult(res, v.sourceCommandId, true);
+    applyResult(res, v.sourceCommandId, true, v.sourceIcon);
   } catch (err) {
     showMessage(`执行失败：${String(err)}`);
   }
@@ -436,6 +521,13 @@ let attaching = false;
 let savedQuery = "";
 let attachBarToken = 0;
 
+/** Input Bar 前置图标：平时搜索，附件模式换纸夹（ADR-0012）。 */
+function renderInputIcon() {
+  inputIconEl.replaceChildren(
+    iconEl(attaching ? "paperclip" : "search", { size: 18, className: "text-zinc-500" }),
+  );
+}
+
 function setAttachBar(kind: "hint" | "error", text: string) {
   attachTextEl.textContent = text;
   const palette =
@@ -452,6 +544,7 @@ function hideAttachBar() {
 function startAttach() {
   if (attaching) return;
   attaching = true;
+  renderInputIcon();
   savedQuery = q.value;
   q.value = "";
   q.placeholder = "粘贴文件路径，Enter 添加附件";
@@ -465,9 +558,10 @@ function startAttach() {
 function cancelAttach() {
   if (!attaching) return;
   attaching = false;
+  renderInputIcon();
   q.value = savedQuery;
   savedQuery = "";
-  q.placeholder = QUERY_PLACEHOLDER;
+  updatePlaceholder();
   hideAttachBar();
 }
 
@@ -480,9 +574,10 @@ async function submitAttach() {
   try {
     const info = await validatePath(raw);
     attaching = false;
+    renderInputIcon();
     q.value = appendMention(savedQuery, info.path);
     savedQuery = "";
-    q.placeholder = QUERY_PLACEHOLDER;
+    updatePlaceholder();
     const kind = info.kind === "image" ? "图片" : "文本";
     setAttachBar(
       "hint",
@@ -607,6 +702,7 @@ async function refreshBanner() {
 }
 
 function showBanner() {
+  bannerIconEl.replaceChildren(iconEl("alert", { size: 14 }));
   bannerEl.classList.remove("hidden");
   bannerEl.classList.add("flex");
 }
@@ -655,6 +751,7 @@ window.addEventListener("focus", () => {
 });
 
 await initHints();
+renderInputIcon();
 await refresh("");
 await refreshBanner();
 render();

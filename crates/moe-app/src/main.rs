@@ -187,7 +187,8 @@ fn top_inset_physical(scale: f64) -> u32 {
     (inset_points.max(0.0) * scale).round() as u32
 }
 
-/// 把侧栏移到鼠标所在显示器（含全屏虚拟屏）的右侧、占满高度。
+/// 侧栏默认摆放：鼠标所在显示器（含全屏虚拟屏）的右侧、占满高度。
+/// 仅在无记忆帧或记忆帧已不在任何显示器上时使用（IIE4AD-369）。
 fn place_side_view(window: &tauri::WebviewWindow) {
     let Ok(cursor) = window.cursor_position() else {
         return;
@@ -216,6 +217,50 @@ fn place_side_view(window: &tauri::WebviewWindow) {
     );
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
     let _ = window.set_size(tauri::PhysicalSize::new(size.width, height));
+}
+
+/// 恢复上一次的位置与尺寸（用户拖过/缩过就记住）；帧已不在任何显示器上则放弃。
+fn restore_side_view(window: &tauri::WebviewWindow) -> bool {
+    let Some(frame) = moe_platform::store::load_window_frame("chat") else {
+        return false;
+    };
+    let on_screen = window
+        .monitor_from_point(frame.x as f64, frame.y as f64)
+        .ok()
+        .flatten()
+        .is_some();
+    if !on_screen {
+        return false;
+    }
+    let _ = window.set_position(tauri::PhysicalPosition::new(frame.x, frame.y));
+    let _ = window.set_size(tauri::PhysicalSize::new(frame.width, frame.height));
+    true
+}
+
+/// 记住侧栏当前帧（拖拽/缩放后防抖动延迟写入）。
+fn schedule_chat_frame_save(window: &tauri::WebviewWindow) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let handle = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return; // 又有新的移动/缩放事件，交给后来者
+        }
+        let (Ok(pos), Ok(size)) = (handle.outer_position(), handle.outer_size()) else {
+            return;
+        };
+        moe_platform::store::save_window_frame(
+            "chat",
+            moe_platform::store::WindowFrame {
+                x: pos.x,
+                y: pos.y,
+                width: size.width,
+                height: size.height,
+            },
+        );
+    });
 }
 
 /// 必须在主线程调用：先抓选区，再定位并展示面板。
@@ -279,7 +324,10 @@ fn open_side_view(app: &AppHandle, payload: serde_json::Value) {
             eprintln!("moe: chat 窗口不存在");
             return;
         };
-        place_side_view(&window);
+        // 用户拖过就用记忆帧，否则默认右停靠
+        if !restore_side_view(&window) {
+            place_side_view(&window);
+        }
 
         #[cfg(target_os = "macos")]
         let panel_shown = if let Ok(panel) = handle.get_webview_panel("chat") {
@@ -414,6 +462,14 @@ fn stop_generation(state: State<'_, AppState>) -> usize {
 #[tauri::command]
 fn resolve_attachment(path: String) -> Result<moe_extensions::attachment::AttachmentInfo, String> {
     moe_extensions::attachment::inspect(std::path::Path::new(&path))
+}
+
+/// 侧栏历史会话列表（双栏左栏，IIE4AD-369）：标题筛选、最近优先。
+#[tauri::command]
+fn side_conversations(
+    query: Option<String>,
+) -> Result<Vec<moe_core::conversation::Conversation>, String> {
+    moe_platform::db::Db::open_default()?.conversations("ai", query.as_deref(), 50)
 }
 
 /// 侧栏历史：某会话的全部消息（按时间正序）。
@@ -754,6 +810,17 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // 侧栏：记住用户拖拽/缩放后的位置与尺寸（IIE4AD-369），不参与失焦收起
+            if window.label() == "chat" {
+                if matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                ) && let Some(webview) = window.app_handle().get_webview_window("chat")
+                {
+                    schedule_chat_frame_save(&webview);
+                }
+                return;
+            }
             // 失焦即收起（Raycast 同款）；tray 已提供返回入口，可安全启用。
             // 刚展示的 300ms 内忽略失焦：非激活面板成为 key window 的过程
             // 会产生瞬态 Focused(false)，不设护栏会「闪一下就消失」。
@@ -782,6 +849,7 @@ fn main() {
             stop_generation,
             resolve_attachment,
             side_messages,
+            side_conversations,
             side_send,
             summon_status,
             open_input_monitoring_settings,

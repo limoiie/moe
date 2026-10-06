@@ -15,12 +15,13 @@ fn action(id: &str, title: &str, kind: ActionKind, keybinding: Option<&str>) -> 
     }
 }
 
-fn meta(id: &str, title: &str, subtitle: &str, input: InputKind) -> CommandMeta {
+fn meta(id: &str, title: &str, subtitle: &str, icon: &str, input: InputKind) -> CommandMeta {
     CommandMeta {
         id: id.into(),
         extension_id: "echo".into(),
         title: title.into(),
         subtitle: Some(subtitle.into()),
+        icon: Some(icon.into()),
         input,
         live: false,
     }
@@ -41,18 +42,21 @@ impl Extension for Echo {
                 "echo.write-back",
                 "Echo: Write Back",
                 "把输入文本回写到光标处",
+                "terminal",
                 InputKind::Query,
             ),
             meta(
                 "echo.items",
                 "Echo: List Demo",
                 "演示 Item 流：结果仍可 Apply / 副操作",
+                "list",
                 InputKind::Query,
             ),
             meta(
                 "echo.shout",
                 "Echo: Shout",
                 "有选区则大写回写，无选区则插入标记",
+                "megaphone",
                 InputKind::Selection,
             ),
         ]
@@ -80,6 +84,7 @@ impl Extension for Echo {
                         id: format!("echo.word.{word}"),
                         title: (*word).to_string(),
                         subtitle: Some("示例词".into()),
+                        icon: Some("quote".into()),
                         actions: vec![
                             action("write-back", "回写该词", ActionKind::Primary, None),
                             action("copy", "复制纯文本", ActionKind::Secondary, Some("⌥⏎")),

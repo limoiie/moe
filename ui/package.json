@@ -12,6 +12,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "dompurify": "^3.4.16",
+    "lucide": "^1.52.0",
     "marked": "^18.0.14"
   },
   "devDependencies": {

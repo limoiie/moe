@@ -177,6 +177,25 @@ impl Db {
         Ok(rows)
     }
 
+    /// 会话里最后一条 assistant 消息（历史预览用，IIE4AD-370）。
+    pub fn last_assistant_message(&self, conversation_id: &str) -> Result<Option<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT content FROM messages
+                 WHERE conversation_id = ?1 AND role = 'assistant'
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .map_err(|err| err.to_string())?;
+        let mut rows = stmt
+            .query(rusqlite::params![conversation_id])
+            .map_err(|err| err.to_string())?;
+        match rows.next().map_err(|err| err.to_string())? {
+            Some(row) => Ok(Some(row.get(0).map_err(|err| err.to_string())?)),
+            None => Ok(None),
+        }
+    }
+
     /// 会话内的消息（按时间正序）。
     pub fn messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
         let mut stmt = self
@@ -316,6 +335,26 @@ mod tests {
         db.append_message("424242", Role::User, "悬空", &[], at(1))
             .unwrap();
         assert!(db.messages("424242").unwrap().is_empty());
+    }
+
+    /// 历史预览取最后一条 assistant 消息（IIE4AD-370）。
+    #[test]
+    fn last_assistant_message_prefers_latest() {
+        let db = db();
+        let conv = db.create_conversation("ai", "预览", at(0)).unwrap();
+        assert_eq!(db.last_assistant_message(&conv).unwrap(), None);
+        db.append_message(&conv, Role::User, "问", &[], at(1))
+            .unwrap();
+        db.append_message(&conv, Role::Assistant, "答一", &[], at(2))
+            .unwrap();
+        db.append_message(&conv, Role::User, "再问", &[], at(3))
+            .unwrap();
+        db.append_message(&conv, Role::Assistant, "答二", &[], at(4))
+            .unwrap();
+        assert_eq!(
+            db.last_assistant_message(&conv).unwrap().as_deref(),
+            Some("答二")
+        );
     }
 
     /// 旧库（无 attachments 列）打开时自动升级，不丢历史。

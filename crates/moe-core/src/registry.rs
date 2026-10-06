@@ -206,6 +206,7 @@ mod tests {
                     extension_id: "toy".into(),
                     title: "Toy: List".into(),
                     subtitle: None,
+                    icon: None,
                     input: InputKind::Query,
                     live: false,
                 },
@@ -214,6 +215,7 @@ mod tests {
                     extension_id: "toy".into(),
                     title: "Hello Toy".into(),
                     subtitle: Some("backspace demo".into()),
+                    icon: None,
                     input: InputKind::None,
                     live: false,
                 },
@@ -238,6 +240,7 @@ mod tests {
                         payload: serde_json::Value::Null,
                         detail: None,
                         pending: false,
+                        icon: None,
                     }],
                 }),
                 "toy.hello" => Ok(ActionResult::WriteBack { text: "hi".into() }),
@@ -281,6 +284,7 @@ mod tests {
                 extension_id: "stream".into(),
                 title: "Stream: Ask".into(),
                 subtitle: None,
+                icon: None,
                 input: InputKind::Query,
                 live: false,
             }]
@@ -311,6 +315,7 @@ mod tests {
                 payload: serde_json::Value::Null,
                 detail: None,
                 pending: false,
+                icon: None,
             };
             emitter.emit(CommandEvent::ItemUpdated {
                 command_id: command_id.to_string(),
@@ -399,6 +404,7 @@ mod tests {
                         payload: serde_json::Value::Null,
                         detail: None,
                         pending: false,
+                        icon: None,
                     },
                 });
                 Ok(if conversation_id.is_empty() {
@@ -495,6 +501,7 @@ mod tests {
                     extension_id: "fb".into(),
                     title: format!("Ask「{query}」"),
                     subtitle: None,
+                    icon: None,
                     input: InputKind::Query,
                     live: false,
                 })
@@ -576,6 +583,7 @@ mod tests {
                     extension_id: self.0.into(),
                     title: "Deploy".into(),
                     subtitle: None,
+                    icon: None,
                     input: InputKind::None,
                     live: false,
                 }]

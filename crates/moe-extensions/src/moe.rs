@@ -17,8 +17,9 @@ fn info_item(text: &str) -> Item {
         subtitle: None,
         actions: vec![],
         payload: serde_json::Value::Null,
-        detail: Some(text.into()),
+        detail: None,
         pending: false,
+        icon: None,
     }
 }
 
@@ -52,6 +53,7 @@ impl Extension for Moe {
                 extension_id: "moe".into(),
                 title: "Moe: 打开配置文件".into(),
                 subtitle: Some("呼出键、[ai] 端点等设置".into()),
+                icon: Some("settings-2".into()),
                 input: InputKind::None,
                 live: false,
             },
@@ -60,6 +62,7 @@ impl Extension for Moe {
                 extension_id: "moe".into(),
                 title: "Moe: 保存 AI Key".into(),
                 subtitle: Some("输入 `key <你的key>`（不回显，存 keychain）".into()),
+                icon: Some("key-round".into()),
                 input: InputKind::Query,
                 live: false,
             },
@@ -108,6 +111,7 @@ impl Extension for Moe {
             extension_id: "moe".into(),
             title: "Moe: 保存 AI Key（不回显）".into(),
             subtitle: Some("Enter 存入 keychain".into()),
+            icon: Some("key-round".into()),
             input: InputKind::Query,
             live: false,
         })
