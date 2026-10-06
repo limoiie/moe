@@ -1,6 +1,6 @@
-//! frecency：命令的「频率 + 最近使用」排序权重。
+//! frecency: "frequency + recency" ordering weight for commands.
 //!
-//! 平台级数据，不属于任何 Extension 的 Namespace（ADR-0003 的隔离域留给扩展自己的数据）。
+//! Platform-level data, outside every Extension's Namespace (ADR-0003 leaves the isolated domain to extension-owned data).
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,7 +32,7 @@ impl Frecency {
         entry.last_used_unix = unix_secs(now);
     }
 
-    /// 频率 × 新鲜度分桶：一小时内 ×4、一天 ×2、一周 ×1、更久 ×0.25。
+    /// frequency × freshness buckets: ×4 within an hour, ×2 within a day, ×1 within a week, ×0.25 beyond.
     pub fn score(&self, id: &str, now: SystemTime) -> f64 {
         let Some(entry) = self.entries.get(id) else {
             return 0.0;
@@ -50,17 +50,39 @@ impl Frecency {
         entry.count as f64 * freshness
     }
 
-    /// 最近一次使用时间（unix 秒）；没记录过为 None。「建议」按它倒序（IIE4AD-395）。
+    /// Most recent use time (unix seconds); None if never recorded. "Suggestions" sort by it descending (IIE4AD-395).
     pub fn last_used(&self, id: &str) -> Option<u64> {
         self.entries.get(id).map(|entry| entry.last_used_unix)
     }
+
+    /// Forget one command's usage history (⌃X on a suggestion, ADR-0025).
+    /// The command itself stays listed in its source section; only its recency is gone.
+    pub fn remove(&mut self, id: &str) -> bool {
+        self.entries.remove(id).is_some()
+    }
+
+    /// Forget ALL usage history (⌃⇧X on suggestions, ADR-0025): suggestions vanish
+    /// and search ordering falls back to plain matching order.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Number of commands with recorded usage (feedback for "clear all").
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// True when no usage has ever been recorded.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
-/// 搜索排序查询 frecency 的接缝：Registry 只依赖它，测试可注入固定值。
+/// Seam for search ordering to query frecency: the Registry depends only on it, so tests can inject fixed values.
 pub trait FrecencyLookup {
     fn frecency(&self, command_id: &str) -> f64;
 
-    /// 最近一次使用时间（unix 秒）；没有记录为 None（默认）。
+    /// Most recent use time (unix seconds); None if never recorded (default).
     fn last_used(&self, _command_id: &str) -> Option<u64> {
         None
     }
@@ -78,7 +100,7 @@ impl FrecencyLookup for Frecency {
     }
 }
 
-/// 无 frecency 场景（测试、轻量调用方）。
+/// No-frecency scenario (tests, lightweight callers).
 pub struct NoFrecency;
 
 impl FrecencyLookup for NoFrecency {
@@ -111,20 +133,26 @@ mod tests {
         let mut f = Frecency::default();
         f.record("a", at(0));
         let once = f.score("a", at(0));
-        assert!(once > 0.0, "首次使用后应有分数");
+        assert!(once > 0.0, "first use should have a score");
 
         f.record("a", at(0));
-        assert!(f.score("a", at(0)) > once, "用两次应高于一次");
+        assert!(
+            f.score("a", at(0)) > once,
+            "two uses should score higher than one"
+        );
 
-        // 同样的使用次数，越久远分数越低（衰减分桶）
+        // Same use count, older scores lower (decay buckets)
         let mut g = Frecency::default();
         g.record("b", at(0));
         g.record("b", at(0));
         let fresh = g.score("b", at(0));
         let day_old = g.score("b", at(90_000));
         let month_old = g.score("b", at(30 * DAY));
-        assert!(fresh > day_old, "一天后应低于刚用过");
-        assert!(day_old > month_old, "一个月后应低于一天前");
+        assert!(fresh > day_old, "day-old should score lower than fresh");
+        assert!(
+            day_old > month_old,
+            "month-old should score lower than day-old"
+        );
     }
 
     #[test]
@@ -136,7 +164,7 @@ mod tests {
         f.record("new", at(30 * DAY));
         assert!(
             f.score("new", at(30 * DAY)) > f.score("old", at(30 * DAY)),
-            "刚用过一次应压过一个月前用过三次"
+            "one recent use should beat three uses a month ago"
         );
     }
 
@@ -149,7 +177,7 @@ mod tests {
         assert_eq!(f, back);
     }
 
-    /// 建议（IIE4AD-395）依赖 last_used：记录过才有时间，未记录为 None。
+    /// Suggestions (IIE4AD-395) depend on last_used: only recorded commands have a time; unrecorded ones are None.
     #[test]
     fn last_used_is_only_set_after_recording() {
         let mut f = Frecency::default();
@@ -157,6 +185,29 @@ mod tests {
         f.record("a", at(100));
         assert_eq!(f.last_used("a"), Some(100));
         f.record("a", at(200));
-        assert_eq!(f.last_used("a"), Some(200), "重复使用更新最近时间");
+        assert_eq!(
+            f.last_used("a"),
+            Some(200),
+            "repeated use updates the latest time"
+        );
+    }
+
+    /// Forget usage (ADR-0025): removing one entry only affects that command;
+    /// clear() empties everything (suggestions + ordering weights).
+    #[test]
+    fn remove_and_clear_forget_usage() {
+        let mut f = Frecency::default();
+        assert!(f.is_empty());
+        f.record("a", at(1));
+        f.record("b", at(2));
+        assert_eq!(f.len(), 2);
+        assert!(f.remove("a"), "first removal reports success");
+        assert!(!f.remove("a"), "removing again is a no-op");
+        assert_eq!(f.last_used("a"), None);
+        assert_eq!(f.last_used("b"), Some(2));
+        f.clear();
+        assert!(f.is_empty());
+        assert_eq!(f.last_used("b"), None);
+        assert_eq!(f.score("b", at(2)), 0.0);
     }
 }

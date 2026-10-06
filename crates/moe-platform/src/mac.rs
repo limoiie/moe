@@ -1,8 +1,8 @@
-//! macOS 呼出监听：listen-only CGEventTap（ADR-0008）。
+//! macOS summon listener: listen-only CGEventTap (ADR-0008).
 //!
-//! 事件翻译（flagsChanged → [`Input`]）是薄胶水；判定语义在
-//! [`crate::summon::DoubleTapDetector`]。未授权时创建 tap 会失败，这里退避
-//! 重试——用户授权后无需重启即可生效。
+//! Event translation (flagsChanged → [`Input`]) is thin glue; the detection semantics live in
+//! [`crate::summon::DoubleTapDetector`]. Creating the tap fails without permission, so we retry with backoff here —
+//! it takes effect once the user grants permission, without a restart.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -32,19 +32,19 @@ unsafe extern "C" {
     fn AXIsProcessTrusted() -> u8;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
-    /// listen-only 键盘事件监听的正确权限门（10.15+）：输入监控。
+    /// The correct permission gate (10.15+) for listen-only keyboard event monitoring: Input Monitoring.
     fn CGPreflightListenEventAccess() -> u8;
     fn CGRequestListenEventAccess() -> u8;
-    /// core-graphics 的声明不对外导出；自行声明以支持 TapDisabled 后重新启用。
+    /// core-graphics doesn't export the declaration; declare it ourselves to re-enable after TapDisabled.
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
 }
 
-/// 辅助功能授权（写回/选区读取的门槛；M2）。
+/// Accessibility permission (gate for write back/selection reading; M2).
 pub fn is_accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
 }
 
-/// 弹一次系统引导，并把本应用加入「辅助功能」列表。
+/// Show the system prompt once and add this app to the "Accessibility" list.
 pub fn prompt_accessibility_permission() {
     unsafe {
         let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
@@ -56,19 +56,19 @@ pub fn prompt_accessibility_permission() {
     }
 }
 
-/// 输入监控（Input Monitoring）是否已授权——listen-only 键盘 tap 的门槛。
+/// Whether Input Monitoring is granted — the gate for the listen-only keyboard tap.
 pub fn is_input_monitoring_granted() -> bool {
     unsafe { CGPreflightListenEventAccess() != 0 }
 }
 
-/// 让透明窗口用 AppKit 的窗口阴影重新算一次（ADR-0016）。
+/// Make a transparent window recompute its AppKit window shadow (ADR-0016).
 ///
-/// 阴影由窗口内容的 alpha 生成并被缓存：透明窗口首次显示前 webview 可能还没画完，
-/// 阴影会按“空/矩形内容”算出来；每次 show 后调一次这个函数即可刷新为当前形状。
-/// CSS 阴影在透明窗口里会被窗口边界裁切，所以"浮起"由系统阴影负责。
+/// The shadow is generated from the window content's alpha and cached: the webview may not have finished painting before a transparent window's first show,
+/// so the shadow would be computed from "empty/rectangular content"; call this once after each show to refresh it to the current shape.
+/// CSS shadows get clipped at window bounds in a transparent window, so the system shadow provides the "lift".
 ///
 /// # Safety
-/// `ns_window` 必须是有效的 `NSWindow` 指针（Tauri 的 `Window::ns_window()`）。
+/// `ns_window` must be a valid `NSWindow` pointer (Tauri's `Window::ns_window()`).
 pub unsafe fn refresh_window_shadow(ns_window: *mut std::ffi::c_void) {
     if ns_window.is_null() {
         return;
@@ -80,7 +80,7 @@ pub unsafe fn refresh_window_shadow(ns_window: *mut std::ffi::c_void) {
     }
 }
 
-/// 未授权时弹一次系统引导，并把本应用加入「输入监控」列表。
+/// Show the system prompt once when unauthorized, and add this app to the "Input Monitoring" list.
 pub fn request_input_monitoring() -> bool {
     unsafe { CGRequestListenEventAccess() != 0 }
 }
@@ -134,21 +134,21 @@ fn run_listener(
     handler: Box<dyn Fn(SummonEvent) + Send>,
 ) {
     eprintln!(
-        "moe: 呼出监听启动（双击 {}，间隔上限 {:?}）",
+        "moe: summon listener started (double-tap {}, max gap {:?})",
         key.label(),
         max_gap
     );
     eprintln!(
-        "moe: 输入监控 preflight = {}；辅助功能 = {}",
+        "moe: input monitoring preflight = {}; accessibility = {}",
         is_input_monitoring_granted(),
         is_accessibility_trusted()
     );
     if !is_input_monitoring_granted() {
-        eprintln!("moe: 请求系统授权（输入监控）…");
+        eprintln!("moe: requesting system permission (input monitoring)…");
         request_input_monitoring();
     }
 
-    // RefCell 足够：tap 回调与 run loop 同线程。
+    // RefCell suffices: tap callbacks run on the same thread as the run loop.
     let state = Rc::new(RefCell::new(TapState {
         detector: DoubleTapDetector::new(key, max_gap),
         flags: CGEventFlags::empty(),
@@ -167,7 +167,7 @@ fn run_listener(
                         && s.detector.feed(input, Instant::now())
                     {
                         drop(s);
-                        eprintln!("moe: 检测到双击 {} → 呼出", key.label());
+                        eprintln!("moe: detected double-tap {} → summoning", key.label());
                         handler_ref(SummonEvent::Summon);
                     }
                 }
@@ -197,7 +197,10 @@ fn run_listener(
             Ok(tap) => {
                 state.borrow_mut().port = Some(tap.mach_port.as_concrete_TypeRef());
                 status.store(STATUS_READY, Ordering::SeqCst);
-                eprintln!("moe: CGEventTap 已挂载，双击 {} 可呼出", key.label());
+                eprintln!(
+                    "moe: CGEventTap mounted; double-tap {} to summon",
+                    key.label()
+                );
                 logged_failure = false;
                 handler(SummonEvent::Authorized);
                 let source = tap
@@ -207,14 +210,16 @@ fn run_listener(
                 CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
                 tap.enable();
                 CFRunLoop::run_current();
-                // tap 失效（如系统睡眠后）：清除端口并重建
+                // Tap became invalid (e.g. after system sleep): clear the port and rebuild
                 state.borrow_mut().port = None;
                 status.store(STATUS_NEEDS_PERMISSION, Ordering::SeqCst);
             }
             Err(()) => {
-                // 未授权/暂时失败：退避重试，授权生效后无需重启（个别系统版本仍需重启一次）
+                // Not authorized / temporary failure: retry with backoff; no restart needed once permission takes effect (some system versions still need one restart)
                 if !logged_failure {
-                    eprintln!("moe: CGEventTap 创建失败（多半是「输入监控」未授权），每秒重试…");
+                    eprintln!(
+                        "moe: CGEventTap creation failed (usually because \"Input Monitoring\" is not granted), retrying every second…"
+                    );
                     logged_failure = true;
                 }
                 std::thread::sleep(Duration::from_millis(1000));

@@ -1,43 +1,44 @@
-// 结果页面的**三种形态**（ADR-0018）：扩展只提供内容，形态、分栏比例与窗口尺寸
-// 全部由这里统一决定——任何 Extension/子应用只要照常返回 Item（可选带 detail），
-// 就自动获得与其他页面完全一致的版式与交互，不需要在视图层做任何定制。
+// The **three shapes** of the results page (ADR-0018): extensions provide only content,
+// while shape, column ratio, and window size are all decided here — any Extension/sub-app
+// that returns an Item (optionally with detail) automatically gets exactly the same layout
+// and interactions as every other page, with no view-layer customization.
 //
-//   列表（list）  ：单列结果，无详情栏                       → 默认高度
-//   两栏（split） ：左侧列表 + 右侧详情（焦点项的 detail）   → 更高（两栏都读得下）
-//   详情（detail）：唯一一条结果本身即内容（AI 回答、通知）  → 详情占满，默认高度
+//   list  : single-column results, no detail pane                    → default height
+//   split : left list + right detail (focused item's detail)         → taller (both columns readable)
+//   detail: the single result is the content itself (AI answers, notifications) → detail fills the panel, default height
 //
-// 这就是 Raycast 的 List / List+Detail / Detail：形态由数据（有没有 detail、
-// 是不是整屏）决定，不由各命令自己排版。
+// These are Raycast's List / List+Detail / Detail: the shape is decided by the data
+// (whether there is detail, whether it fills the screen), not by each command's own layout.
 
 import type { Item } from "./types";
 
 export type PageShape = "list" | "split" | "detail";
 
-/** 面板宽度（逻辑像素）：所有形态一致（Raycast 同款：尺寸恒定）。 */
+/** Panel width (logical pixels): identical across shapes (Raycast-style: constant size). */
 export const PANEL_WIDTH = 768;
 
-/** 面板高度（逻辑像素）：所有形态一致。 */
+/** Panel height (logical pixels): identical across shapes. */
 export const PANEL_HEIGHT = 540;
 
-// 三种形态的排版类：只在 render 里套用，别处不得自行拼宽度。
+// Layout classes for the three shapes: applied only in render; nowhere else may compose widths.
 
-/** 单列列表（list）：吃满宽度。 */
+/** Single-column list (list): takes the full width. */
 export const LIST_FULL_CLASS =
   "min-h-0 flex-1 overflow-y-auto px-2 pb-12";
 
-/** 两栏页面的左侧列表：**窄栏**（会话标题 + 时间够用），详情吃掉剩余宽度。 */
+/** Left list of the split page: **narrow column** (enough for a conversation title + time); detail takes the remaining width. */
 export const LIST_NARROW_CLASS =
   "min-h-0 w-[280px] shrink-0 overflow-y-auto border-r border-zinc-800 px-2 pb-12";
 
-/** 两栏页面的右侧详情（也是详情整屏用的容器）：吃满剩余宽度。 */
+/** Right detail of the split page (also the container for full-detail): takes the remaining width. */
 export const DETAIL_PANE_CLASS =
   "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-zinc-200";
 
 /**
- * 当前应该用哪种形态渲染。
- * @param item      焦点项（list 形态下为 undefined）
- * @param detailFull 结果声明的「详情整屏」（ADR-0013，Extension 决定）
- * @param itemCount  结果条数（整屏只对唯一一条成立）
+ * Which shape should render right now.
+ * @param item      the focused item (undefined in list shape)
+ * @param detailFull whether the result declared full-screen detail (ADR-0013, decided by the Extension)
+ * @param itemCount  number of results (full-screen only applies to a single result)
  */
 export function pageShapeOf(
   item: Item | undefined,

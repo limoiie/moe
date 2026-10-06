@@ -1,9 +1,9 @@
-//! AI 问答：OpenAI 兼容端点的真实流式回答（ADR-0005）。
+//! AI Q&A: real streaming answers from an OpenAI-compatible endpoint (ADR-0005).
 //!
-//! - 快捷问答：提问即建会话（Namespace `ai`），回答落库（IIE4AD-360）。
-//! - 侧栏续聊：整段历史作为上下文；事件 command_id 约定 `ai.side`。
-//! - 流式走 `CommandEvent::ItemUpdated`：invoke 立即返回占位 item，
-//!   worker 线程收 SSE 并逐段 emit（就地在详情卡片/侧栏重渲）。
+//! - Quick ask: a question creates a conversation (Namespace `ai`), answers are persisted (IIE4AD-360).
+//! - Side view continuation: the whole history is the context; events use the `ai.side` command_id convention.
+//! - Streaming goes through `CommandEvent::ItemUpdated`: invoke immediately returns a placeholder item,
+//!   a worker thread reads SSE and emits chunk by chunk (re-rendered in place in the detail card/side view).
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -26,37 +26,37 @@ use crate::attachment;
 
 pub struct AiShell;
 
-/// 侧栏续聊的事件 command_id 约定（chat 窗口按 `item.payload.conversationId` 过滤）。
+/// Event command_id convention for side view continuation (the chat window filters by `item.payload.conversationId`).
 pub const SIDE_COMMAND_ID: &str = "ai.side";
 
-/// 历史列表条数上限。
+/// Max entries in the history list.
 const HISTORY_LIMIT: usize = 20;
 
-/// 会话标题长度（超出截断并加省略号）。
+/// Conversation title length (truncated with an ellipsis when exceeded).
 const TITLE_CHARS: usize = 40;
 
 fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> Item {
     Item {
         id: "ai.answer".into(),
-        title: "AI 回答".into(),
+        title: "AI Answer".into(),
         subtitle: None,
         icon: Some("sparkles".into()),
         actions: vec![
             Action {
                 id: "write-back".into(),
-                title: "回写回答".into(),
+                title: "Write Back".into(),
                 kind: ActionKind::Primary,
                 keybinding: None,
             },
             Action {
                 id: "copy".into(),
-                title: "复制".into(),
+                title: "Copy".into(),
                 kind: ActionKind::Secondary,
                 keybinding: Some("⌥⏎".into()),
             },
             Action {
                 id: "materialize".into(),
-                title: "实体化为侧栏".into(),
+                title: "Open in Side View".into(),
                 kind: ActionKind::Secondary,
                 keybinding: Some("⌘M".into()),
             },
@@ -67,7 +67,7 @@ fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> It
     }
 }
 
-/// Item payload 载会话 id，Apply/⌘M 时原样带回（UI 不解释内容）。
+/// Item payload carries the conversation id, passed back as-is on Apply/⌘M (the UI does not interpret it).
 fn conversation_payload(conversation_id: Option<&str>) -> serde_json::Value {
     match conversation_id {
         Some(id) => serde_json::json!({ "conversationId": id }),
@@ -75,7 +75,7 @@ fn conversation_payload(conversation_id: Option<&str>) -> serde_json::Value {
     }
 }
 
-/// 历史/续聊列表项：Apply 即在侧栏打开该会话；`preview` 是最后一条回答的摘要（IIE4AD-370）。
+/// History/continuation list item: Apply opens that conversation in the side view; `preview` is a summary of the last answer (IIE4AD-370).
 fn history_item(conversation: Conversation, now_unix: u64, preview: Option<String>) -> Item {
     let payload = conversation_payload(Some(&conversation.id));
     Item {
@@ -85,7 +85,7 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
         icon: Some("message-square".into()),
         actions: vec![Action {
             id: "materialize".into(),
-            title: "在侧栏打开".into(),
+            title: "Open in Side View".into(),
             kind: ActionKind::Primary,
             keybinding: Some("⏎".into()),
         }],
@@ -95,7 +95,7 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
     }
 }
 
-/// 历史预览摘要：去掉多余空白，按字符截断（不破坏多字节）。
+/// History preview summary: collapses extra whitespace, truncates by character (without breaking multibyte sequences).
 fn preview_excerpt(text: &str) -> String {
     const LIMIT: usize = 240;
     let cleaned: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -107,7 +107,7 @@ fn preview_excerpt(text: &str) -> String {
     out
 }
 
-/// 无动作的提示项（空历史、读取失败等）。
+/// Notice item without actions (empty history, read failure, etc.).
 fn notice_item(title: &str, detail: &str) -> Item {
     Item {
         id: "ai.notice".into(),
@@ -121,7 +121,7 @@ fn notice_item(title: &str, detail: &str) -> Item {
     }
 }
 
-/// 会话标题：问题首行，超长截断。
+/// Conversation title: first line of the question, truncated when too long.
 fn conversation_title(question: &str) -> String {
     let first_line = question.lines().next().unwrap_or_default().trim();
     let mut title: String = first_line.chars().take(TITLE_CHARS).collect();
@@ -131,26 +131,26 @@ fn conversation_title(question: &str) -> String {
     title
 }
 
-/// 会话标题：问题首行，超长截断；纯附件（无文本）时用附件名。
+/// Conversation title: first line of the question, truncated when too long; attachments-only (no text) falls back to the attachment name.
 fn title_for(display: &str, attachments: &[AttachmentRef]) -> String {
     let title = conversation_title(display);
     if !title.is_empty() {
         return title;
     }
     match attachments.first() {
-        Some(first) => format!("附件：{}", first.name),
-        None => "新对话".into(),
+        Some(first) => format!("Attachment: {}", first.name),
+        None => "New Chat".into(),
     }
 }
 
-/// 列表副标题的相对时间。
+/// Relative time for list subtitles.
 fn relative_time(updated_unix: u64, now_unix: u64) -> String {
     let secs = now_unix.saturating_sub(updated_unix);
     match secs {
-        0..=59 => "刚刚".into(),
-        60..=3599 => format!("{} 分钟前", secs / 60),
-        3600..=86399 => format!("{} 小时前", secs / 3600),
-        _ => format!("{} 天前", secs / 86400),
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{}m ago", secs / 60),
+        3600..=86399 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86400),
     }
 }
 
@@ -161,8 +161,9 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-/// 提问即建会话（历史按 `ai` Namespace 隔离，ADR-0003；附件只存引用，ADR-0010）；
-/// 存储不可用时降级为不持久化。
+/// Asking creates the conversation (history isolated by the `ai` Namespace, ADR-0003;
+/// attachments stored as references only, ADR-0010);
+/// degrades to no persistence when storage is unavailable.
 fn persist_question(display: &str, attachments: &[AttachmentRef]) -> Option<String> {
     let db = Db::open_default().ok()?;
     let now = SystemTime::now();
@@ -174,7 +175,7 @@ fn persist_question(display: &str, attachments: &[AttachmentRef]) -> Option<Stri
     Some(id)
 }
 
-/// 回答落库；失败静默（不影响面板交互）。
+/// Persists the answer; failures are silent (panel interaction unaffected).
 fn persist_assistant(conversation_id: Option<&str>, text: &str) {
     let Some(conversation_id) = conversation_id else {
         return;
@@ -190,14 +191,14 @@ fn persist_assistant(conversation_id: Option<&str>, text: &str) {
     }
 }
 
-/// 进行中的生成：登记键 → 取消标记（IIE4AD-365）。
-/// 键在聊天流 = 会话 id；AI 命令流 = 每次运行的唯一键（ADR-0024）。
+/// In-progress generation: registry key → cancellation flag (IIE4AD-365).
+/// For chat streams the key is the conversation id; for AI command streams it is a unique key per run (ADR-0024).
 fn active_streams() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     static ACTIVE: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
     ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 登记一次生成（空键不登记、不可中断，返回 None）。
+/// Registers one generation (an empty key is not registered and cannot be interrupted; returns None).
 fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
     if key.is_empty() {
         return None;
@@ -210,7 +211,7 @@ fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
     Some(flag)
 }
 
-/// 收尾：从登记表移除（worker 结束/被中止时调用）。
+/// Cleanup: removes from the registry (called when the worker finishes or is aborted).
 fn end_stream(key: &str) {
     if key.is_empty() {
         return;
@@ -221,7 +222,7 @@ fn end_stream(key: &str) {
         .remove(key);
 }
 
-/// 标记全部进行中的生成为取消；worker 在下一个 SSE 行处收尾。返回中止数量。
+/// Marks all in-progress generations as cancelled; workers finish at the next SSE line. Returns the number aborted.
 pub(crate) fn stop_all_streams() -> usize {
     let streams = active_streams().lock().expect("streams poisoned");
     for flag in streams.values() {
@@ -230,12 +231,12 @@ pub(crate) fn stop_all_streams() -> usize {
     streams.len()
 }
 
-/// 帧构造器：全文 + pending → Item（聊天流 / AI 命令流各自的卡片形状）。
+/// Frame builder: full text + pending → Item (chat streams and AI command streams each have their own card shape).
 pub(crate) type FrameBuilder = Arc<dyn Fn(&str, bool) -> Item + Send + Sync>;
-/// 流收尾钩子：全文 → ()（落库 / 自动回写回调）。
+/// Stream finish hook: full text → () (persist / auto write-back callback).
 pub(crate) type StreamFinish = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// 一次流式请求的完整规格（聊天流与 AI 命令流共用，ADR-0024）。
+/// Full specification of one streaming request (shared by chat streams and AI command streams, ADR-0024).
 pub(crate) struct StreamRequest {
     pub base_url: String,
     pub key: String,
@@ -247,11 +248,11 @@ pub(crate) struct StreamRequest {
     pub on_done: StreamFinish,
 }
 
-/// 收尾钩子的空实现（不落库、无完成回调的流）。
+/// No-op finish hook (streams with no persistence and no completion callback).
 pub(crate) fn noop_sink(_text: &str) {}
 
-/// 请求 + SSE 循环：增量逐段 emit（pending=true）；自然完成时落库并回调 `on_done`。
-/// 被停止（IIE4AD-365）时保留已生成部分并落库、标记已停止，**不**触发 `on_done`。
+/// Request + SSE loop: emits each incremental chunk (pending=true); on natural completion it persists and calls `on_done`.
+/// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
 pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     let StreamRequest {
         base_url,
@@ -282,7 +283,9 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     {
         Ok(client) => client,
         Err(err) => {
-            fail(format!("## 请求失败\n\n无法初始化 HTTP 客户端：{err}"));
+            fail(format!(
+                "## Request failed\n\nFailed to initialize HTTP client: {err}"
+            ));
             end_stream(&stream_key);
             return;
         }
@@ -295,7 +298,7 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     let response = match response {
         Ok(response) => response,
         Err(err) => {
-            fail(format!("## 请求失败\n\n```\n{err}\n```"));
+            fail(format!("## Request failed\n\n```\n{err}\n```"));
             end_stream(&stream_key);
             return;
         }
@@ -308,7 +311,7 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
             .chars()
             .take(500)
             .collect();
-        fail(format!("## 端点返回 {status}\n\n```\n{body}\n```"));
+        fail(format!("## Endpoint returned {status}\n\n```\n{body}\n```"));
         end_stream(&stream_key);
         return;
     }
@@ -337,14 +340,14 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
 
     if stopped {
         let text = if acc.is_empty() {
-            "（已停止生成）".to_string()
+            "(generation stopped)".to_string()
         } else {
-            format!("{acc}\n\n_（已停止生成）_")
+            format!("{acc}\n\n_(generation stopped)_")
         };
         persist(&text);
         emit(text, false);
     } else if acc.is_empty() {
-        fail("（端点没有返回内容）".into());
+        fail("(the endpoint returned no content)".into());
     } else {
         persist(&acc);
         emit(acc.clone(), false);
@@ -352,26 +355,27 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     }
 }
 
-/// 未配置端点的引导卡（AI 问答与 AI 命令共用，ADR-0024）。
-pub(crate) const SETUP_MD: &str = "## 还没有配置 AI 端点\n\n\
-1. 运行命令「Moe: 打开配置文件」，填入：\n\n\
+/// Guidance card for a not-yet-configured endpoint (shared by AI Q&A and AI Commands, ADR-0024).
+pub(crate) const SETUP_MD: &str = "## No AI endpoint configured yet\n\n\
+1. Run the command \"Moe: Open Config File\" and fill in:\n\n\
 ```toml\n\
 [ai]\n\
 base_url = \"https://api.deepseek.com/v1\"\n\
 model = \"deepseek-chat\"\n\
 ```\n\n\
-2. 存 API key：输入 `key <你的key>` 回车（只存本地密钥文件，不回显；也可设 `MOE_AI_API_KEY` 环境变量）。\n\n\
-支持任意 OpenAI 兼容端点（DeepSeek / OpenRouter / 本地 llama.cpp 等）。";
+2. Store an API key: type `key <your-key>` and press Enter (stored only in a local key file, never echoed; you can also set the `MOE_AI_API_KEY` environment variable).\n\n\
+Works with any OpenAI-compatible endpoint (DeepSeek / OpenRouter / local llama.cpp, etc.).";
 
-/// 缺 API key 的引导卡（同上共用）。
-pub(crate) const KEY_MISSING_MD: &str = "## 端点已配置，但还缺 API key\n\n\
-输入 `key <你的key>` 回车即可存入本地密钥文件（0600，不回显）；也可设 `MOE_AI_API_KEY` 环境变量。";
+/// Guidance card for a missing API key (shared as above).
+pub(crate) const KEY_MISSING_MD: &str = "## Endpoint configured, but the API key is missing\n\n\
+Type `key <your-key>` and press Enter to store it in a local key file (0600, never echoed); you can also set the `MOE_AI_API_KEY` environment variable.";
 
-/// 选中文字作为上下文时的长度上限（字符）。
+/// Length limit (in characters) for selected text used as context.
 const SELECTION_LIMIT: usize = 4000;
 
-/// 把选中文字拼进问题（ADR-0019 增补：呼出面板前抓到的 Selection 自动作为提问上下文）。
-/// 问题里已经包含这段文字时不再重复；超长截断并注明。
+/// Appends the selected text to the question (ADR-0019 amendment: the Selection captured before
+/// the panel opens automatically becomes question context).
+/// Skipped when the question already contains that text; overlong selections are truncated with a note.
 fn question_with_selection(question: &str, selection: Option<&str>) -> String {
     let Some(selection) = selection.map(str::trim).filter(|s| !s.is_empty()) else {
         return question.to_string();
@@ -382,14 +386,16 @@ fn question_with_selection(question: &str, selection: Option<&str>) -> String {
     let truncated = selection.chars().count() > SELECTION_LIMIT;
     let excerpt: String = selection.chars().take(SELECTION_LIMIT).collect();
     let suffix = if truncated {
-        "\n…（选中文字过长，已截断）"
+        "\n…(selected text too long, truncated)"
     } else {
         ""
     };
-    format!("{question}\n\n以下是用户选中的文字，作为回答的上下文：\n```\n{excerpt}{suffix}\n```")
+    format!(
+        "{question}\n\nThe following text is the user's selection, provided as context for the answer:\n```\n{excerpt}{suffix}\n```"
+    )
 }
 
-/// 发给模型的请求体（抽出以便测试）：问题（可带选区上下文）+ 附件展开。
+/// Request body sent to the model (extracted for testing): question (with optional selection context) + expanded attachments.
 fn ask_body(
     model: &str,
     question: &str,
@@ -405,7 +411,7 @@ fn ask_body(
 }
 
 impl AiShell {
-    /// 附件 = 输入里的 `@path` mention + 呼出前选中的文件（ADR-0021），按路径去重。
+    /// Attachments = `@path` mentions in the input + files selected before opening (ADR-0021), deduplicated by path.
     fn attachments_with(
         mention_paths: &[PathBuf],
         selected_files: &[String],
@@ -424,9 +430,9 @@ impl AiShell {
         refs
     }
 
-    /// 拆开一条输入：正文（clean）+ 附件引用。
-    /// 纯附件（只有 `@path`、没有正文）时正文换成通用请求句——
-    /// 不把原始 mention 发给模型或存进历史（IIE4AD-391）。
+    /// Splits an input into body (clean) + attachment references.
+    /// Attachments-only input (only `@path`, no body) gets a generic request sentence —
+    /// the raw mention is never sent to the model or stored in history (IIE4AD-391).
     fn split_message(message: &str) -> (String, Vec<AttachmentRef>) {
         let (cleaned, paths) = attachment::parse_mentions(message);
         let attachments: Vec<AttachmentRef> = paths
@@ -437,7 +443,7 @@ impl AiShell {
             if attachments.is_empty() {
                 message.to_string()
             } else {
-                "请结合这些附件回答。".to_string()
+                "Please answer with these attachments.".to_string()
             }
         } else {
             cleaned
@@ -452,13 +458,15 @@ impl AiShell {
         emitter: Option<Arc<dyn Emitter>>,
     ) -> ActionResult {
         let question = question.trim().to_string();
-        // 附件以 `@path` mention 表达（ADR-0010）：内容现读，引用随消息落库。
-        // 呼出前在 Finder 里选中的文件同样成为附件（ADR-0021），与 mention 按路径去重。
+        // Attachments are expressed as `@path` mentions (ADR-0010): content is read on demand,
+        // references are persisted with the message.
+        // Files selected in Finder before opening the panel also become attachments (ADR-0021),
+        // deduplicated against mentions by path.
         let (cleaned, paths) = attachment::parse_mentions(&question);
         let selected_files: Vec<String> = selection.map(|s| s.files.clone()).unwrap_or_default();
         let attachments = Self::attachments_with(&paths, &selected_files);
         let text = selection.and_then(|s| s.text());
-        // 纯附件（只有 @path）不把原始 mention 当问题：落到空问引导（与选中文件一致）。
+        // Attachments-only input (only @path) does not treat the raw mention as a question: it falls through to the empty-question guidance (consistent with selected files).
         let display = if cleaned.is_empty() {
             if paths.is_empty() {
                 question.clone()
@@ -470,9 +478,9 @@ impl AiShell {
         };
         if display.trim().is_empty() {
             let hint = if attachments.is_empty() {
-                "在输入框里写下问题，再按 Enter。"
+                "Type your question in the input box, then press Enter."
             } else {
-                "在输入框里写下问题，再按 Enter（已附上附件）。"
+                "Type your question in the input box, then press Enter (attachments included)."
             };
             return ActionResult::detail(vec![answer_item(hint, None, false)]);
         }
@@ -485,8 +493,8 @@ impl AiShell {
             return ActionResult::detail(vec![answer_item(KEY_MISSING_MD, None, false)]);
         };
 
-        // 提问即建会话；随后 ⌘M 可带同一会话进侧栏续聊。
-        // 历史只存问题本身（标题干净）；发给模型的内容带选中文字上下文。
+        // Asking creates the conversation; ⌘M then takes the same conversation into the side view.
+        // History stores only the question itself (clean title); what goes to the model includes the selected-text context.
         let conversation_id = persist_question(&display, &attachments);
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
@@ -522,32 +530,34 @@ impl AiShell {
                 );
             });
         }
-        // 占位帧：正文留空——「正在生成」行内指示已经是唯一的状态反馈
+        // Placeholder frame: body left empty — the "generating" inline indicator is already the only status feedback
         ActionResult::detail(vec![answer_item("", conversation_id.as_deref(), true)])
     }
 
-    /// 历史搜索：列表随输入重跑（CommandMeta.live），标题模糊匹配、最近优先。
+    /// History search: the list re-runs as you type (CommandMeta.live), fuzzy title matching, most recent first.
     fn search_history(&self, query: &str) -> ActionResult {
         match Db::open_default() {
             Ok(db) => Self::search_history_in(&db, query),
-            Err(err) => ActionResult::list(vec![notice_item("读取历史失败", &err)]),
+            Err(err) => ActionResult::list(vec![notice_item("Failed to read history", &err)]),
         }
     }
 
-    /// DB 注入版：测试用临时库断言形态与条目，不碰真实数据目录。
+    /// DB-injected version: tests use a temp DB to assert shape and entries without touching
+    /// the real data directory.
     ///
-    /// 形态恒为列表（ADR-0013）：唯一一条命中也不整屏，UI 才有「左列表 + 右预览」。
+    /// The shape is always a list (ADR-0013): even a single hit does not take the whole screen,
+    /// which is what gives the UI its "left list + right preview".
     fn search_history_in(db: &Db, query: &str) -> ActionResult {
         let now = unix_now();
         let items = match db.conversations("ai", Some(query), HISTORY_LIMIT) {
             Ok(list) if list.is_empty() => vec![notice_item(
-                "没有匹配的历史会话",
-                "在命令盘直接输入问题，即可开始一次新对话。",
+                "No matching chat history",
+                "Type a question directly into the palette to start a new conversation.",
             )],
             Ok(list) => list
                 .into_iter()
                 .map(|conversation| {
-                    // 预览 = 最后一条回答的摘要（进焦点预览卡片，IIE4AD-370）
+                    // Preview = summary of the last answer (goes into the focused preview card, IIE4AD-370)
                     let preview = db
                         .last_assistant_message(&conversation.id)
                         .ok()
@@ -556,12 +566,12 @@ impl AiShell {
                     history_item(conversation, now, preview)
                 })
                 .collect(),
-            Err(err) => vec![notice_item("读取历史失败", &err)],
+            Err(err) => vec![notice_item("Failed to read history", &err)],
         };
         ActionResult::list(items)
     }
 
-    /// 删除注入版（ADR-0022）：按 payload 的 conversationId 定位；测试不碰真实数据目录。
+    /// Delete injected version (ADR-0022): locates via the payload's conversationId; tests do not touch the real data directory.
     fn delete_item_in(db: &Db, item: &Item) -> Result<usize, MoeError> {
         let id = item
             .payload
@@ -574,7 +584,7 @@ impl AiShell {
 
 impl Extension for AiShell {
     fn id(&self) -> &str {
-        // Namespace 键（ADR-0003/0005：Conversation 历史存于此 Namespace）。
+        // Namespace key (ADR-0003/0005: conversation history lives in this Namespace).
         "ai"
     }
 
@@ -588,7 +598,7 @@ impl Extension for AiShell {
                 id: "ai.quick-ask".into(),
                 extension_id: "ai".into(),
                 title: "AI: Quick Ask".into(),
-                subtitle: Some("直接输入问题也可（无匹配时自动出现提问项）".into()),
+                subtitle: Some("Or just type a question (an ask item appears automatically when nothing matches)".into()),
                 icon: Some("sparkles".into()),
                 input: InputKind::Query,
                 live: false,
@@ -596,8 +606,8 @@ impl Extension for AiShell {
             CommandMeta {
                 id: "ai.search-history".into(),
                 extension_id: "ai".into(),
-                title: "AI: 搜索历史会话".into(),
-                subtitle: Some("输入即筛选标题；Enter 在侧栏打开".into()),
+                title: "AI: Search Chat History".into(),
+                subtitle: Some("Type to filter titles; Enter opens in the side view".into()),
                 icon: Some("history".into()),
                 input: InputKind::Query,
                 live: true,
@@ -605,8 +615,8 @@ impl Extension for AiShell {
             CommandMeta {
                 id: "ai.new-chat".into(),
                 extension_id: "ai".into(),
-                title: "AI: 新对话".into(),
-                subtitle: Some("清掉当前问答，回到干净的一轮新会话".into()),
+                title: "AI: New Chat".into(),
+                subtitle: Some("Clear the current Q&A and start a fresh conversation".into()),
                 icon: Some("plus".into()),
                 input: InputKind::None,
                 live: false,
@@ -623,24 +633,25 @@ impl Extension for AiShell {
         match command_id {
             "ai.quick-ask" => Ok(self.start_ask(query.unwrap_or_default(), selection, None)),
             "ai.search-history" => Ok(self.search_history(query.unwrap_or_default())),
-            // 通用动作 New（⌘N，ADR-0014）：面板不持有会话状态（一问一会话），
-            // 这里给一张空态卡——下一条提问自然开一段新会话。
+            // Generic New action (⌘N, ADR-0014): the panel holds no conversation state
+            // (one question = one conversation); here we show an empty-state card —
+            // the next question naturally starts a new conversation.
             "ai.new-chat" => Ok(ActionResult::detail(vec![notice_item(
-                "新对话",
-                "在输入栏写下问题即可开始；⌘M 可转进侧栏继续这段会话。",
+                "New Chat",
+                "Type a question into the input bar to start; ⌘M moves this conversation into the side view.",
             )])),
             _ => Err(MoeError::NotFound),
         }
     }
 
-    /// 通用动作 Browse（⌘P，ADR-0014）：AI 的记录列表 = 历史会话。
+    /// Generic Browse action (⌘P, ADR-0014): AI's record list = chat history.
     fn browse_command(&self) -> Option<CommandMeta> {
         self.commands()
             .into_iter()
             .find(|c| c.id == "ai.search-history")
     }
 
-    /// 通用动作 New（⌘N，ADR-0014）：AI 的新建 = 新会话。
+    /// Generic New action (⌘N, ADR-0014): AI's "new" = new conversation.
     fn new_command(&self) -> Option<CommandMeta> {
         self.commands().into_iter().find(|c| c.id == "ai.new-chat")
     }
@@ -660,16 +671,16 @@ impl Extension for AiShell {
         }
     }
 
-    /// 搜索无匹配时的「捕获式」命令（如 AI: 提问「…」）；
-    /// 副标题注明上下文：选中文字 / 选中文件（Finder）各有提示。
+    /// The "capturing" command shown when nothing matches (e.g. AI: Ask "…");
+    /// the subtitle notes the context: selected text / selected files (Finder) each get their own hint.
     fn fallback_command(&self, query: &str, selection: Option<&Selection>) -> Option<CommandMeta> {
-        // 标题剥离 mention（ADR-0010）：路径不当作提问内容展示。
+        // The title strips mentions (ADR-0010): paths are not shown as question content.
         let (cleaned, paths) = attachment::parse_mentions(query);
         let selected_files = selection.map(|s| s.files.len()).unwrap_or(0);
         let title = match (cleaned.is_empty(), paths.is_empty(), selected_files) {
-            (false, _, _) => format!("AI: 提问「{cleaned}」"),
-            (true, false, _) | (true, true, 1..) => "AI: 带附件的提问".into(),
-            (true, true, _) => format!("AI: 提问「{query}」"),
+            (false, _, _) => format!("AI: Ask \"{cleaned}\""),
+            (true, false, _) | (true, true, 1..) => "AI: Ask with attachments".into(),
+            (true, true, _) => format!("AI: Ask \"{query}\""),
         };
         let total_files = paths.len() + selected_files;
         let has_text = selection
@@ -677,10 +688,14 @@ impl Extension for AiShell {
             .map(str::trim)
             .is_some_and(|t| !t.is_empty());
         let subtitle = match (total_files > 0, has_text) {
-            (true, true) => format!("已附上 {total_files} 个附件与选中文字；Enter 发送"),
-            (true, false) => format!("{total_files} 个附件；Enter 发送"),
-            (false, true) => "已附上选中文字作为上下文；Enter 发送".to_string(),
-            (false, false) => "Enter 发送；回答可回写（⌥⏎ 复制 · ⌘M 侧栏）".to_string(),
+            (true, true) => {
+                format!("{total_files} attachment(s) and selected text attached; Enter to send")
+            }
+            (true, false) => format!("{total_files} attachment(s); Enter to send"),
+            (false, true) => "Selected text attached as context; Enter to send".to_string(),
+            (false, false) => {
+                "Enter to send; answers can be written back (⌥⏎ copy · ⌘M side view)".to_string()
+            }
         };
         Some(CommandMeta {
             id: "ai.quick-ask".into(),
@@ -700,18 +715,18 @@ impl Extension for AiShell {
         action: &Action,
     ) -> Result<ActionResult, MoeError> {
         match action.id.as_str() {
-            // 回写全文（标题是固定的，正文在 detail）
+            // Write back the full text (the title is fixed, the body is in detail)
             "write-back" => Ok(ActionResult::WriteBack {
                 text: item.detail.clone().unwrap_or_else(|| item.title.clone()),
             }),
-            // ⌥⏎ 复制：写系统剪贴板（平台能力），不回写宿主应用
+            // ⌥⏎ copy: writes to the system clipboard (a platform capability), does not write back into the host app
             "copy" => {
                 let text = item.detail.clone().unwrap_or_else(|| item.title.clone());
                 moe_platform::clipboard::copy(&text)
                     .map_err(|err| MoeError::Internal(err.to_string()))?;
                 Ok(ActionResult::Silent)
             }
-            // 侧栏开窗：载荷原样交给平台的 chat 窗口。
+            // Open the side view: the payload goes to the platform's chat window as-is.
             "materialize" => Ok(ActionResult::OpenSideView {
                 payload: item.payload.clone(),
             }),
@@ -719,7 +734,7 @@ impl Extension for AiShell {
         }
     }
 
-    /// 侧栏续聊（IIE4AD-360）：空 id 新建会话；整段历史作为上下文，回复后台流式落库。
+    /// Side view continuation (IIE4AD-360): an empty id creates a new conversation; the whole history is the context, replies are streamed and persisted in the background.
     fn side_continue(
         &self,
         conversation_id: &str,
@@ -728,23 +743,24 @@ impl Extension for AiShell {
     ) -> Result<String, MoeError> {
         let message = message.trim();
         if message.is_empty() {
-            return Err(MoeError::Internal("消息为空".into()));
+            return Err(MoeError::Internal("Message is empty".into()));
         }
         let config = MoeConfig::load();
         if !config.ai.configured() {
             return Err(MoeError::Internal(
-                "尚未配置 AI 端点（命令盘运行「Moe: 打开配置文件」）".into(),
+                "AI endpoint not configured yet (run \"Moe: Open Config File\" in the palette)"
+                    .into(),
             ));
         }
         let Some(key) = keychain::ai_api_key() else {
             return Err(MoeError::Internal(
-                "缺少 API key（在命令盘输入 key <你的key> 回车）".into(),
+                "API key missing (type key <your-key> in the palette and press Enter)".into(),
             ));
         };
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
 
-        // 附件 mention 与快捷提问同一语法（ADR-0010）；纯附件用通用请求句（IIE4AD-391）。
+        // Attachment mentions use the same syntax as quick ask (ADR-0010); attachments-only input gets a generic request sentence (IIE4AD-391).
         let (display, attachments) = Self::split_message(message);
 
         let conversation_id = if conversation_id.trim().is_empty() {
@@ -754,7 +770,7 @@ impl Extension for AiShell {
             conversation_id.trim().to_string()
         };
 
-        // 先取历史再追加本条：端点收到的 messages 以新消息结尾（附件逐条现读展开）。
+        // Fetch history first, then append this one: the endpoint receives messages ending with the new message (attachments are read and expanded one by one).
         let mut messages = db.messages(&conversation_id).map_err(MoeError::Internal)?;
         db.append_message(
             &conversation_id,
@@ -804,12 +820,12 @@ impl Extension for AiShell {
         Ok(conversation_id)
     }
 
-    /// 停止进行中的生成（IIE4AD-365）：标记取消位，worker 在下一个 SSE 行处收尾并落库已生成部分。
+    /// Stops in-progress generation (IIE4AD-365): sets the cancellation flag; the worker finishes at the next SSE line and persists the generated part.
     fn stop_generation(&self) -> usize {
         stop_all_streams()
     }
 
-    /// 删除当前记录（通用动作 Delete，⌃X，ADR-0022）：AI 历史里删一条会话。
+    /// Deletes the current record (generic Delete action, ⌃X, ADR-0022): removes one conversation from AI history.
     fn delete_item(&self, command_id: &str, item: &Item) -> Result<usize, MoeError> {
         if command_id != "ai.search-history" {
             return Err(MoeError::NotFound);
@@ -818,7 +834,7 @@ impl Extension for AiShell {
         Self::delete_item_in(&db, item)
     }
 
-    /// 删除全部记录（通用动作 DeleteAll，⌃⇧X，ADR-0022）：清空 `ai` Namespace 全部会话。
+    /// Deletes all records (generic DeleteAll action, ⌃⇧X, ADR-0022): clears every conversation in the `ai` Namespace.
     fn delete_all(&self, command_id: &str) -> Result<usize, MoeError> {
         if command_id != "ai.search-history" {
             return Err(MoeError::NotFound);
@@ -830,9 +846,10 @@ impl Extension for AiShell {
     }
 }
 
-/// `stop_all_streams` 作用于**全局**注册表：并行跑的两个流测试会互相取消对方的流
-/// （一个测试的 stop 会把另一个测试刚登记的取消位一并标记），导致偶发失败。串行化。
-/// pub(crate)：AI 命令（ai_commands.rs）的流测试共用同一把锁。
+/// `stop_all_streams` acts on the **global** registry: two stream tests running in parallel would
+/// cancel each other's streams (one test's stop also marks the cancellation flag the other just
+/// registered), causing flaky failures. Serialized.
+/// pub(crate): the AI commands (ai_commands.rs) stream tests share the same lock.
 #[cfg(test)]
 pub(crate) static STREAM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -842,31 +859,31 @@ mod tests {
     use moe_core::contract::Extension;
     use std::time::Instant;
 
-    /// 同款守卫：fallback 合成的 id 必须可路由；标题剥离附件 mention（IIE4AD-358）。
+    /// Same guard: the id synthesized by fallback must be routable; the title strips attachment mentions (IIE4AD-358).
     #[test]
     fn fallback_command_is_invocable_and_strips_mentions() {
         let ext = AiShell;
         let fallback = ext.fallback_command("hello", None).expect("fallback");
         assert!(
             ext.commands().iter().any(|c| c.id == fallback.id),
-            "fallback id 必须在 commands() 中可路由：{}",
+            "fallback id must be routable within commands(): {}",
             fallback.id
         );
 
         let with_attachments = ext
-            .fallback_command("总结 @\"/tmp/a b.md\"", None)
+            .fallback_command("Summarize @\"/tmp/a b.md\"", None)
             .expect("fallback");
-        assert_eq!(with_attachments.title, "AI: 提问「总结」");
+        assert_eq!(with_attachments.title, "AI: Ask \"Summarize\"");
         assert_eq!(
             with_attachments.subtitle.as_deref(),
-            Some("1 个附件；Enter 发送")
+            Some("1 attachment(s); Enter to send")
         );
 
         let attachment_only = ext.fallback_command("@/tmp/a.md", None).expect("fallback");
-        assert_eq!(attachment_only.title, "AI: 带附件的提问");
+        assert_eq!(attachment_only.title, "AI: Ask with attachments");
     }
 
-    /// 选中文件（ADR-0021）：fallback 提示文件数，纯文件选择与文字选区可叠加。
+    /// Selected files (ADR-0021): the fallback advertises the file count; file-only selection and text selection can combine.
     #[test]
     fn fallback_advertises_selected_files() {
         let ext = AiShell;
@@ -874,28 +891,31 @@ mod tests {
             text: None,
             files: vec!["/tmp/a.md".into(), "/tmp/b.png".into()],
         };
-        // 空输入 + 选中文件：带附件的提问入口
+        // Empty input + selected files: the ask-with-attachments entry
         let files_only = ext.fallback_command("", Some(&files)).expect("fallback");
-        assert_eq!(files_only.title, "AI: 带附件的提问");
-        assert_eq!(files_only.subtitle.as_deref(), Some("2 个附件；Enter 发送"));
-        // 问题 + 选中文件：附件与选中文字提示叠加
+        assert_eq!(files_only.title, "AI: Ask with attachments");
+        assert_eq!(
+            files_only.subtitle.as_deref(),
+            Some("2 attachment(s); Enter to send")
+        );
+        // Question + selected files: attachment and selected-text hints combine
         let both = ext
             .fallback_command(
-                "总结",
+                "Summarize",
                 Some(&Selection {
-                    text: Some("选中文字".into()),
+                    text: Some("selected text".into()),
                     files: files.files.clone(),
                 }),
             )
             .expect("fallback");
-        assert_eq!(both.title, "AI: 提问「总结」");
+        assert_eq!(both.title, "AI: Ask \"Summarize\"");
         assert_eq!(
             both.subtitle.as_deref(),
-            Some("已附上 2 个附件与选中文字；Enter 发送")
+            Some("2 attachment(s) and selected text attached; Enter to send")
         );
     }
 
-    /// 附件合并（ADR-0021）：mention 与选中文件按路径去重，保序。
+    /// Attachment merging (ADR-0021): mentions and selected files are deduplicated by path, order preserved.
     #[test]
     fn attachments_merge_mentions_and_selected_files_dedup() {
         let refs = AiShell::attachments_with(
@@ -907,7 +927,7 @@ mod tests {
         assert_eq!(refs[1].name, "dup.md");
     }
 
-    /// 纯文件选择 + 空问题：不直接发请求，提示写下问题（文件已在手上）。
+    /// File-only selection + empty question: no request is sent; prompt to type a question (the files are already in hand).
     #[test]
     fn ask_with_only_files_guides_for_a_question() {
         let selection = Selection {
@@ -919,42 +939,42 @@ mod tests {
             panic!("expected list");
         };
         let detail = items[0].detail.as_deref().unwrap_or_default();
-        assert!(detail.contains("已附上附件"), "{detail}");
+        assert!(detail.contains("attachments included"), "{detail}");
     }
 
-    /// 纯 mention（只有 @path、无正文）不把原始路径发给模型：落到空问引导（IIE4AD-391）。
+    /// A bare mention (only @path, no body) does not send the raw path to the model: it falls through to the empty-question guidance (IIE4AD-391).
     #[test]
     fn mention_only_ask_guides_instead_of_sending_raw_path() {
         let ActionResult::List { items, .. } = AiShell.start_ask("@/tmp/a.md", None, None) else {
             panic!("expected list");
         };
         let detail = items[0].detail.as_deref().unwrap_or_default();
-        assert!(detail.contains("已附上附件"), "{detail}");
+        assert!(detail.contains("attachments included"), "{detail}");
         assert!(
             !detail.contains("/tmp/a.md"),
-            "原始路径不应出现在提示里：{detail}"
+            "The raw path should not appear in the hint: {detail}"
         );
     }
 
-    /// split_message：有正文保正文；纯附件换通用请求句，不泄露原始 mention。
+    /// split_message: keeps the body when present; attachments-only input gets a generic request sentence, never leaking the raw mention.
     #[test]
     fn split_message_swaps_raw_mention_for_prompt() {
-        let (display, attachments) = AiShell::split_message("总结 @\"/tmp/a b.md\"");
-        assert_eq!(display, "总结");
+        let (display, attachments) = AiShell::split_message("Summarize @\"/tmp/a b.md\"");
+        assert_eq!(display, "Summarize");
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].path, "/tmp/a b.md");
 
         let (display, attachments) = AiShell::split_message("@/tmp/a.md @/tmp/b.png");
-        assert_eq!(display, "请结合这些附件回答。");
+        assert_eq!(display, "Please answer with these attachments.");
         assert_eq!(attachments.len(), 2);
 
-        // 无附件无正文：原样（空消息由上层拦）
+        // No attachments and no body: unchanged (empty messages are blocked upstream)
         let (display, attachments) = AiShell::split_message("   ");
         assert_eq!(display, "   ");
         assert!(attachments.is_empty());
     }
 
-    /// 历史搜索是 Live 命令（输入变化即重跑列表）。
+    /// History search is a Live command (the list re-runs as the input changes).
     #[test]
     fn history_search_is_live_and_routable() {
         let ext = AiShell;
@@ -963,36 +983,45 @@ mod tests {
             .into_iter()
             .find(|c| c.id == "ai.search-history")
             .expect("search-history registered");
-        assert!(history.live, "历史搜索需随输入重跑");
+        assert!(
+            history.live,
+            "history search must re-run as the input changes"
+        );
     }
 
     #[test]
     fn conversation_title_takes_first_line_and_truncates() {
-        assert_eq!(conversation_title("解释闭包"), "解释闭包");
-        assert_eq!(conversation_title("第一行\n第二行"), "第一行");
-        let long = "字".repeat(50);
+        assert_eq!(conversation_title("explain closures"), "explain closures");
+        assert_eq!(conversation_title("first line\nsecond line"), "first line");
+        let long = "x".repeat(50);
         let title = conversation_title(&long);
         assert_eq!(title.chars().count(), TITLE_CHARS + 1);
         assert!(title.ends_with('…'));
     }
 
-    /// 纯附件会话：标题回退到附件名（IIE4AD-358）。
+    /// Attachments-only conversation: the title falls back to the attachment name (IIE4AD-358).
     #[test]
     fn title_falls_back_to_attachment_name() {
         let refs = vec![AttachmentRef {
             name: "shot.png".into(),
             path: "/tmp/shot.png".into(),
         }];
-        assert_eq!(title_for("总结图片", &refs), "总结图片");
-        assert_eq!(title_for("", &refs), "附件：shot.png");
-        assert_eq!(title_for("", &[]), "新对话");
+        assert_eq!(
+            title_for("summarize the image", &refs),
+            "summarize the image"
+        );
+        assert_eq!(title_for("", &refs), "Attachment: shot.png");
+        assert_eq!(title_for("", &[]), "New Chat");
     }
 
-    /// 预览摘要：空白归一 + 按字符截断（IIE4AD-370）。
+    /// Preview excerpt: whitespace normalization + character-based truncation (IIE4AD-370).
     #[test]
     fn preview_excerpt_collapses_and_truncates() {
-        assert_eq!(preview_excerpt("第一行\n\n第二行"), "第一行 第二行");
-        let long = "字".repeat(300);
+        assert_eq!(
+            preview_excerpt("first line\n\nsecond line"),
+            "first line second line"
+        );
+        let long = "x".repeat(300);
         let excerpt = preview_excerpt(&long);
         assert_eq!(excerpt.chars().count(), 241);
         assert!(excerpt.ends_with('…'));
@@ -1000,30 +1029,30 @@ mod tests {
 
     #[test]
     fn relative_time_buckets() {
-        assert_eq!(relative_time(100, 100), "刚刚");
-        assert_eq!(relative_time(100, 159), "刚刚");
-        assert_eq!(relative_time(100, 160), "1 分钟前");
-        assert_eq!(relative_time(100, 100 + 3599), "59 分钟前");
-        assert_eq!(relative_time(100, 100 + 3600), "1 小时前");
-        assert_eq!(relative_time(100, 100 + 86400), "1 天前");
-        assert_eq!(relative_time(100, 100 + 3 * 86400), "3 天前");
+        assert_eq!(relative_time(100, 100), "just now");
+        assert_eq!(relative_time(100, 159), "just now");
+        assert_eq!(relative_time(100, 160), "1m ago");
+        assert_eq!(relative_time(100, 100 + 3599), "59m ago");
+        assert_eq!(relative_time(100, 100 + 3600), "1h ago");
+        assert_eq!(relative_time(100, 100 + 86400), "1d ago");
+        assert_eq!(relative_time(100, 100 + 3 * 86400), "3d ago");
     }
 
-    /// 历史项的 Apply（materialize）必须把会话 id 交给平台开侧栏。
+    /// Applying a history item (materialize) must hand the conversation id to the platform to open the side view.
     #[test]
     fn history_item_materializes_with_conversation_id() {
         let item = history_item(
             Conversation {
                 id: "7".into(),
                 namespace: "ai".into(),
-                title: "解释闭包".into(),
+                title: "explain closures".into(),
                 updated_unix: 100,
             },
             160,
-            Some("上次回答的摘要".into()),
+            Some("summary of the last answer".into()),
         );
-        assert_eq!(item.subtitle.as_deref(), Some("1 分钟前"));
-        assert_eq!(item.detail.as_deref(), Some("上次回答的摘要"));
+        assert_eq!(item.subtitle.as_deref(), Some("1m ago"));
+        assert_eq!(item.detail.as_deref(), Some("summary of the last answer"));
         let action = &item.actions[0];
         assert_eq!(action.kind, ActionKind::Primary);
         let result = AiShell
@@ -1037,20 +1066,26 @@ mod tests {
         );
     }
 
-    /// 停止生成：登记后请求停止应命中取消位（IIE4AD-365）。
+    /// Stop generation: requesting a stop after registration should hit the cancellation flag (IIE4AD-365).
     #[test]
     fn stop_all_streams_marks_active_flags() {
         let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
-        let flag = begin_stream("test-stop-conv").expect("登记取消位");
+        let flag = begin_stream("test-stop-conv").expect("register the cancellation flag");
         assert!(!flag.load(Ordering::Relaxed));
-        assert!(stop_all_streams() >= 1, "应至少命中刚登记的取消位");
-        assert!(flag.load(Ordering::Relaxed), "取消位应被标记");
+        assert!(
+            stop_all_streams() >= 1,
+            "should hit at least the flag just registered"
+        );
+        assert!(
+            flag.load(Ordering::Relaxed),
+            "the cancellation flag should be marked"
+        );
         end_stream("test-stop-conv");
-        // 空键不登记、不可中断
+        // Empty keys are not registered and cannot be interrupted
         assert!(begin_stream("").is_none());
     }
 
-    /// 端到端：慢速 SSE 流中途 `stop_generation` → 及时收尾，末帧 pending=false 且标记已停止。
+    /// End to end: `stop_generation` mid-way through a slow SSE stream → finishes promptly, the last frame has pending=false and is marked stopped.
     #[test]
     fn stop_generation_stops_running_stream() {
         let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
@@ -1065,16 +1100,17 @@ mod tests {
                 return;
             };
             let mut buf = [0u8; 2048];
-            let _ = socket.read(&mut buf); // 请求头
+            let _ = socket.read(&mut buf); // request headers
             let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
-            // 故意比测试的等待窗口长得多（~50s）：只要还没被停止，流就跑不完。
-            // 否则 CI 上测试线程被调度走几秒，流可能自己结束，stop_all_streams() 会命中 0。
+            // Deliberately much longer than the test's waiting window (~50s): as long as it is
+            // not stopped, the stream never finishes. Otherwise, if the test thread is descheduled
+            // for a few seconds on CI, the stream might finish on its own and stop_all_streams() would hit 0.
             for index in 0..5_000 {
                 let delta = format!(
                     "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{index},\"}}}}]}}\n\n"
                 );
                 if socket.write_all(delta.as_bytes()).is_err() {
-                    break; // 客户端断开（被停止）
+                    break; // client disconnected (stopped)
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -1095,7 +1131,7 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let base_url = format!("http://{addr}/v1");
         std::thread::spawn(move || {
-            // 不存在的会话：落库是 no-op（db 层的悬空行防护），不会污染真实历史
+            // Nonexistent conversation: persistence is a no-op (dangling-row protection at the db layer), so real history stays clean
             let conversation = "stop-e2e";
             let item_of: FrameBuilder =
                 Arc::new(move |text, pending| answer_item(text, Some(conversation), pending));
@@ -1121,31 +1157,41 @@ mod tests {
         while recorder.0.lock().unwrap().is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(!recorder.0.lock().unwrap().is_empty(), "应先收到流式增量");
-        assert!(stop_all_streams() >= 1, "应命中进行中的生成");
+        assert!(
+            !recorder.0.lock().unwrap().is_empty(),
+            "should have received streaming increments first"
+        );
+        assert!(
+            stop_all_streams() >= 1,
+            "should hit the in-progress generation"
+        );
         done_rx
             .recv_timeout(Duration::from_secs(5))
-            .expect("停止后应立即收尾");
+            .expect("should finish promptly after the stop");
 
         let items = recorder.0.lock().unwrap();
-        let last = items.last().expect("至少一帧");
-        assert!(!last.pending, "末帧应为 pending=false");
+        let last = items.last().expect("at least one frame");
+        assert!(!last.pending, "the last frame should have pending=false");
         assert!(
             last.detail
                 .as_deref()
                 .unwrap_or_default()
-                .contains("已停止生成"),
-            "末帧应标记已停止：{:?}",
+                .contains("generation stopped"),
+            "the last frame should be marked stopped: {:?}",
             last.detail
         );
-        assert!(items.len() < 400, "不应跑完整个流：{} 帧", items.len());
+        assert!(
+            items.len() < 400,
+            "should not have run the whole stream: {} frames",
+            items.len()
+        );
         let _ = server.join();
     }
 
-    /// 回答 item 的 ⌘M（materialize）同样带回会话 id，侧栏定位到同一会话。
+    /// The answer item's ⌘M (materialize) also carries the conversation id back, so the side view locates the same conversation.
     #[test]
     fn answer_item_carries_conversation_id_on_materialize() {
-        let item = answer_item("正文", Some("9"), false);
+        let item = answer_item("body", Some("9"), false);
         assert_eq!(item.payload["conversationId"], "9");
         let action = item
             .actions
@@ -1163,7 +1209,7 @@ mod tests {
         );
     }
 
-    /// 临时库（不碰真实数据目录）：AI 历史在测试里可写可查。
+    /// Temp DB (never touching the real data directory): AI history is writable and queryable in tests.
     fn temp_db(tag: &str) -> (Db, std::path::PathBuf) {
         let nanos = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -1173,20 +1219,20 @@ mod tests {
         (Db::open(&path).expect("temp db"), path)
     }
 
-    /// 删除槽（ADR-0022）：单条删除按 payload 的 conversationId 定位；缺 id NotFound。
+    /// Delete slot (ADR-0022): single delete locates via the payload's conversationId; missing id → NotFound.
     #[test]
     fn delete_item_removes_the_conversation() {
         let (db, path) = temp_db("delete");
         let a = db
-            .create_conversation("ai", "会话 A", SystemTime::now())
+            .create_conversation("ai", "Conversation A", SystemTime::now())
             .unwrap();
-        db.create_conversation("ai", "会话 B", SystemTime::now())
+        db.create_conversation("ai", "Conversation B", SystemTime::now())
             .unwrap();
         let item = history_item(
             Conversation {
                 id: a.clone(),
                 namespace: "ai".into(),
-                title: "会话 A".into(),
+                title: "Conversation A".into(),
                 updated_unix: 1,
             },
             1,
@@ -1194,7 +1240,7 @@ mod tests {
         );
         assert_eq!(AiShell::delete_item_in(&db, &item).unwrap(), 1);
         assert_eq!(db.conversations("ai", None, 10).unwrap().len(), 1);
-        // 缺 conversationId：NotFound，不误删
+        // Missing conversationId: NotFound, nothing deleted by mistake
         let bare = history_item(
             Conversation {
                 id: "9".into(),
@@ -1213,7 +1259,7 @@ mod tests {
             AiShell::delete_item_in(&db, &bare),
             Err(MoeError::NotFound)
         ));
-        // 不支持的命令：NotFound（命令层不外露删除）
+        // Unsupported command: NotFound (deletion is not exposed at the command layer)
         assert!(matches!(
             AiShell.delete_item("ai.quick-ask", &item),
             Err(MoeError::NotFound)
@@ -1221,15 +1267,15 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// 删除全部（ADR-0022）：只清 `ai` Namespace，返回条数。
+    /// Delete all (ADR-0022): only clears the `ai` Namespace, returns the count.
     #[test]
     fn delete_all_clears_ai_namespace() {
         let (db, path) = temp_db("delete-all");
-        db.create_conversation("ai", "一", SystemTime::now())
+        db.create_conversation("ai", "one", SystemTime::now())
             .unwrap();
-        db.create_conversation("ai", "二", SystemTime::now())
+        db.create_conversation("ai", "two", SystemTime::now())
             .unwrap();
-        db.create_conversation("other", "别的扩展", SystemTime::now())
+        db.create_conversation("other", "another extension", SystemTime::now())
             .unwrap();
 
         assert_eq!(db.delete_all_conversations("ai").unwrap(), 2);
@@ -1242,60 +1288,71 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// 回答/引导是详情整屏（ADR-0013）：面板里它就是正文，不该跟列表分栏。
+    /// The answer/guidance is a full-screen detail (ADR-0013): in the panel it is the body, not something to split with a list.
     #[test]
     fn ask_placeholder_declares_detail_layout() {
         let ActionResult::List { items, detail_full } = AiShell.start_ask("   ", None, None) else {
             panic!("expected list");
         };
-        assert!(detail_full, "回答是详情整屏");
+        assert!(detail_full, "the answer is a full-screen detail");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, "ai.answer");
     }
 
-    /// 历史搜索恒为列表形态：唯一一条命中也不整屏（用户要看到那一行）——ADR-0013。
+    /// History search always stays a list: even a single hit does not take the whole screen (the user wants to see that row) — ADR-0013.
     #[test]
     fn history_search_stays_list_view_even_with_single_hit() {
         let (db, path) = temp_db("history");
         let now = SystemTime::now();
         let id = db
-            .create_conversation("ai", "解释闭包", now)
+            .create_conversation("ai", "explain closures", now)
             .expect("create");
-        db.append_message(&id, Role::Assistant, "闭包是……", &[], now)
+        db.append_message(&id, Role::Assistant, "A closure is…", &[], now)
             .expect("append");
 
-        let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "闭包")
+        let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "closure")
         else {
             panic!("expected list");
         };
-        assert!(!detail_full, "历史搜索是列表视图（左列表 + 右预览）");
-        assert_eq!(items.len(), 1, "唯一一条命中也不整屏");
+        assert!(
+            !detail_full,
+            "history search is a list view (left list + right preview)"
+        );
+        assert_eq!(
+            items.len(),
+            1,
+            "even a single hit does not take the whole screen"
+        );
         assert_eq!(items[0].id, format!("ai.conversation.{id}"));
-        assert!(items[0].detail.is_some(), "右侧预览 = 最后一条回答摘要");
+        assert!(
+            items[0].detail.is_some(),
+            "right preview = summary of the last answer"
+        );
 
-        // 无命中：仍是列表形态（一条通知进右预览，列表不消失）
-        let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "不存在")
+        // No hit: still a list (a notice goes into the right preview, the list stays)
+        let ActionResult::List { items, detail_full } =
+            AiShell::search_history_in(&db, "does not exist")
         else {
             panic!("expected list");
         };
         assert!(!detail_full);
-        assert_eq!(items[0].title, "没有匹配的历史会话");
+        assert_eq!(items[0].title, "No matching chat history");
 
         drop(db);
         let _ = std::fs::remove_file(&path);
     }
 
-    /// 通用入口守卫（ADR-0014）：⌘P/⌘N 换出的 id 必须可路由，
-    /// 否则面板 invoke 会 NotFound（与 fallback 同一守卫）。
+    /// Generic entry guard (ADR-0014): ids exposed by ⌘P/⌘N must be routable,
+    /// otherwise the panel's invoke would hit NotFound (same guard as fallback).
     #[test]
     fn declared_entry_points_are_routable() {
         let ext = AiShell;
         let commands = ext.commands();
         for entry in [ext.browse_command(), ext.new_command()] {
-            let entry = entry.expect("AI 声明了 Browse 与 New");
+            let entry = entry.expect("AI declares Browse and New");
             assert!(
                 commands.iter().any(|c| c.id == entry.id),
-                "入口 id 必须在 commands() 中可路由：{}",
+                "entry id must be routable within commands(): {}",
                 entry.id
             );
         }
@@ -1303,55 +1360,86 @@ mod tests {
         assert_eq!(ext.new_command().unwrap().id, "ai.new-chat");
     }
 
-    /// 请求体组装：选区和问题都进 body（selection_becomes_question_context 只测拼接，这里测整条链路）。
+    /// Request body assembly: selection and question both go into the body (selection_becomes_question_context only tests the concatenation; this tests the whole chain).
     #[test]
     fn ask_body_carries_question_and_selection() {
-        let body = ask_body("m", "翻译", Some("hello world"), &[]);
+        let body = ask_body("m", "translate", Some("hello world"), &[]);
         let text = body.to_string();
-        assert!(text.contains("翻译"), "问题在 body：{text}");
-        assert!(text.contains("hello world"), "选区在 body：{text}");
-        // 无选区时没有上下文包装
-        let plain = ask_body("m", "翻译", None, &[]).to_string();
-        assert!(!plain.contains("选中的文字"), "无选区不加包装：{plain}");
+        assert!(
+            text.contains("translate"),
+            "question is in the body: {text}"
+        );
+        assert!(
+            text.contains("hello world"),
+            "selection is in the body: {text}"
+        );
+        // No selection → no context wrapper
+        let plain = ask_body("m", "translate", None, &[]).to_string();
+        assert!(
+            !plain.contains("user's selection"),
+            "no selection → no wrapper: {plain}"
+        );
     }
 
-    /// 选中文字自动成为提问上下文（ADR-0002 增补）：拼接格式稳定，重复/空白/超长有边界。
+    /// Selected text automatically becomes question context (ADR-0002 amendment): the concatenation format is stable, with boundaries for duplicates/blank/overlong.
     #[test]
     fn selection_becomes_question_context() {
-        let prompt = question_with_selection("翻译", Some("  hello world  "));
-        assert!(prompt.starts_with("翻译"), "问题在前：{prompt}");
-        assert!(prompt.contains("hello world"), "选区应拼进提示：{prompt}");
-
-        // 问题里已含这段文字：不重复拼接
-        assert_eq!(
-            question_with_selection("解释 hello world", Some("hello world")),
-            "解释 hello world"
-        );
-        // 空白/无选区：原样返回
-        assert_eq!(question_with_selection("翻译", Some("   ")), "翻译");
-        assert_eq!(question_with_selection("翻译", None), "翻译");
-
-        // 超长截断并注明，不无限占用上下文
-        let long: String = "x".repeat(5_000);
-        let capped = question_with_selection("翻译", Some(&long));
-        assert!(capped.contains("已截断"), "超长选区要注明截断：{capped}");
+        let prompt = question_with_selection("translate", Some("  hello world  "));
         assert!(
-            capped.matches('x').count() <= SELECTION_LIMIT,
-            "截断后不超过上限"
+            prompt.starts_with("translate"),
+            "question comes first: {prompt}"
+        );
+        assert!(
+            prompt.contains("hello world"),
+            "the selection should be concatenated into the prompt: {prompt}"
+        );
+
+        // The question already contains this text: do not concatenate again
+        assert_eq!(
+            question_with_selection("explain hello world", Some("hello world")),
+            "explain hello world"
+        );
+        // Blank / no selection: returned unchanged
+        assert_eq!(
+            question_with_selection("translate", Some("   ")),
+            "translate"
+        );
+        assert_eq!(question_with_selection("translate", None), "translate");
+
+        // Overlong selection is truncated with a note; the context is not consumed indefinitely
+        let long: String = "x".repeat(5_000);
+        let capped = question_with_selection("translate", Some(&long));
+        assert!(
+            capped.contains("truncated"),
+            "an overlong selection must note the truncation: {capped}"
+        );
+        // The excerpt is one unbroken run of `x` (4000 of them); wrapper/suffix prose
+        // may contain isolated letters, so assert on the longest consecutive run.
+        let x_run = capped
+            .split(|c: char| c != 'x')
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            x_run <= SELECTION_LIMIT,
+            "after truncation it stays within the limit"
         );
     }
 
-    /// New（⌘N）在面板里给一张详情整屏的空态卡（不动会话状态：一问一会话）。
+    /// New (⌘N) shows a full-screen detail empty-state card in the panel (conversation state untouched: one question = one conversation).
     #[test]
     fn new_chat_returns_a_detail_notice() {
         let ActionResult::List { items, detail_full } = AiShell
             .invoke("ai.new-chat", None, None)
-            .expect("ai.new-chat 可路由")
+            .expect("ai.new-chat is routable")
         else {
             panic!("expected list");
         };
-        assert!(detail_full, "空态卡是详情整屏");
+        assert!(detail_full, "the empty-state card is a full-screen detail");
         assert_eq!(items[0].id, "ai.notice");
-        assert!(items[0].actions.is_empty(), "空态卡没有可执行动作");
+        assert!(
+            items[0].actions.is_empty(),
+            "the empty-state card has no executable actions"
+        );
     }
 }

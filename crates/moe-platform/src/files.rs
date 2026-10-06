@@ -1,13 +1,12 @@
-//! Finder 文件选择（ADR-0021）：呼出面板时抓「选中的文件」，随 `Selection` 一起
-//! 成为面板上下文（AI 提问自动附上这些文件）。
+//! Finder file selection (ADR-0021): grab the "selected files" when the panel is summoned; they become panel context together with the `Selection` (AI questions automatically include these files).
 //!
-//! 范围先只到 Finder：其它应用没有统一的「文件选择」AX 协议，最常见的
-//! 「选中文件 → 呼出」场景就是 Finder，从它做起；将来按应用逐个扩。
-//! 这里是 best-effort：读不到（非 Finder、无自动化授权、超时）都视为「没有文件」，
-//! 绝不让文件抓取拖慢或打断呼出。可测部分（输出解析）放本模块，平台调用保持薄。
+//! Scope is Finder-only for now: other apps have no unified "file selection" AX protocol, and the most common
+//! "select files → summon" flow is Finder, so start there and extend per-app later.
+//! This is best-effort: failure to read (not Finder, no Automation permission, timeout) all count as "no files";
+//! file grabbing must never slow down or interrupt summoning. The testable part (output parsing) lives in this module; platform calls stay thin.
 
-/// 解析 `osascript` 的输出：一行一个 POSIX 路径。
-/// 空行丢弃；`\r` 与首尾空白由 trim 处理（Finder 文件名本身不含首尾空白/换行）。
+/// Parse `osascript` output: one POSIX path per line.
+/// Blank lines are dropped; `\r` and leading/trailing whitespace are handled by trim (Finder file names never contain leading/trailing whitespace or newlines).
 pub fn parse_finder_paths(output: &str) -> Vec<String> {
     output
         .lines()
@@ -17,13 +16,13 @@ pub fn parse_finder_paths(output: &str) -> Vec<String> {
         .collect()
 }
 
-/// 当前选中的文件：仅 macOS 且前台是 Finder 时有内容；其余情况为空。
+/// Currently selected files: only non-empty on macOS when Finder is frontmost; empty otherwise.
 #[cfg(target_os = "macos")]
 pub fn finder_selection() -> Vec<String> {
     imp::finder_selection()
 }
 
-/// 非 macOS 平台没有 Finder：恒为空（不报错，呼出流程不受影响）。
+/// Non-macOS platforms have no Finder: always empty (no error; the summon flow is unaffected).
 #[cfg(not(target_os = "macos"))]
 pub fn finder_selection() -> Vec<String> {
     Vec::new()
@@ -43,17 +42,17 @@ mod tests {
         assert_eq!(parse_finder_paths("   \n\n"), Vec::<String>::new());
     }
 
-    /// 单行即单路径：Windows/Unix 分隔符混在文件名里不会被当分隔符。
+    /// One line = one path: Windows/Unix separators inside file names are not treated as separators.
     #[test]
     fn single_path_keeps_commas_and_colons() {
         assert_eq!(
-            parse_finder_paths("/tmp/a,逗号:colon.md\n"),
-            ["/tmp/a,逗号:colon.md"]
+            parse_finder_paths("/tmp/a,comma:colon.md\n"),
+            ["/tmp/a,comma:colon.md"]
         );
     }
 }
 
-/// macOS 平台实现：NSWorkspace 前台判定 + AppleScript 读 Finder selection。
+/// macOS platform implementation: NSWorkspace frontmost check + AppleScript reading the Finder selection.
 #[cfg(target_os = "macos")]
 mod imp {
     use super::*;
@@ -63,11 +62,11 @@ mod imp {
     use std::time::{Duration, Instant};
 
     const FINDER_BUNDLE_ID: &str = "com.apple.finder";
-    /// osascript 限时：TCC「自动化」授权弹窗期间 osascript 会挂起等待用户应答，
-    /// 呼出面板不能被它拖住——超时就杀掉，本次当作没有文件。
+    /// osascript time limit: while the TCC "Automation" permission prompt is showing, osascript hangs waiting for an answer;
+    /// the panel must not be held up by it — kill it on timeout and treat this run as having no files.
     const OSC_SCRIPT_TIMEOUT: Duration = Duration::from_millis(2500);
 
-    /// 用 linefeed 而不是 AppleScript 默认的逗号拼接——路径本身可能含逗号，换行不会。
+    /// Join with linefeeds instead of AppleScript's default commas — paths may contain commas, newlines won't.
     const SCRIPT: &str = r#"tell application "Finder"
     set _sel to selection
     set _paths to {}
@@ -99,7 +98,7 @@ end tell"#;
         else {
             return Vec::new();
         };
-        // 限时等待：授权弹窗期间 osascript 挂起，超时杀掉（下次呼出再试）。
+        // Timed wait: osascript hangs while the permission prompt shows; kill on timeout (retry on the next summon).
         let deadline = Instant::now() + OSC_SCRIPT_TIMEOUT;
         loop {
             match child.try_wait() {
@@ -109,7 +108,7 @@ end tell"#;
                 }
                 _ => {
                     let _ = child.kill();
-                    eprintln!("moe: osascript 读 Finder 选择超时（忽略）");
+                    eprintln!("moe: osascript Finder selection read timed out (ignored)");
                     return Vec::new();
                 }
             }
@@ -117,14 +116,16 @@ end tell"#;
         let output = match child.wait_with_output() {
             Ok(out) if out.status.success() => out.stdout,
             _ => {
-                // 常见于「自动化」授权被拒或未应答：静默降级，不打断呼出。
-                eprintln!("moe: Finder 选择读取失败（忽略，首次需「自动化」授权）");
+                // Common when the "Automation" permission is denied or unanswered: degrade silently, don't interrupt the summon.
+                eprintln!(
+                    "moe: Finder selection read failed (ignored; first run needs the \"Automation\" permission)"
+                );
                 return Vec::new();
             }
         };
         let paths = parse_finder_paths(&String::from_utf8_lossy(&output));
         if !paths.is_empty() {
-            eprintln!("moe: Finder 选中 {} 个文件", paths.len());
+            eprintln!("moe: Finder has {} selected files", paths.len());
         }
         paths
     }

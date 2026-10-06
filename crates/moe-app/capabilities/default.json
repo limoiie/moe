@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Panel & chat webviews: 核心 IPC、呼出键注册与窗口收起",
+  "description": "Panel & chat webviews: core IPC, summon-key registration and window hiding",
   "windows": ["panel", "chat"],
   "permissions": [
     "core:default",

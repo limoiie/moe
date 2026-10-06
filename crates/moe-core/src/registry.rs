@@ -7,14 +7,14 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::sync::Arc;
 
-/// 「建议」section（IIE4AD-395）：空查询时列出最近使用的命令，最多 5 条、最近优先。
+/// "Suggestions" section (IIE4AD-395): on an empty query, lists recently used commands — up to 5, most recent first.
 const SUGGESTION_LIMIT: usize = 5;
-/// 建议组头（Raycast 同款语义；其余组头是扩展名）。
-const SUGGESTIONS_TITLE: &str = "建议";
+/// Suggestions section header (Raycast-style semantics; other section headers are extension names).
+const SUGGESTIONS_TITLE: &str = "Suggestions";
 
-/// 把有序的命令列表按「来源」（Extension）分组，组序 = 组内最优项的先后
-/// （查询时即匹配分序；空查询时即 frecency 序）。
-/// 分组键是 extension_id（唯一），显示名是扩展的标题——两个扩展即使同名也分两个组。
+/// Group an ordered command list by "source" (Extension); group order = order of each group's best item
+/// (matching score order on a query; frecency order on an empty query).
+/// The grouping key is extension_id (unique); the display name is the extension's title — two same-named extensions still form two groups.
 fn group_by_extension(
     extensions: &[Box<dyn Extension>],
     commands: impl Iterator<Item = CommandMeta>,
@@ -42,7 +42,7 @@ fn group_by_extension(
     sections
 }
 
-/// 所有内置 Extension 的注册表（ADR-0003：编译内置，Namespace 隔离）。
+/// Registry of all built-in Extensions (ADR-0003: built in at compile time, isolated by Namespace).
 #[derive(Default)]
 pub struct Registry {
     extensions: Vec<Box<dyn Extension>>,
@@ -65,10 +65,10 @@ impl Registry {
         self.extensions.iter().flat_map(|e| e.commands()).collect()
     }
 
-    /// 命令盘搜索：nucleo 模糊匹配打分，frecency 平分决胜。
-    /// 空查询：置顶「建议」section（最近使用的命令，IIE4AD-395）再按来源分组；
-    /// 非空查询：按来源（Extension）分组（ADR-0020），组序按组内最优项、组内保持得分顺序；
-    /// `selection` 只在「无匹配 → fallback」这一步有意义。
+    /// Command palette search: nucleo fuzzy matching scores, frecency breaks ties.
+    /// Empty query: a "Suggestions" section is pinned on top (recently used commands, IIE4AD-395), then grouped by source;
+    /// non-empty query: grouped by source (Extension) (ADR-0020), groups ordered by their best item and items keeping score order within a group;
+    /// `selection` matters only in the "no match → fallback" step.
     pub fn search(
         &self,
         query: &str,
@@ -84,8 +84,8 @@ impl Registry {
                     .partial_cmp(&frecency.frecency(&a.id))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            // 建议（IIE4AD-395）：最近使用的命令置顶成独立 section；
-            // 其余命令照常按扩展分组，且不重复列出已进建议的命令。
+            // Suggestions (IIE4AD-395): recently used commands pinned as their own section;
+            // remaining commands group by extension as usual, without repeating those already suggested.
             let mut used: Vec<(u64, CommandMeta)> = commands
                 .iter()
                 .filter_map(|cmd| frecency.last_used(&cmd.id).map(|t| (t, cmd.clone())))
@@ -130,8 +130,8 @@ impl Registry {
                     );
                     let hay = Utf32Str::new(&haystack, &mut buf);
                     if let Some(score) = pattern.score(hay, &mut matcher) {
-                        // 排序契约（IIE4AD-346）：精确前缀 > 位置 > frecency。
-                        // matcher 的词边界启发式不足以表达「前缀优先」，显式加成。
+                        // Ordering contract (IIE4AD-346): exact prefix > position > frecency.
+                        // The matcher's word-boundary heuristic cannot express "prefix first", so add an explicit bonus.
                         let title_lower = cmd.title.to_lowercase();
                         let bonus = if title_lower == q_lower {
                             1_000_000
@@ -150,8 +150,8 @@ impl Registry {
                     .then_with(|| a.2.id.cmp(&b.2.id))
             });
             if scored.is_empty() {
-                // 无匹配：给扩展一个「捕获输入」的机会（如 AI 问答）。
-                // 保持注册顺序（先注册的扩展优先，例如 `key …` 命中 Moe 的保存项）。
+                // No match: give extensions a chance to "catch the input" (e.g. AI Q&A).
+                // Keep registration order (earlier-registered extensions win, e.g. `key …` hits Moe's save item).
                 return group_by_extension(
                     &self.extensions,
                     self.extensions
@@ -171,8 +171,8 @@ impl Registry {
             .find(|e| e.commands().iter().any(|c| c.id == command_id))
     }
 
-    /// 通用入口（ADR-0014）：按当前命令所属 Extension，换出它声明的
-    /// Browse（⌘P）/ New（⌘N）入口命令。None = 该 Extension 没有这种记录。
+    /// General entries (ADR-0014): resolve, per the Extension owning the current command, its declared
+    /// Browse (⌘P) / New (⌘N) entry command. None = the Extension has no such records.
     pub fn entry_command(&self, from_command: &str, kind: EntryKind) -> Option<CommandMeta> {
         let extension = self.find(from_command)?;
         match kind {
@@ -181,14 +181,14 @@ impl Registry {
         }
     }
 
-    /// 删除当前记录（通用动作 Delete，⌃X，ADR-0022）：按命令所属 Extension 路由。
+    /// Delete the current record (general action Delete, ⌃X, ADR-0022): routed by the command's owning Extension.
     pub fn delete_item(&self, command_id: &str, item: &Item) -> Result<usize, MoeError> {
         self.find(command_id)
             .ok_or(MoeError::NotFound)?
             .delete_item(command_id, item)
     }
 
-    /// 删除全部记录（通用动作 DeleteAll，⌃⇧X，ADR-0022）：同上路由。
+    /// Delete all records (general action DeleteAll, ⌃⇧X, ADR-0022): routed the same way.
     pub fn delete_all(&self, command_id: &str) -> Result<usize, MoeError> {
         self.find(command_id)
             .ok_or(MoeError::NotFound)?
@@ -202,7 +202,7 @@ impl Registry {
             .find(|e| e.id() == extension_id)
     }
 
-    /// Side View 续聊：按扩展 id 路由（ADR-0004）。
+    /// Side View continuation: routed by extension id (ADR-0004).
     pub fn side_continue(
         &self,
         extension_id: &str,
@@ -215,7 +215,7 @@ impl Registry {
             .side_continue(conversation_id, message, emitter)
     }
 
-    /// 停止所有扩展进行中的生成，返回中止数量（IIE4AD-365）。
+    /// Stop generation in progress across all extensions; returns the number aborted (IIE4AD-365).
     pub fn stop_generation(&self) -> usize {
         self.extensions
             .iter()
@@ -260,7 +260,7 @@ impl Registry {
 mod tests {
     use super::*;
     use crate::contract::{ActionKind, CommandEvent, InputKind};
-    use crate::frecency::{FrecencyLookup, NoFrecency};
+    use crate::frecency::{Frecency, FrecencyLookup, NoFrecency};
     use std::sync::Mutex;
 
     struct FixedFrecency(std::collections::HashMap<String, f64>);
@@ -392,7 +392,7 @@ mod tests {
             _query: Option<&str>,
             _selection: Option<&Selection>,
         ) -> Result<ActionResult, MoeError> {
-            // 覆盖了 invoke_streaming，默认路径不应被走到
+            // invoke_streaming is overridden, so the default path should not be reached
             Err(MoeError::Internal(
                 "default invoke should not be used".into(),
             ))
@@ -450,7 +450,7 @@ mod tests {
                 assert_eq!(command_id, "stream.ask");
                 assert_eq!(item.id, "stream.item");
             }
-            CommandEvent::WriteBack { .. } => panic!("StreamingToy 不发 WriteBack"),
+            CommandEvent::WriteBack { .. } => panic!("StreamingToy emits no WriteBack"),
         }
     }
 
@@ -463,8 +463,8 @@ mod tests {
         assert_eq!(result, ActionResult::WriteBack { text: "hi".into() });
     }
 
-    /// Side View 续聊契约（IIE4AD-360）：按扩展路由；未实现/未知扩展为 NotFound。
-    /// 返回实际会话 id（空 id 的“新建”语义由扩展实现）。
+    /// Side View continuation contract (IIE4AD-360): routed by extension; unimplemented/unknown extensions are NotFound.
+    /// Returns the actual conversation id (the "new" semantic of an empty id is implemented by the extension).
     #[test]
     fn side_continue_routes_to_extension_or_not_found() {
         struct SideToy;
@@ -520,7 +520,7 @@ mod tests {
         let events = Arc::clone(&recorder.0);
 
         let id = r
-            .side_continue("side", "", "你好", Arc::new(recorder))
+            .side_continue("side", "", "hello", Arc::new(recorder))
             .unwrap();
         assert_eq!(id, "42");
         assert_eq!(events.lock().unwrap().len(), 1);
@@ -539,7 +539,7 @@ mod tests {
         ));
     }
 
-    /// 停止生成按扩展聚合（IIE4AD-365）：默认实现返回 0，不会报错。
+    /// Stop generation aggregates across extensions (IIE4AD-365): the default implementation returns 0 without erroring.
     #[test]
     fn stop_generation_sums_extension_counts() {
         struct StopToy;
@@ -601,7 +601,7 @@ mod tests {
                 Some(CommandMeta {
                     id: "fb.ask".into(),
                     extension_id: "fb".into(),
-                    title: format!("Ask「{query}」"),
+                    title: format!("Ask \"{query}\""),
                     subtitle: None,
                     icon: None,
                     input: InputKind::Query,
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(hits[0].title, "Fallback");
         assert!(hits[0].items[0].title.contains("hello"));
 
-        // 有正常匹配时不出现 fallback
+        // No fallback when there is a normal match
         let mut r = Registry::new();
         r.register(Box::new(FallbackToy));
         r.register(Box::new(Toy));
@@ -625,8 +625,8 @@ mod tests {
         assert!(flat(&hits).iter().all(|c| c.id != "fb.ask"));
     }
 
-    /// 通用入口（ADR-0014）：入口按「当前命令所属 Extension」解析，
-    /// 声明的 id 必须可路由（否则面板 invoked 会 NotFound），未声明则为 None。
+    /// General entries (ADR-0014): entries resolve by "the Extension owning the current command";
+    /// a declared id must be routable (otherwise the panel's invoke hits NotFound), undeclared is None.
     #[test]
     fn entry_command_resolves_per_extension_and_must_be_routable() {
         struct EntryToy;
@@ -669,27 +669,27 @@ mod tests {
         r.register(Box::new(EntryToy));
         r.register(Box::new(Toy));
 
-        // 从本扩展的命令出发：拿到声明过的入口，且该 id 在本扩展的 commands() 里
-        // （Registry::find 只认 commands()，不在其中就 invoke 不到——与 fallback 同一守卫）
+        // Starting from this extension's command: get the declared entry, whose id is in this extension's commands()
+        // (Registry::find only knows commands(); ids outside it can't be invoked — the same guard as fallback)
         let browse = r
             .entry_command("entry.run", EntryKind::Browse)
-            .expect("browse 入口");
+            .expect("browse entry");
         assert_eq!(browse.id, "entry.browse");
         assert!(
             r.commands().iter().any(|c| c.id == browse.id),
-            "入口 id 必须在 commands() 中可路由：{}",
+            "entry id must be routable in commands(): {}",
             browse.id
         );
 
-        // 未声明 New：None（平台给内联提示，不静默）
+        // New undeclared: None (the platform gives an inline hint, not silently)
         assert!(r.entry_command("entry.run", EntryKind::New).is_none());
-        // 未声明任何入口的扩展：两个键位都是 None
+        // Extension with no entries declared: both keybindings are None
         assert!(r.entry_command("toy.hello", EntryKind::Browse).is_none());
-        // 不存在的命令：None（不 panic）
+        // Nonexistent command: None (no panic)
         assert!(r.entry_command("nope.nope", EntryKind::Browse).is_none());
     }
 
-    /// 删除槽（ADR-0022）：按命令所属 Extension 路由；未实现的扩展 NotFound，不 panic。
+    /// Delete slots (ADR-0022): routed by the command's owning Extension; unimplemented extensions are NotFound, no panic.
     #[test]
     fn delete_routes_to_extension_or_not_found() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -739,7 +739,7 @@ mod tests {
         }));
         let item = Item {
             id: "del.1".into(),
-            title: "条目".into(),
+            title: "Entry".into(),
             subtitle: None,
             icon: None,
             actions: vec![],
@@ -749,7 +749,7 @@ mod tests {
         };
         assert_eq!(r.delete_item("del.list", &item).unwrap(), 1);
         assert_eq!(r.delete_all("del.list").unwrap(), 7);
-        // 未实现删除的扩展 / 不存在的命令：NotFound
+        // Extension without delete / nonexistent command: NotFound
         let mut plain = Registry::new();
         plain.register(Box::new(Toy));
         assert!(matches!(
@@ -762,7 +762,7 @@ mod tests {
         ));
     }
 
-    /// 把 section 列表拍平成命令列表（断言用）。
+    /// Flatten a section list into a command list (for assertions).
     fn flat(hits: &[CommandSection]) -> Vec<&CommandMeta> {
         hits.iter().flat_map(|s| &s.items).collect()
     }
@@ -770,12 +770,12 @@ mod tests {
     #[test]
     fn empty_query_lists_everything() {
         let hits = registry().search("", None, &NoFrecency);
-        assert_eq!(hits.len(), 1, "单一扩展 => 单一 section");
+        assert_eq!(hits.len(), 1, "single extension => single section");
         assert_eq!(hits[0].title, "Toy");
         assert_eq!(hits[0].items.len(), 2);
     }
 
-    /// 带 last_used 的 frecency 假实现（建议测试用）。
+    /// Fake frecency with last_used (for suggestions tests).
     struct RecentFrecency(std::collections::HashMap<String, (f64, u64)>);
 
     impl FrecencyLookup for RecentFrecency {
@@ -800,13 +800,17 @@ mod tests {
         )
     }
 
-    /// 建议（IIE4AD-395）：空查询置顶最近使用的命令；其余照常分组且不重复。
+    /// Suggestions (IIE4AD-395): empty query pins recently used commands on top; the rest group as usual without repeats.
     #[test]
     fn empty_query_prepends_recent_suggestions() {
-        // Toy 有两条命令，只有 toy.list 有使用记录
+        // Toy has two commands; only toy.list has a use record
         let hits = registry().search("", None, &recent(&[("toy.list", 100)]));
-        assert_eq!(hits.len(), 2, "建议组 + 剩余按扩展分组");
-        assert_eq!(hits[0].title, "建议");
+        assert_eq!(
+            hits.len(),
+            2,
+            "suggestions section + the rest grouped by extension"
+        );
+        assert_eq!(hits[0].title, "Suggestions");
         assert_eq!(
             hits[0]
                 .items
@@ -815,7 +819,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["toy.list"]
         );
-        // 已进建议的不在剩余组里重复
+        // Those already suggested don't repeat in the remaining groups
         assert_eq!(hits[1].title, "Toy");
         assert_eq!(
             hits[1]
@@ -825,16 +829,16 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["toy.hello"]
         );
-        // 非空查询没有建议组（Raycast 同款：建议只在空输入时出现）
+        // No suggestions section on a non-empty query (Raycast-style: suggestions appear only on empty input)
         assert!(
             registry()
                 .search("toy", None, &recent(&[("toy.list", 100)]))
                 .iter()
-                .all(|s| s.title != "建议")
+                .all(|s| s.title != "Suggestions")
         );
     }
 
-    /// 建议上限 5 条，按最近使用倒序（IIE4AD-395）。
+    /// Suggestions capped at 5, most recent first (IIE4AD-395).
     #[test]
     fn suggestions_are_capped_at_five_and_most_recent_first() {
         struct OneCommand(&'static str);
@@ -870,7 +874,7 @@ mod tests {
         for name in ["a", "b", "c", "d", "e", "f"] {
             r.register(Box::new(OneCommand(name)));
         }
-        // 使用时间刻意打乱：f 最近，a 最久
+        // Use times deliberately shuffled: f most recent, a oldest
         let used: Vec<(String, u64)> = vec![
             ("a.run", 10),
             ("f.run", 60),
@@ -887,7 +891,7 @@ mod tests {
             None,
             &RecentFrecency(used.into_iter().map(|(id, t)| (id, (0.0, t))).collect()),
         );
-        assert_eq!(hits[0].title, "建议");
+        assert_eq!(hits[0].title, "Suggestions");
         assert_eq!(
             hits[0]
                 .items
@@ -895,9 +899,9 @@ mod tests {
                 .map(|c| c.id.as_str())
                 .collect::<Vec<_>>(),
             ["f.run", "e.run", "d.run", "c.run", "b.run"],
-            "最近优先，最多 5 条"
+            "most recent first, at most 5"
         );
-        // 最久的一条（a.run）留在剩余分组里
+        // The oldest one (a.run) stays in the remaining groups
         assert_eq!(
             flat(&hits[1..])
                 .iter()
@@ -905,6 +909,39 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["a.run"]
         );
+    }
+
+    /// Forgetting usage (ADR-0025): the command leaves the Suggestions section but
+    /// remains listed in its source section; clearing all removes the section entirely.
+    #[test]
+    fn forgetting_usage_removes_suggestions_but_keeps_commands_listed() {
+        let mut r = Registry::new();
+        r.register(Box::new(Toy));
+        let mut frecency = Frecency::default();
+        frecency.record("toy.hello", std::time::SystemTime::now());
+
+        let hits = r.search("", None, &frecency);
+        assert_eq!(hits[0].title, "Suggestions");
+        assert_eq!(hits[0].items[0].id, "toy.hello");
+
+        frecency.remove("toy.hello");
+        let hits = r.search("", None, &frecency);
+        assert!(
+            hits.iter().all(|s| s.title != "Suggestions"),
+            "no usage left => no Suggestions section"
+        );
+        assert!(
+            flat(&hits).iter().any(|c| c.id == "toy.hello"),
+            "the command stays listed in its source section"
+        );
+
+        // Clear-all path behaves the same once usage exists again
+        frecency.record("toy.list", std::time::SystemTime::now());
+        frecency.record("toy.hello", std::time::SystemTime::now());
+        frecency.clear();
+        let hits = r.search("", None, &frecency);
+        assert!(hits.iter().all(|s| s.title != "Suggestions"));
+        assert_eq!(flat(&hits).len(), 2, "both commands still listed");
     }
 
     #[test]
@@ -930,7 +967,7 @@ mod tests {
             ["toy.list"]
         );
         assert_eq!(flat(&registry().search("toy", None, &NoFrecency)).len(), 2);
-        // 副标题也进索引（"backspace demo" 只存在于 toy.hello 的 subtitle）
+        // Subtitles are indexed too ("backspace demo" exists only in toy.hello's subtitle)
         let hits = registry().search("pace", None, &NoFrecency);
         assert_eq!(
             flat(&hits)
@@ -943,7 +980,7 @@ mod tests {
 
     #[test]
     fn fuzzy_subsequence_matches_and_prefix_wins() {
-        // "tl"："Toy: List" 的子序列；"Hello Toy" 里 l 在 t 之前，不匹配
+        // "tl": a subsequence of "Toy: List"; in "Hello Toy" l precedes t, so no match
         let hits = registry().search("tl", None, &NoFrecency);
         assert_eq!(
             flat(&hits)
@@ -953,14 +990,14 @@ mod tests {
             ["toy.list"]
         );
         assert!(registry().search("zzz", None, &NoFrecency).is_empty());
-        // 前缀匹配优先于子串匹配
+        // Prefix match beats subsequence match
         let hits = registry().search("toy", None, &NoFrecency);
         assert_eq!(flat(&hits).first().map(|c| c.id.as_str()), Some("toy.list"));
     }
 
     #[test]
     fn frecency_breaks_score_ties() {
-        // 两个孪生命令（同标题、同扩展名）：nucleo 分数相同，由 frecency 决定顺序
+        // Two twin commands (same title, same extension name): equal nucleo scores, frecency decides the order
         struct Twin(&'static str);
         impl Extension for Twin {
             fn id(&self) -> &str {
@@ -1001,7 +1038,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["b.deploy", "a.deploy"]
         );
-        // 两个扩展两个来源 => 两个 section，按组内最优项排序（b 的 frecency 更高）
+        // Two extensions, two sources => two sections, ordered by each group's best item (b's frecency is higher)
         assert_eq!(
             hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
             ["Twin", "Twin"]

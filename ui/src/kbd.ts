@@ -1,8 +1,8 @@
-// 键位块（shadcn Kbd 同款）：每个键一个方块，字符居中、行内基线对齐。
-// 展示串来自 `moe-core::keymap`（如 "⌘K / ⌘⇧P"、"↓ / ⌃N"、"⌥⏎"），
-// 这里只负责切块与排版，不发明键位。
+// Key blocks (shadcn Kbd style): one square per key, centered characters, inline baseline alignment.
+// Display strings come from `moe-core::keymap` (e.g. "⌘K / ⌘⇧P", "↓ / ⌃N", "⌥⏎");
+// this module only splits and lays them out, never invents bindings.
 
-/** 具名键（一个名字一个块，不按字符切开）。 */
+/** Named keys (one block per name, not split by character). */
 const NAMED_KEYS = [
   "Enter",
   "Return",
@@ -18,7 +18,7 @@ const NAMED_KEYS = [
   "⏎",
 ];
 
-/** "⌘⇧A" → ["⌘","⇧","A"]；"Esc" → ["Esc"]。 */
+/** "⌘⇧A" → ["⌘","⇧","A"]; "Esc" → ["Esc"]. */
 function tokenize(part: string): string[] {
   const tokens: string[] = [];
   let rest = part;
@@ -38,11 +38,11 @@ function tokenize(part: string): string[] {
 }
 
 export interface KbdOptions {
-  /** 只画第一种键位（如 "⌘K / ⌘⇧P" → ⌘K），按钮里用。 */
+  /** Render only the first binding (e.g. "⌘K / ⌘⇧P" → ⌘K), for buttons. */
   firstOnly?: boolean;
 }
 
-/** 键位块序列；可选项之间用 " / " 分隔。 */
+/** Sequence of key blocks; alternatives separated by " / ". */
 export function kbdEl(display: string, options: KbdOptions = {}): HTMLElement {
   const wrap = document.createElement("span");
   wrap.className = "moe-keys";
@@ -61,7 +61,7 @@ export function kbdEl(display: string, options: KbdOptions = {}): HTMLElement {
     for (const token of tokenize(part)) {
       const kbd = document.createElement("kbd");
       kbd.className = "moe-kbd";
-      // 具名键（Esc/Tab…）也是同一个方块，靠缩字塞进去（见 styles.css）
+      // Named keys (Esc/Tab…) use the same square, shrunk font to fit (see styles.css)
       if (token.length > 1) kbd.dataset.wide = "true";
       kbd.textContent = token;
       wrap.append(kbd);
@@ -70,7 +70,7 @@ export function kbdEl(display: string, options: KbdOptions = {}): HTMLElement {
   return wrap;
 }
 
-/** 纯文本形式（placeholder、aria 等不能放 DOM 的地方）。 */
+/** Plain-text form (for placeholders, aria, and other non-DOM spots). */
 export function kbdText(display: string): string {
   return display
     .split("/")

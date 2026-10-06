@@ -12,7 +12,7 @@ dirs = "6"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# X11 双击修饰键监听（XRecord；IIE4AD-350）
+# X11 double-tap modifier listener (XRecord; IIE4AD-350)
 x11rb = { version = "0.13", features = ["record"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

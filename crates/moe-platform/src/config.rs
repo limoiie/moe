@@ -1,4 +1,4 @@
-//! `config.toml` 的解析与默认值（ADR-0008：呼出键可改）。
+//! Parsing and defaults for `config.toml` (ADR-0008: the summon key is configurable).
 
 use std::fmt;
 use std::path::PathBuf;
@@ -10,25 +10,25 @@ pub const DEFAULT_DOUBLE_TAP_MS: u64 = 400;
 pub const MIN_DOUBLE_TAP_MS: u64 = 100;
 pub const MAX_DOUBLE_TAP_MS: u64 = 1000;
 
-/// 首次「打开配置文件」时落盘的默认模板（必须能解析为 [`MoeConfig::default()`]）。
+/// Default template persisted the first time "open config file" runs (must parse to [`MoeConfig::default()`]).
 pub const DEFAULT_TEMPLATE: &str = "\
-# Moe 配置
+# Moe configuration
 [summon]
-# double-cmd | double-option | double-ctrl | 组合键（如 cmd+shift+space）
+# double-cmd | double-option | double-ctrl | a combo (e.g. cmd+shift+space)
 key = \"double-cmd\"
 double_tap_ms = 400
 
-# [ai]  取消注释并填入任意 OpenAI 兼容端点（DeepSeek/OpenRouter/本地 llama.cpp …）
+# [ai]  Uncomment and fill in any OpenAI-compatible endpoint (DeepSeek/OpenRouter/local llama.cpp …)
 # base_url = \"https://api.deepseek.com/v1\"
 # model = \"deepseek-chat\"
-# API key 不写在这里：用命令「key <你的key>」存 keychain（或设 MOE_AI_API_KEY）
+# Don't put the API key here: store it in the keychain via the command \"key <your-key>\" (or set MOE_AI_API_KEY)
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SummonKey {
-    /// 双击修饰键（默认 double-cmd）。
+    /// Double-tap modifier (default double-cmd).
     DoubleTap(Modifier),
-    /// 组合键，如 `cmd+shift+space`。
+    /// A key combo, e.g. `cmd+shift+space`.
     Combo {
         modifiers: Vec<Modifier>,
         key: String,
@@ -47,7 +47,7 @@ impl SummonKey {
             };
             return Ok(SummonKey::DoubleTap(m));
         }
-        // 组合键：最后一个 token 是主键，前面必须都是修饰键
+        // Combo: the last token is the base key; everything before it must be modifiers
         let parts: Vec<&str> = s.split('+').map(str::trim).collect();
         if parts.len() < 2 {
             return Err(ConfigError::ComboMissingModifier(raw.to_string()));
@@ -99,7 +99,7 @@ pub struct AiConfig {
 }
 
 impl AiConfig {
-    /// 端点未配置时 AI 命令不可用（引导项代替回答）。
+    /// AI commands are unavailable when no endpoint is configured (a setup item answers instead).
     pub fn configured(&self) -> bool {
         self.base_url
             .as_deref()
@@ -160,7 +160,7 @@ impl MoeConfig {
         Ok(Self { summon, ai })
     }
 
-    /// 从平台配置目录加载；文件缺失或解析失败时回落到默认值（ADR-0008）。
+    /// Load from the platform config directory; fall back to defaults when the file is missing or fails to parse (ADR-0008).
     pub fn load() -> Self {
         let Some(path) = config_path() else {
             return Self::default();
@@ -169,7 +169,10 @@ impl MoeConfig {
             Ok(text) => match Self::from_toml(&text) {
                 Ok(cfg) => cfg,
                 Err(err) => {
-                    eprintln!("moe: {} 解析失败（{err}），使用默认呼出键", path.display());
+                    eprintln!(
+                        "moe: {} parse failed ({err}), using the default summon key",
+                        path.display()
+                    );
                     Self::default()
                 }
             },
@@ -206,12 +209,12 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// 平台配置目录下的 `moe/config.toml`。
+/// `moe/config.toml` under the platform config directory.
 pub fn config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("moe").join("config.toml"))
 }
 
-/// 打开配置文件；不存在时先用默认模板创建。返回文件路径。
+/// Open the config file; create it from the default template first if missing. Returns the file path.
 pub fn open_in_editor() -> std::io::Result<PathBuf> {
     let path = config_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
     if !path.exists() {
@@ -291,7 +294,7 @@ mod tests {
         );
         assert_eq!(cfg.ai.model_or_default(), "deepseek-chat");
 
-        // 只配端点：模型回落默认值
+        // Endpoint only: the model falls back to the default
         let cfg = MoeConfig::from_toml("[ai]\nbase_url = \"https://x/v1\"\n").unwrap();
         assert!(cfg.ai.configured());
         assert_eq!(cfg.ai.model_or_default(), "gpt-4o-mini");
@@ -307,9 +310,9 @@ mod tests {
     fn rejects_invalid_keys_and_out_of_range_gap() {
         assert!(SummonKey::parse("double-space").is_err());
         assert!(SummonKey::parse("double-shift").is_err());
-        // 无修饰键的组合会劫持全局字面输入
+        // A combo without modifiers would hijack global literal input
         assert!(SummonKey::parse("space").is_err());
-        // 只有修饰键，没有主键
+        // Only modifiers, no base key
         assert!(SummonKey::parse("cmd+shift").is_err());
         assert!(SummonKey::parse("cmd+").is_err());
 

@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Tauri 2 壳（ADR-0001）：只做窗口与 IPC，全部逻辑在 moe-core / moe-extensions /
-//! moe-platform。呼出键按 config.toml 装配：双击修饰键走 CGEventTap 监听，
-//! 组合键走 global-shortcut 插件（ADR-0008）。
+//! Tauri 2 shell (ADR-0001): windows and IPC only; all logic lives in moe-core / moe-extensions /
+//! moe-platform. The summon key is assembled from config.toml: double-tap modifiers go through
+//! a CGEventTap listener, combos go through the global-shortcut plugin (ADR-0008).
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -22,8 +22,9 @@ use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{CollectionBehavior, ManagerExt, PanelLevel, WebviewWindowExt};
 
-// 面板形态的 NSPanel（ADR-0008 的浮层语义）：非激活应用、可进入全屏应用的
-// Space、且能成为 key window 接收键盘。`can_become_key_window` 是打字的前提。
+// The panel as an NSPanel (the floating semantics of ADR-0008): non-activating, joins the Spaces
+// of full-screen apps, and can become the key window to receive keyboard input.
+// `can_become_key_window` is the prerequisite for typing.
 #[cfg(target_os = "macos")]
 tauri_nspanel::tauri_panel! {
     panel!(MoePanel {
@@ -34,8 +35,10 @@ tauri_nspanel::tauri_panel! {
     })
 }
 
-// 侧栏（chat）同款浮层语义：非激活、可进入全屏应用的 Space、且能成为 key window 接收输入。
-// 宏会引入一批 `use` 导入，同一模块只能调用一次，因此放进子模块再导出类型。
+// The side view (chat) gets the same floating semantics: non-activating, joins the Spaces of
+// full-screen apps, and can become the key window to receive input.
+// The macro injects a batch of `use` imports and can only be invoked once per module, so it lives
+// in a submodule that re-exports the type.
 #[cfg(target_os = "macos")]
 mod chat_panel {
     tauri_nspanel::tauri_panel! {
@@ -51,7 +54,7 @@ mod chat_panel {
 #[cfg(target_os = "macos")]
 use chat_panel::MoeChatPanel;
 
-/// 面板居中到鼠标所在显示器（含全屏应用所在的虚拟屏）。
+/// Center the panel on the monitor under the mouse (including the virtual screen a full-screen app occupies).
 fn centered_on(
     monitor_pos: (i32, i32),
     monitor_size: (u32, u32),
@@ -62,7 +65,7 @@ fn centered_on(
     (x, y)
 }
 
-/// 右停靠：贴显示器右缘、顶部对齐（侧栏窗口用）。
+/// Right-docked: flush to the monitor's right edge, top-aligned (used by the side view window).
 fn right_docked_on(
     monitor_pos: (i32, i32),
     monitor_size: (u32, u32),
@@ -72,7 +75,7 @@ fn right_docked_on(
     (x, monitor_pos.1)
 }
 
-/// 组合键写法 → global-shortcut 插件的加速器语法。
+/// Combo notation → the global-shortcut plugin's accelerator syntax.
 fn accelerator(key: &SummonKey) -> Option<String> {
     let SummonKey::Combo { modifiers, key } = key else {
         return None;
@@ -94,7 +97,7 @@ fn accelerator(key: &SummonKey) -> Option<String> {
         other => {
             let mut chars = other.chars();
             match (chars.next(), chars.next()) {
-                // 单字符按键：插件加速器语法用大写字母/数字
+                // Single-character keys: the plugin's accelerator syntax uses uppercase letters/digits
                 (Some(c), None) => c.to_ascii_uppercase().to_string(),
                 _ => other.to_string(),
             }
@@ -113,15 +116,15 @@ fn key_label(key: &SummonKey) -> String {
     }
 }
 
-/// 把 Command 的增量事件转发到面板（streaming 在 worker 线程发事件）。
+/// Forward incremental Command events to the panel (streaming emits from a worker thread).
 struct TauriEventEmitter(AppHandle);
 
 impl CommandEmitter for TauriEventEmitter {
     fn emit(&self, event: CommandEvent) {
-        // AI 命令流式完成后的自动回写（ADR-0024）：写回宿主应用并收起面板，不转发给 UI。
+        // Auto write-back after an AI command finishes streaming (ADR-0024): write into the host app and dismiss the panel, without forwarding to the UI.
         if let CommandEvent::WriteBack { text } = &event {
             if let Err(err) = deliver_writeback(&self.0, text.clone()) {
-                eprintln!("moe: 自动回写失败: {err}");
+                eprintln!("moe: auto write-back failed: {err}");
             }
             return;
         }
@@ -133,14 +136,14 @@ struct AppState {
     registry: Mutex<Registry>,
     config: MoeConfig,
     listener: Mutex<Box<dyn SummonListener>>,
-    /// 呼出面板前抓取的选择上下文（面板成为 key 后 AX 焦点会离开目标应用）：
-    /// 文字选区 + Finder 选中文件（ADR-0021）。
+    /// The selection context captured before the panel is summoned (AX focus leaves the target
+    /// app once the panel becomes key): text selection + Finder-selected files (ADR-0021).
     selection: Mutex<Option<Selection>>,
-    /// 选区读取与回写的平台实现（ADR-0002）。
+    /// The platform implementation of selection read and write-back (ADR-0002).
     text_target: Box<dyn moe_platform::TextTarget>,
-    /// 命令使用记录（平台级，IIE4AD-346）；锁顺序：先 frecency 后 registry。
+    /// Command usage records (platform-level, IIE4AD-346); lock order: frecency before registry.
     frecency: Mutex<Frecency>,
-    /// 最近一次展示面板的时刻（失焦收起需忽略展示瞬态）。
+    /// When the panel was last shown (blur-to-dismiss must ignore the showing transient).
     last_shown: Mutex<Option<std::time::Instant>>,
 }
 
@@ -151,11 +154,11 @@ struct SummonStatusPayload {
     status: &'static str,
     key: String,
     double_tap_ms: u64,
-    /// 辅助功能授权（选区/回写用；非 macOS 恒为 true）。
+    /// Accessibility permission (for selection/write-back; always true off macOS).
     accessibility: bool,
 }
 
-/// 把面板移到鼠标所在显示器（含全屏虚拟屏）并居中。
+/// Move the panel to the monitor under the mouse (including full-screen virtual screens) and center it.
 fn place_on_active_screen(window: &tauri::WebviewWindow) {
     let Ok(size) = window.outer_size() else {
         return;
@@ -163,7 +166,7 @@ fn place_on_active_screen(window: &tauri::WebviewWindow) {
     center_at_cursor(window, size.width as f64, size.height as f64);
 }
 
-/// 把窗口居中到鼠标所在显示器（物理像素尺寸，调用方给）。
+/// Center the window on the monitor under the mouse (physical-pixel size, provided by the caller).
 fn center_at_cursor(window: &tauri::WebviewWindow, width: f64, height: f64) {
     let Ok(cursor) = window.cursor_position() else {
         return;
@@ -186,8 +189,8 @@ fn center_at_cursor(window: &tauri::WebviewWindow, width: f64, height: f64) {
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// 按页面形态调整面板尺寸（逻辑像素，ADR-0018）：两栏页面更宽更高。
-/// 尺寸由 UI 从 `ui/src/layout.ts` 的形态表算出，这里只负责改窗口并重新居中。
+/// Resize the panel by page shape (logical pixels, ADR-0018): split pages are wider and taller.
+/// The UI computes the size from the shape table in `ui/src/layout.ts`; this only resizes and re-centers the window.
 #[tauri::command]
 fn resize_panel(window: tauri::WebviewWindow, width: f64, height: f64) -> Result<(), String> {
     window
@@ -195,12 +198,12 @@ fn resize_panel(window: tauri::WebviewWindow, width: f64, height: f64) -> Result
         .map_err(|err| err.to_string())?;
     let scale = window.scale_factor().unwrap_or(1.0);
     center_at_cursor(&window, width * scale, height * scale);
-    eprintln!("moe: 面板尺寸 → {width}×{height}（逻辑像素）");
+    eprintln!("moe: panel size → {width}×{height} (logical pixels)");
     Ok(())
 }
 
-/// 菜单栏在屏幕顶部占用的高度（物理像素）。
-/// NSScreen 要求主线程，调用点已在主线程闭包内。
+/// The height the menu bar occupies at the top of the screen (physical pixels).
+/// NSScreen requires the main thread; call sites are already inside main-thread closures.
 #[cfg(target_os = "macos")]
 fn top_inset_physical(scale: f64) -> u32 {
     use tauri_nspanel::objc2::MainThreadMarker;
@@ -218,8 +221,9 @@ fn top_inset_physical(scale: f64) -> u32 {
     (inset_points.max(0.0) * scale).round() as u32
 }
 
-/// 侧栏默认摆放：鼠标所在显示器（含全屏虚拟屏）的右侧、占满高度。
-/// 仅在无记忆帧或记忆帧已不在任何显示器上时使用（IIE4AD-369）。
+/// Default side view placement: the right side of the monitor under the mouse (including full-screen
+/// virtual screens), full height. Used only when there is no remembered frame or the remembered
+/// frame is no longer on any monitor (IIE4AD-369).
 fn place_side_view(window: &tauri::WebviewWindow) {
     let Ok(cursor) = window.cursor_position() else {
         return;
@@ -234,8 +238,8 @@ fn place_side_view(window: &tauri::WebviewWindow) {
     };
     let pos = monitor.position();
     let msize = monitor.size();
-    // 高度减去菜单栏：macOS 会把窗口顶边约束到可见区域之内，
-    // 否则多出的高度会把底边（输入框）推到屏幕之外。
+    // Height minus the menu bar: macOS constrains the window's top edge to the visible area;
+    // otherwise the extra height pushes the bottom edge (the input bar) off-screen.
     #[cfg(target_os = "macos")]
     let inset = top_inset_physical(monitor.scale_factor());
     #[cfg(not(target_os = "macos"))]
@@ -250,7 +254,7 @@ fn place_side_view(window: &tauri::WebviewWindow) {
     let _ = window.set_size(tauri::PhysicalSize::new(size.width, height));
 }
 
-/// 恢复上一次的位置与尺寸（用户拖过/缩过就记住）；帧已不在任何显示器上则放弃。
+/// Restore the previous position and size (remembered after the user drags/resizes); give up if the frame is no longer on any monitor.
 fn restore_side_view(window: &tauri::WebviewWindow) -> bool {
     let Some(frame) = moe_platform::store::load_window_frame("chat") else {
         return false;
@@ -268,7 +272,7 @@ fn restore_side_view(window: &tauri::WebviewWindow) -> bool {
     true
 }
 
-/// 记住侧栏当前帧（拖拽/缩放后防抖动延迟写入）。
+/// Remember the side view's current frame (debounced write after drag/resize).
 fn schedule_chat_frame_save(window: &tauri::WebviewWindow) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -277,7 +281,7 @@ fn schedule_chat_frame_save(window: &tauri::WebviewWindow) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
         if GENERATION.load(Ordering::SeqCst) != generation {
-            return; // 又有新的移动/缩放事件，交给后来者
+            return; // a newer move/resize event arrived; hand it to the newcomer
         }
         let (Ok(pos), Ok(size)) = (handle.outer_position(), handle.outer_size()) else {
             return;
@@ -294,24 +298,24 @@ fn schedule_chat_frame_save(window: &tauri::WebviewWindow) {
     });
 }
 
-/// 透明窗口的阴影由内容 alpha 生成并被缓存：显示前重算一次（ADR-0016）。
+/// A transparent window's shadow is generated from content alpha and cached: recompute once before showing (ADR-0016).
 #[cfg(target_os = "macos")]
 fn refresh_window_shadow(window: &tauri::WebviewWindow) {
     if let Ok(ns_window) = window.ns_window() {
-        // SAFETY: 指针来自 Tauri 的窗口句柄，生命周期跟随该窗口。
+        // SAFETY: the pointer comes from Tauri's window handle and its lifetime follows the window.
         unsafe { moe_platform::mac::refresh_window_shadow(ns_window) };
     }
 }
 
-/// 必须在主线程调用：先抓选区，再定位并展示面板。
+/// Must be called on the main thread: capture the selection first, then position and show the panel.
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
-        // 先抓选择上下文再显面板（面板成为 key 后系统焦点离开目标应用）：
-        // 文字选区 + Finder 选中文件（ADR-0021）。
+        // Capture the selection context before showing the panel (system focus leaves the target
+        // app once the panel becomes key): text selection + Finder-selected files (ADR-0021).
         let text = state.text_target.read_selection().unwrap_or(None);
         let files = moe_platform::files::finder_selection();
         eprintln!(
-            "moe: 选区 {} 字符，Finder 文件 {} 个",
+            "moe: selection {} chars, {} Finder files",
             text.as_deref().map(|s| s.chars().count()).unwrap_or(0),
             files.len()
         );
@@ -323,27 +327,27 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
     refresh_window_shadow(window);
     #[cfg(target_os = "macos")]
     if let Ok(panel) = window.app_handle().get_webview_panel(window.label()) {
-        // NSPanel：不激活应用、不切 Space，直接成为 key window 接收输入
+        // NSPanel: no app activation, no Space switch; directly becomes the key window to receive input
         panel.show_and_make_key();
-        eprintln!("moe: 面板已显示（NSPanel）");
+        eprintln!("moe: panel shown (NSPanel)");
         return;
     }
     let _ = window.show();
     let _ = window.set_focus();
-    eprintln!("moe: 面板已显示");
+    eprintln!("moe: panel shown");
 }
 
-/// 必须在主线程调用。
+/// Must be called on the main thread.
 fn hide_panel_blocking(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     if let Ok(panel) = app.get_webview_panel("panel") {
         panel.hide();
-        eprintln!("moe: 面板已隐藏（NSPanel）");
+        eprintln!("moe: panel hidden (NSPanel)");
         return;
     }
     if let Some(window) = app.get_webview_window("panel") {
         let _ = window.hide();
-        eprintln!("moe: 面板已隐藏");
+        eprintln!("moe: panel hidden");
     }
 }
 
@@ -363,17 +367,17 @@ fn toggle_panel(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || toggle_panel_blocking(&handle));
 }
 
-/// Materialize：收起面板 → 右停靠展示 chat 窗口 → 交付载荷（会话 id 等）。
+/// Materialize: dismiss the panel → show the chat window right-docked → deliver the payload (conversation id, etc.).
 fn open_side_view(app: &AppHandle, payload: serde_json::Value) {
     let handle = app.clone();
-    // 窗口操作（含 AppKit 的 orderOut/orderFront）都要在主线程。
+    // Window operations (including AppKit's orderOut/orderFront) must run on the main thread.
     let _ = app.run_on_main_thread(move || {
         hide_panel_blocking(&handle);
         let Some(window) = handle.get_webview_window("chat") else {
-            eprintln!("moe: chat 窗口不存在");
+            eprintln!("moe: chat window does not exist");
             return;
         };
-        // 用户拖过就用记忆帧，否则默认右停靠
+        // Use the remembered frame if the user has dragged it, otherwise default right-docked
         if !restore_side_view(&window) {
             place_side_view(&window);
         }
@@ -395,26 +399,26 @@ fn open_side_view(app: &AppHandle, payload: serde_json::Value) {
             let _ = window.set_focus();
         }
         let _ = handle.emit_to("chat", "side-open", payload);
-        eprintln!("moe: 侧栏已展示");
+        eprintln!("moe: side view shown");
     });
 }
 
-/// WriteBack 投递：权限前置检查 → 收面板 → 等焦点交还 → AX/剪贴板写入。
+/// WriteBack delivery: permission pre-check → dismiss panel → wait for focus to return → write via AX/clipboard.
 fn deliver_writeback(app: &AppHandle, text: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if !moe_platform::mac::is_accessibility_trusted() {
         moe_platform::mac::prompt_accessibility_permission();
-        return Err("需要「辅助功能」授权才能回写（已弹出系统引导，授权后无需重启）".into());
+        return Err("Accessibility permission is required to write back (System Settings → Privacy & Security → Accessibility; the system prompt was opened, no restart needed once granted)".into());
     }
     hide_panel_blocking(app);
     let handle = app.clone();
     std::thread::spawn(move || {
-        // 等非激活面板关闭、焦点交还目标应用
+        // Wait for the non-activating panel to close and focus to return to the target app
         std::thread::sleep(Duration::from_millis(120));
         let state = handle.state::<AppState>();
         match state.text_target.write_text(&text) {
-            Ok(()) => eprintln!("moe: 已回写（{} 字符）", text.chars().count()),
-            Err(err) => eprintln!("moe: 回写失败: {err}"),
+            Ok(()) => eprintln!("moe: wrote back ({} chars)", text.chars().count()),
+            Err(err) => eprintln!("moe: write back failed: {err}"),
         }
     });
     Ok(())
@@ -427,9 +431,9 @@ fn keymap() -> Vec<(&'static str, SystemKey)> {
 
 #[tauri::command]
 fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandSection> {
-    // 选区只在「无匹配 → fallback」时有意义（如 AI 提示选中文字将作为上下文）；拿到即释放。
+    // The selection only matters for the "no match → fallback" path (e.g. an AI prompt uses the selected text as context); grab it and release.
     let selection = state.selection.lock().expect("selection poisoned").clone();
-    // 锁顺序：先 frecency 后 registry（invoke 路径不嵌套持锁）
+    // Lock order: frecency before registry (the invoke path never holds nested locks)
     let frecency = state.frecency.lock().expect("frecency poisoned");
     state
         .registry
@@ -438,8 +442,8 @@ fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandSect
         .search(&query, selection.as_ref(), &*frecency)
 }
 
-/// 通用动作 Browse（⌘P）/ New（⌘N）的入口查询（ADR-0014）：
-/// 按当前命令所属 Extension 换出它声明的入口命令；None = 该扩展没有这种记录。
+/// Entry lookup for the generic actions Browse (⌘P) / New (⌘N) (ADR-0014):
+/// resolve the entry command declared by the current command's Extension; None = the extension has no such records.
 #[tauri::command]
 fn entry_command(
     state: State<'_, AppState>,
@@ -471,7 +475,7 @@ fn invoke_command(
         .invoke_streaming(&command_id, query.as_deref(), selection.as_ref(), emitter)
         .map_err(|e| e.to_string())?;
 
-    // Live 列表随输入重跑时不算一次「启动」（frecency 语义，IIE4AD-360）。
+    // Re-running a Live list as input changes is not a "launch" (frecency semantics, IIE4AD-360).
     if record.unwrap_or(true) {
         let mut frecency = state.frecency.lock().expect("frecency poisoned");
         frecency.record(&command_id, std::time::SystemTime::now());
@@ -510,7 +514,7 @@ fn run_item_action(
     Ok(result)
 }
 
-/// 删除当前记录（通用动作 Delete，⌃X，ADR-0022）：返回实际删除条数。
+/// Delete the current record (generic action Delete, ⌃X, ADR-0022): returns the actual number deleted.
 #[tauri::command]
 fn delete_item(
     state: State<'_, AppState>,
@@ -525,7 +529,7 @@ fn delete_item(
         .map_err(|e| e.to_string())
 }
 
-/// 删除全部记录（通用动作 DeleteAll，⌃⇧X，ADR-0022）：返回实际删除条数。
+/// Delete all records (generic action DeleteAll, ⌃⇧X, ADR-0022): returns the actual number deleted.
 #[tauri::command]
 fn delete_all(state: State<'_, AppState>, command_id: String) -> Result<usize, String> {
     state
@@ -536,12 +540,33 @@ fn delete_all(state: State<'_, AppState>, command_id: String) -> Result<usize, S
         .map_err(|e| e.to_string())
 }
 
+/// Forget one recently used command (⌃X on a suggestion, ADR-0025).
+/// Returns whether the command had recorded usage.
+#[tauri::command]
+fn delete_suggestion(state: State<'_, AppState>, command_id: String) -> Result<bool, String> {
+    let mut frecency = state.frecency.lock().expect("frecency poisoned");
+    let removed = frecency.remove(&command_id);
+    moe_platform::store::save_frecency(&frecency);
+    Ok(removed)
+}
+
+/// Clear all recently used commands (⌃⇧X on suggestions, ADR-0025).
+/// Returns how many commands were forgotten.
+#[tauri::command]
+fn clear_suggestions(state: State<'_, AppState>) -> Result<usize, String> {
+    let mut frecency = state.frecency.lock().expect("frecency poisoned");
+    let count = frecency.len();
+    frecency.clear();
+    moe_platform::store::save_frecency(&frecency);
+    Ok(count)
+}
+
 #[tauri::command]
 fn hide_panel(app: AppHandle) {
     hide_panel_blocking(&app);
 }
 
-/// 停止进行中的生成（IIE4AD-365）：面板/侧栏在 Esc 时调用；返回被中止的生成数。
+/// Stop in-progress generation (IIE4AD-365): called by the panel/side view on Esc; returns the number of generations aborted.
 #[tauri::command]
 fn stop_generation(state: State<'_, AppState>) -> usize {
     state
@@ -551,14 +576,14 @@ fn stop_generation(state: State<'_, AppState>) -> usize {
         .stop_generation()
 }
 
-/// 附件路径校验（IIE4AD-358）：只探测类型与大小上限，不读入内容；
-/// 错误直接回给面板/侧栏做内联提示。
+/// Attachment path validation (IIE4AD-358): probes only type and size limits, never reads content;
+/// errors go straight back to the panel/side view for inline hints.
 #[tauri::command]
 fn resolve_attachment(path: String) -> Result<moe_extensions::attachment::AttachmentInfo, String> {
     moe_extensions::attachment::inspect(std::path::Path::new(&path))
 }
 
-/// 侧栏历史会话列表（双栏左栏，IIE4AD-369）：标题筛选、最近优先。
+/// Side view conversation history list (left column of the split view, IIE4AD-369): filtered by title, most recent first.
 #[tauri::command]
 fn side_conversations(
     query: Option<String>,
@@ -566,13 +591,13 @@ fn side_conversations(
     moe_platform::db::Db::open_default()?.conversations("ai", query.as_deref(), 50)
 }
 
-/// 侧栏历史：某会话的全部消息（按时间正序）。
+/// Side view history: all messages of a conversation (chronological order).
 #[tauri::command]
 fn side_messages(conversation_id: String) -> Result<Vec<moe_core::conversation::Message>, String> {
     moe_platform::db::Db::open_default()?.messages(&conversation_id)
 }
 
-/// 侧栏续聊：空会话 id 会在 `ai` Namespace 新建会话；返回（可能新建的）会话 id。
+/// Side view continue-chat: an empty conversation id creates a new conversation in the `ai` namespace; returns the (possibly new) conversation id.
 #[tauri::command]
 fn side_send(
     app: AppHandle,
@@ -613,7 +638,7 @@ fn summon_status(state: State<'_, AppState>) -> SummonStatusPayload {
 fn open_input_monitoring_settings() {
     #[cfg(target_os = "macos")]
     {
-        // 「输入监控」面板：listen-only 键盘 tap 的门槛
+        // The Input Monitoring pane: the gate for the listen-only keyboard tap
         let _ = std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
             .spawn();
@@ -624,14 +649,14 @@ fn open_input_monitoring_settings() {
 fn open_accessibility_settings() {
     #[cfg(target_os = "macos")]
     {
-        // 「辅助功能」面板：AX 读写选区/回写的门槛
+        // The Accessibility pane: the gate for AX selection read/write-back
         let _ = std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
             .spawn();
     }
 }
 
-/// 菜单栏常驻：tray 图标 + 菜单（显示面板 / AI 对话 / 开机自启 / 打开配置文件 / 退出）。
+/// Menu bar resident: tray icon + menu (Show Panel / AI Chat / Launch at Login / Open Config File / Quit).
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
@@ -639,18 +664,18 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
 
-    let show = MenuItem::with_id(app, "tray.show", "显示面板", true, None::<&str>)?;
-    let chat = MenuItem::with_id(app, "tray.chat", "AI 对话", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "tray.show", "Show Panel", true, None::<&str>)?;
+    let chat = MenuItem::with_id(app, "tray.chat", "AI Chat", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
         app,
         "tray.autostart",
-        "开机自启",
+        "Launch at Login",
         true,
         autostart_enabled,
         None::<&str>,
     )?;
-    let config = MenuItem::with_id(app, "tray.config", "打开配置文件", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "tray.quit", "退出 Moe", true, None::<&str>)?;
+    let config = MenuItem::with_id(app, "tray.config", "Open Config File", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "tray.quit", "Quit Moe", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&show, &chat, &autostart, &separator, &config, &quit])?;
 
@@ -660,7 +685,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "tray.show" => toggle_panel(app),
-            // 空会话的侧栏：没在跑就起会话，历史从「AI: 搜索历史会话」找回
+            // Side view with an empty conversation: start one if none is running; history is recoverable via "AI: Search Chat History"
             "tray.chat" => open_side_view(app, serde_json::json!({})),
             "tray.autostart" => {
                 let currently = app.autolaunch().is_enabled().unwrap_or(false);
@@ -673,16 +698,19 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                     Ok(()) => {
                         let now = !currently;
                         if let Err(err) = autostart_item.set_checked(now) {
-                            eprintln!("moe: 更新自启勾选失败: {err}");
+                            eprintln!("moe: failed to update autostart check: {err}");
                         }
-                        eprintln!("moe: 开机自启已{}", if now { "开启" } else { "关闭" });
+                        eprintln!(
+                            "moe: launch at login {}",
+                            if now { "enabled" } else { "disabled" }
+                        );
                     }
-                    Err(err) => eprintln!("moe: 切换开机自启失败: {err}"),
+                    Err(err) => eprintln!("moe: failed to toggle launch at login: {err}"),
                 }
             }
             "tray.config" => {
                 if let Err(err) = moe_platform::config::open_in_editor() {
-                    eprintln!("moe: 打开配置文件失败: {err}");
+                    eprintln!("moe: failed to open config file: {err}");
                 }
             }
             "tray.quit" => app.exit(0),
@@ -691,25 +719,25 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
     match tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
         Ok(icon) => builder = builder.icon(icon),
-        Err(err) => eprintln!("moe: tray 图标解码失败: {err}"),
+        Err(err) => eprintln!("moe: failed to decode tray icon: {err}"),
     }
     #[cfg(target_os = "macos")]
     {
-        // 模板图：菜单栏按明暗自动渲染
+        // Template image: the menu bar renders it automatically for light/dark
         builder = builder.icon_as_template(true);
     }
     builder.build(app)?;
-    eprintln!("moe: tray 已创建");
+    eprintln!("moe: tray created");
     Ok(())
 }
 
-/// 启动 600ms 后是否需要「主动展示面板」做引导。
+/// Whether the panel should be proactively shown for guidance 600ms after startup.
 fn needs_attention(status: SummonStatus, key: &SummonKey) -> bool {
     match status {
-        // 缺「输入监控」授权（macOS）：面板里给授权引导
+        // Missing Input Monitoring permission (macOS): show permission guidance in the panel
         SummonStatus::NeedsPermission => true,
-        // 双击监听在当前会话不可用（Wayland / 无 RECORD / 未实现平台）：
-        // 引导改用组合键或 WM 绑定 `moe --toggle`
+        // Double-tap listening is unavailable in this session (Wayland / no RECORD / unimplemented platform):
+        // guide the user to a combo or a WM binding for `moe --toggle`
         SummonStatus::Unsupported => matches!(key, SummonKey::DoubleTap(_)),
         SummonStatus::Ready => false,
     }
@@ -724,18 +752,18 @@ fn main() {
             *modifier,
             Duration::from_millis(config.summon.double_tap_ms),
         )),
-        // 组合键由 global-shortcut 插件承担，监听器留空。
+        // Combos are handled by the global-shortcut plugin; the listener stays empty.
         SummonKey::Combo { .. } => Box::new(moe_platform::UnsupportedSummon),
     };
     #[cfg(not(target_os = "macos"))]
     let listener: Box<dyn SummonListener> = match &config.summon.key {
-        // XRecord 免授权监听（IIE4AD-350）；Wayland / 无 RECORD 时自查并报 Unsupported
+        // XRecord permission-free listening (IIE4AD-350); on Wayland / no RECORD it self-checks and reports Unsupported
         #[cfg(target_os = "linux")]
         SummonKey::DoubleTap(modifier) => Box::new(moe_platform::x11::X11SummonListener::new(
             *modifier,
             Duration::from_millis(config.summon.double_tap_ms),
         )),
-        // 其余平台双击未落地：启动后由面板引导改用组合键
+        // Double-tap is not implemented on other platforms: the panel guides the user to a combo after startup
         #[cfg(not(target_os = "linux"))]
         SummonKey::DoubleTap(_) => Box::new(moe_platform::UnsupportedSummon),
         SummonKey::Combo { .. } => Box::new(moe_platform::UnsupportedSummon),
@@ -753,18 +781,19 @@ fn main() {
     let accelerator = accelerator(&config.summon.key);
     let is_double_tap = matches!(config.summon.key, SummonKey::DoubleTap(_));
     let summon_label = key_label(&config.summon.key);
-    // `moe --toggle`：冷启动时直接亮面板；已运行时由单实例回调转发为切换。
+    // `moe --toggle`: shows the panel directly on a cold start; an already-running instance forwards it as a toggle via the single-instance callback.
     let toggle_on_start = std::env::args().any(|arg| arg == "--toggle");
-    eprintln!("moe: 启动，呼出键 = {summon_label}");
+    eprintln!("moe: started, summon key = {summon_label}");
 
     let builder = tauri::Builder::default()
-        // 单实例必须最先注册：`moe --toggle` 由第二个进程转发给已在运行的实例
-        // （Wayland 下没有全局键盘拦截时的 WM 绑定路径，IIE4AD-350）
+        // Single instance must be registered first: `moe --toggle` is forwarded from the second
+        // process to the running instance (the WM binding path when Wayland has no global key
+        // interception, IIE4AD-350)
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            eprintln!("moe: 已有实例在运行，转发请求：{argv:?}");
+            eprintln!("moe: an instance is already running, forwarding request: {argv:?}");
             toggle_panel(app);
         }))
-        // 开机自启（LaunchAgent；tray 里的勾选项，IIE4AD-362）
+        // Launch at login (LaunchAgent; the tray checkbox, IIE4AD-362)
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -788,7 +817,7 @@ fn main() {
             last_shown: Mutex::new(None),
         });
 
-    // NSPanel 支持（macOS）：必须在 to_panel 之前注册
+    // NSPanel support (macOS): must be registered before to_panel
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
 
@@ -799,7 +828,7 @@ fn main() {
             if let Some(accel) = accelerator {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
                 if let Err(err) = app.global_shortcut().register(accel.as_str()) {
-                    eprintln!("moe: 无法注册呼出组合键 {accel}: {err}");
+                    eprintln!("moe: failed to register summon combo {accel}: {err}");
                 }
             }
 
@@ -809,16 +838,17 @@ fn main() {
                 let summon_handle = handle.clone();
                 listener.start(Box::new(move |event| match event {
                     SummonEvent::Summon => toggle_panel(&summon_handle),
-                    // 授权生效：通知面板收起引导条
+                    // Permission granted: tell the panel to dismiss the guidance banner
                     SummonEvent::Authorized => {
                         let _ = summon_handle.emit("summon-authorized", ());
                     }
                 }));
             }
 
-            // macOS：把窗口原地换成 NSPanel。普通 NSWindow 在应用被激活时会被
-            // 系统拉回自己的 Space；NSPanel（非激活）才能浮在任何全屏应用之上，
-            // 并且不把菜单栏抢走（ADR-0008 的浮层语义）。
+            // macOS: convert the window in place into an NSPanel. A normal NSWindow gets pulled
+            // back to its own Space by the system when the app is activated; an NSPanel
+            // (non-activating) can float above any full-screen app without stealing the menu bar
+            // (the floating semantics of ADR-0008).
             #[cfg(target_os = "macos")]
             if let Some(window) = handle.get_webview_window("panel") {
                 match window.to_panel::<MoePanel>() {
@@ -833,16 +863,16 @@ fn main() {
                         if let Err(err) = panel.add_style_mask(
                             tauri_nspanel::objc2_app_kit::NSWindowStyleMask::NonactivatingPanel,
                         ) {
-                            eprintln!("moe: NonactivatingPanel 样式设置失败: {err:?}");
+                            eprintln!("moe: failed to set NonactivatingPanel style: {err:?}");
                         }
-                        // NSPanel 默认失活即隐藏；显隐由呼出键控制
+                        // NSPanels hide on deactivation by default; visibility is controlled by the summon key
                         panel.set_hides_on_deactivate(false);
                     }
-                    Err(err) => eprintln!("moe: 转换为 NSPanel 失败（回退普通窗口）: {err}"),
+                    Err(err) => eprintln!("moe: failed to convert to NSPanel (falling back to a normal window): {err}"),
                 }
             }
 
-            // 侧栏窗口同款浮层：不抢激活、可出现在任意 Space（含全屏应用之上）。
+            // The side view window gets the same floating treatment: never activates, can appear on any Space (including above full-screen apps).
             #[cfg(target_os = "macos")]
             if let Some(window) = handle.get_webview_window("chat") {
                 match window.to_panel::<MoeChatPanel>() {
@@ -857,31 +887,33 @@ fn main() {
                         if let Err(err) = panel.add_style_mask(
                             tauri_nspanel::objc2_app_kit::NSWindowStyleMask::NonactivatingPanel,
                         ) {
-                            eprintln!("moe: chat 的 NonactivatingPanel 样式设置失败: {err:?}");
+                            eprintln!("moe: failed to set NonactivatingPanel style for chat: {err:?}");
                         }
                         panel.set_hides_on_deactivate(false);
                     }
-                    Err(err) => eprintln!("moe: chat 转换为 NSPanel 失败（回退普通窗口）: {err}"),
+                    Err(err) => eprintln!("moe: failed to convert chat to NSPanel (falling back to a normal window): {err}"),
                 }
             }
 
-            // 菜单栏常驻（IIE4AD-347）：无 Dock 图标、不参与 ⌘-Tab（Raycast 同款）
+            // Menu bar resident (IIE4AD-347): no Dock icon, not in ⌘-Tab (Raycast-style)
             #[cfg(target_os = "macos")]
             {
                 let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
             if let Err(err) = build_tray(app) {
-                eprintln!("moe: tray 创建失败: {err}");
+                eprintln!("moe: failed to create tray: {err}");
             }
 
-            // `moe --toggle` 冷启动：没有旧实例可转发，直接把面板亮出来
+            // `moe --toggle` cold start: no old instance to forward to, so show the panel directly
             if toggle_on_start {
                 toggle_panel(&handle);
             }
 
-            // 有 tray 后启动不再无条件展示面板：仅当呼出监听需要引导（macOS 缺授权 /
-            // Linux Wayland 等双击不可用）时展示。监听线程启动是毫秒级但异步，直接查
-            // 会命中初始状态而误弹，因此给 600ms 宽限期后再决定。
+            // With the tray in place, startup no longer shows the panel unconditionally: it shows
+            // only when the summon listener needs guidance (missing macOS permission / double-tap
+            // unavailable on Linux Wayland etc.). The listener thread starts within milliseconds
+            // but asynchronously, so an immediate check would hit the initial state and misfire —
+            // hence a 600ms grace period before deciding.
             let probe = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(600));
@@ -904,7 +936,7 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 侧栏：记住用户拖拽/缩放后的位置与尺寸（IIE4AD-369），不参与失焦收起
+            // Side view: remember the position and size after the user drags/resizes (IIE4AD-369); it does not participate in blur-to-dismiss
             if window.label() == "chat" {
                 if matches!(
                     event,
@@ -915,9 +947,9 @@ fn main() {
                 }
                 return;
             }
-            // 失焦即收起（Raycast 同款）；tray 已提供返回入口，可安全启用。
-            // 刚展示的 300ms 内忽略失焦：非激活面板成为 key window 的过程
-            // 会产生瞬态 Focused(false)，不设护栏会「闪一下就消失」。
+            // Dismiss on blur (Raycast-style); the tray provides a way back, so it's safe to enable.
+            // Ignore blur within 300ms of showing: a non-activating panel becoming the key window
+            // produces a transient Focused(false), and without this guard it would "flash and vanish".
             if window.label() != "panel" || !window.is_visible().unwrap_or(false) {
                 return;
             }
@@ -931,7 +963,7 @@ fn main() {
                     return;
                 }
                 let _ = window.hide();
-                eprintln!("moe: 失焦，面板已收起");
+                eprintln!("moe: blurred, panel dismissed");
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -943,6 +975,8 @@ fn main() {
             run_item_action,
             delete_item,
             delete_all,
+            delete_suggestion,
+            clear_suggestions,
             hide_panel,
             stop_generation,
             resolve_attachment,
@@ -974,12 +1008,12 @@ mod tests {
     #[test]
     fn centers_window_in_monitor() {
         assert_eq!(centered_on((0, 0), (1920, 1080), (680, 420)), (620, 330));
-        // 第二块屏（macOS 允许排布在主屏左侧，坐标为负）也要正确
+        // A second monitor (macOS allows placing it left of the main screen, with negative coordinates) must also be correct
         assert_eq!(
             centered_on((-1920, 0), (1920, 1080), (680, 420)),
             (-1300, 330)
         );
-        // 窗口比屏幕大时不越界（saturating 归零偏移）
+        // A window larger than the screen stays in bounds (saturating zeroes the offset)
         assert_eq!(centered_on((0, 0), (600, 400), (680, 420)), (0, 0));
     }
 
@@ -999,7 +1033,7 @@ mod tests {
         );
     }
 
-    /// 启动引导的触发条件（IIE4AD-350）：双击不可用时要弹一次面板给替代路径。
+    /// Startup guidance trigger (IIE4AD-350): when double-tap is unavailable, show the panel once to offer alternatives.
     #[test]
     fn startup_shows_panel_only_when_summon_needs_guidance() {
         let double = SummonKey::parse("double-cmd").unwrap();
@@ -1013,12 +1047,12 @@ mod tests {
     #[test]
     fn docks_side_view_to_right_edge() {
         assert_eq!(right_docked_on((0, 0), (1920, 1080), (420, 800)), (1500, 0));
-        // 第二块屏（macOS 允许排布在主屏左侧，坐标为负）也要正确
+        // A second monitor (macOS allows placing it left of the main screen, with negative coordinates) must also be correct
         assert_eq!(
             right_docked_on((-1920, 0), (1920, 1080), (420, 800)),
             (-420, 0)
         );
-        // 窗口比屏幕宽时不越界（saturating 归零偏移）
+        // A window wider than the screen stays in bounds (saturating zeroes the offset)
         assert_eq!(right_docked_on((0, 0), (300, 200), (420, 800)), (0, 0));
     }
 }

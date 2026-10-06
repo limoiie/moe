@@ -1,4 +1,4 @@
-//! Command 契约：输入种类 × Item 流输出，回写由平台统一执行（ADR-0006）。
+//! Command contract: input kinds × streaming Item output; write-back is performed centrally by the platform (ADR-0006).
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -6,35 +6,35 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum InputKind {
-    /// 直接执行，不依赖输入。
+    /// Executes directly, with no input dependency.
     None,
-    /// 依赖 Input Bar 的查询文本。
+    /// Depends on the Input Bar query text.
     Query,
-    /// 呼出时自动抓取 Selection；缺失时降级到光标模式。
+    /// Grabs the Selection automatically when summoned; falls back to cursor mode when missing.
     Selection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ActionKind {
-    /// Enter 触发的主操作（Apply）。每个 Item 有且只有一个 Primary 动作。
+    /// Primary action triggered by Enter (Apply). Every Item has exactly one Primary action.
     Primary,
-    /// 具名替代操作，各有固定快捷键。
+    /// Named alternative actions, each with its own fixed shortcut.
     Secondary,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Action {
-    /// Extension 内的稳定标识，路由回 `run_item_action`。
+    /// Stable identifier within the Extension, routed back to `run_item_action`.
     pub id: String,
     pub title: String,
     pub kind: ActionKind,
-    /// 展示用快捷键（如 "⌥⏎"）。系统级键位由平台 Keymap 提供，此处只放扩展自定义的。
+    /// Display shortcut (e.g. "⌥⏎"). System-level keybindings come from the platform Keymap; this field only holds extension-defined ones.
     pub keybinding: Option<String>,
 }
 
-/// `Item.pending` 的 serde 辅助：false 时不下发（旧读取方不受影响）。
+/// serde helper for `Item.pending`: omitted when false (older readers unaffected).
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -46,38 +46,38 @@ pub struct Item {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
-    /// 图标语义名（平台图标集，如 Lucide 的 "sparkles"；ADR-0012）。UI 决定具体图形，未知名回退默认。
+    /// Semantic icon name (platform icon set, e.g. Lucide's "sparkles"; ADR-0012). The UI picks the actual glyph; unknown names fall back to a default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
-    /// 第一个动作即 Apply 语义；Show All Actions（⌘K）展开全部。
+    /// The first action carries the Apply semantic; Show All Actions (⌘K) expands all of them.
     pub actions: Vec<Action>,
-    /// 对 UI 不透明，动作执行时原样送回 Extension。
+    /// Opaque to the UI; sent back to the Extension verbatim when an action runs.
     pub payload: serde_json::Value,
-    /// 详情内容（Markdown，详情视图卡片渲染）；流式回答在此累积。
+    /// Detail content (Markdown, rendered in the detail view card); streaming answers accumulate here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-    /// 仍在产出中（流式占位）：平台的键位层在 Esc 时优先请求停止生成（IIE4AD-365）。
+    /// Still being produced (streaming placeholder): the platform's keybinding layer prioritizes requesting stop generation on Esc (IIE4AD-365).
     #[serde(default, skip_serializing_if = "is_false")]
     pub pending: bool,
 }
 
-/// Apply 或任一动作执行后的结果。输出类型不封闭枚举——List 中的 Item
-/// 可再次产出 WriteBack / List，可组合性代替枚举（ADR-0006）。
+/// Result after Apply or any action runs. The output type is not a closed enum — Items in a
+/// List can in turn produce WriteBack / List; composition replaces the enum (ADR-0006).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ActionResult {
-    /// 交平台经 TextTarget 回写：替换 Selection，或插入光标处。
+    /// Handed to the platform for write-back via TextTarget: replace the Selection, or insert at the cursor.
     WriteBack {
         text: String,
     },
     List {
         items: Vec<Item>,
-        /// 详情是否整屏：结果只有一条且它本身就是内容时为 true（AI 回答、通知）。
-        /// 多条结果（如历史搜索）保持「左列表 + 右详情」，由 Extension 声明而非 UI 猜（ADR-0013）。
+        /// Whether the detail fills the screen: true when there is a single result and it is itself the content (AI answers, notifications).
+        /// Multiple results (e.g. history search) keep "list on the left + detail on the right", declared by the Extension instead of guessed by the UI (ADR-0013).
         #[serde(default, skip_serializing_if = "is_false")]
         detail_full: bool,
     },
-    /// 触发 Materialize：该 Extension 的 Side View，携带开窗所需载荷。
+    /// Triggers Materialize: opens the Extension's Side View, carrying the payload needed to open it.
     OpenSideView {
         payload: serde_json::Value,
     },
@@ -85,7 +85,7 @@ pub enum ActionResult {
 }
 
 impl ActionResult {
-    /// 列表视图：左列表 + 右详情（多条结果，如历史搜索、动作清单）。
+    /// List view: list on the left + detail on the right (multiple results, e.g. history search, action list).
     pub fn list(items: Vec<Item>) -> Self {
         Self::List {
             items,
@@ -93,7 +93,7 @@ impl ActionResult {
         }
     }
 
-    /// 详情视图：只有一条结果且它本身即内容（AI 回答、系统通知），详情占满面板。
+    /// Detail view: a single result that is itself the content (AI answers, system notifications); the detail fills the panel.
     pub fn detail(items: Vec<Item>) -> Self {
         Self::List {
             items,
@@ -105,24 +105,24 @@ impl ActionResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandMeta {
-    /// 全局唯一，约定 `"{extension_id}.{command}"`。
+    /// Globally unique, by convention `"{extension_id}.{command}"`.
     pub id: String,
     pub extension_id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
-    /// 图标语义名（ADR-0012）。缺省时 UI 用来源 Command 的图标，再回退默认图形。
+    /// Semantic icon name (ADR-0012). When absent, the UI uses the source Command's icon, then falls back to a default glyph.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
     pub input: InputKind,
-    /// Live 列表：Input Bar 变化即用新查询重跑本命令（如历史搜索）；
-    /// false 时输入只用于命令盘检索（默认）。
+    /// Live list: each Input Bar change re-runs this command with the new query (e.g. history search);
+    /// when false, input is only used for command palette search (default).
     pub live: bool,
 }
 
-/// 命令盘搜索结果的一个分组（Raycast 同款 section，ADR-0020）：
-/// **来源即分组**——每个 Extension 一个 section，组头用扩展名；
-/// 将来加新来源（文件搜索等）就是加一个新 section，不需要单独的分组规则。
+/// One group of command palette search results (Raycast-style section, ADR-0020):
+/// **source = group** — one section per Extension, headed by the extension name;
+/// future sources (file search, etc.) just add a new section, no separate grouping rules needed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandSection {
@@ -130,8 +130,9 @@ pub struct CommandSection {
     pub items: Vec<CommandMeta>,
 }
 
-/// 呼出面板前抓到的「选择」上下文（ADR-0021）：文字选区与（Finder）选中的文件
-/// 可以同时存在；文件是绝对路径（POSIX）。传给 fallback / invoke 的语义同 ADR-0002/0019 的选区。
+/// The "selection" context captured before summoning the panel (ADR-0021): a text selection and
+/// files selected (in Finder) can coexist; files are absolute paths (POSIX). The semantics passed
+/// to fallback / invoke match the selection of ADR-0002/0019.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Selection {
@@ -140,31 +141,31 @@ pub struct Selection {
 }
 
 impl Selection {
-    /// 原始文字选区（可能带前后空白；消费方自行 trim 判空）。
+    /// Raw text selection (may carry surrounding whitespace; consumers trim to check emptiness).
     pub fn text(&self) -> Option<&str> {
         self.text.as_deref()
     }
 
-    /// 是否夹带了文件选择。
+    /// Whether a file selection was attached.
     pub fn has_files(&self) -> bool {
         !self.files.is_empty()
     }
 }
 
-/// 平台通用入口（ADR-0014）：三个通用动作 Browse（⌘P）/ New（⌘N）
-/// 的落地方式——平台定键位与路由，入口由 Extension 声明。
+/// Platform general entries (ADR-0014): the landing points for the general actions
+/// Browse (⌘P) / New (⌘N) — the platform fixes keybindings and routing; entries are declared by Extensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EntryKind {
-    /// Browse（⌘P）：该 Extension 的记录列表（AI = 历史会话）。
+    /// Browse (⌘P): the Extension's record list (AI = conversation history).
     Browse,
-    /// New（⌘N）：新建一条记录（AI = 新会话）。
+    /// New (⌘N): create a new record (AI = new conversation).
     New,
 }
 
 #[derive(Debug)]
 pub enum MoeError {
-    /// 平台能力需要授权（macOS 辅助功能），调用方应展示内联引导。
+    /// Platform capability requires permission (macOS Accessibility); callers should show inline guidance.
     PermissionRequired,
     Unsupported,
     NotFound,
@@ -184,8 +185,8 @@ impl std::fmt::Display for MoeError {
 
 impl std::error::Error for MoeError {}
 
-/// 命令执行期间的增量事件（流式回答走 Item 语义：按 id 就地更新）。
-/// 注意：枚举上的 `rename_all` 只改变体名；struct 变体字段需要 `rename_all_fields`。
+/// Incremental events during command execution (streaming answers follow Item semantics: updated in place by id).
+/// Note: `rename_all` on the enum only renames variant names; struct variant fields need `rename_all_fields`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum CommandEvent {
@@ -193,19 +194,19 @@ pub enum CommandEvent {
         command_id: String,
         item: Item,
     },
-    /// 后台生成**自然完成**后的自动回写请求（AI 命令流式完成 → 替换选区，ADR-0024）。
-    /// 平台层拦截执行（回写 + 收起面板），不转发给 UI；被停止（Esc）的生成不发。
+    /// Automatic write-back request after background generation **completes naturally** (AI command streaming done → replace selection, ADR-0024).
+    /// The platform layer intercepts and executes it (write-back + dismiss the panel) without forwarding to the UI; generation stopped via Esc does not emit it.
     WriteBack {
         text: String,
     },
 }
 
-/// 增量事件出口。worker 线程也会发事件，因此要求线程安全。
+/// Incremental event outlet. Worker threads may emit events too, so it must be thread-safe.
 pub trait Emitter: Send + Sync {
     fn emit(&self, event: CommandEvent);
 }
 
-/// 无事件出口（非流式调用方）。
+/// No-op event outlet (non-streaming callers).
 pub struct NoopEmitter;
 
 impl Emitter for NoopEmitter {
@@ -213,12 +214,12 @@ impl Emitter for NoopEmitter {
 }
 
 pub trait Extension: Send + Sync {
-    /// Namespace 键（ADR-0003）：存储与历史都隔离在它之下。
+    /// Namespace key (ADR-0003): storage and history are isolated beneath it.
     fn id(&self) -> &str;
     fn title(&self) -> &str;
     fn commands(&self) -> Vec<CommandMeta>;
 
-    /// 命令盘里 Apply 一个 Command。
+    /// Apply a Command in the command palette.
     fn invoke(
         &self,
         command_id: &str,
@@ -226,7 +227,7 @@ pub trait Extension: Send + Sync {
         selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError>;
 
-    /// 带增量事件的执行入口；默认回落 [`Extension::invoke`]（非流式扩展不需实现）。
+    /// Execution entry with incremental events; falls back to [`Extension::invoke`] by default (non-streaming extensions need not implement it).
     fn invoke_streaming(
         &self,
         command_id: &str,
@@ -237,9 +238,9 @@ pub trait Extension: Send + Sync {
         self.invoke(command_id, query, selection)
     }
 
-    /// 搜索无匹配时提供的「捕获式」命令（如 AI: 提问「…」）；默认无。
-    /// `selection` 是呼出面板前抓到的选择上下文（文字选区 + Finder 选中文件），
-    /// 供扩展在副标题里提示「已附上下文/文件」等。
+    /// The "catch-all" command offered when search has no matches (e.g. AI: Ask "…"); none by default.
+    /// `selection` is the selection context captured before summoning the panel (text selection + files selected in Finder),
+    /// letting the extension hint "context/files attached" in its subtitle.
     fn fallback_command(
         &self,
         _query: &str,
@@ -248,30 +249,30 @@ pub trait Extension: Send + Sync {
         None
     }
 
-    /// 「记录列表」入口（Browse，⌘P）：AI = 历史会话。默认无——
-    /// 没有记录的 Extension 不声明，平台对该键位给一次内联提示（ADR-0014）。
+    /// "Record list" entry (Browse, ⌘P): AI = conversation history. None by default —
+    /// Extensions without records don't declare it, and the platform shows a one-off inline hint for that keybinding (ADR-0014).
     fn browse_command(&self) -> Option<CommandMeta> {
         None
     }
 
-    /// 「新建记录」入口（New，⌘N）：AI = 新会话。默认无（同上）。
+    /// "New record" entry (New, ⌘N): AI = new conversation. None by default (same as above).
     fn new_command(&self) -> Option<CommandMeta> {
         None
     }
 
-    /// 删除当前记录（通用动作 Delete，默认 ⌃X，ADR-0022）：
-    /// 作用于给定 item（如 AI 历史里的某条会话），返回实际删除条数。默认无此能力。
+    /// Delete the current record (general action Delete, default ⌃X, ADR-0022):
+    /// acts on the given item (e.g. one conversation in AI history), returning the number of records actually deleted. Not available by default.
     fn delete_item(&self, _command_id: &str, _item: &Item) -> Result<usize, MoeError> {
         Err(MoeError::NotFound)
     }
 
-    /// 删除全部记录（通用动作 DeleteAll，默认 ⌃⇧X，ADR-0022）：
-    /// 作用于该 Command 的记录空间（Namespace 隔离），返回实际删除条数。默认无此能力。
+    /// Delete all records (general action DeleteAll, default ⌃⇧X, ADR-0022):
+    /// acts on the record space of that Command (isolated by Namespace), returning the number of records actually deleted. Not available by default.
     fn delete_all(&self, _command_id: &str) -> Result<usize, MoeError> {
         Err(MoeError::NotFound)
     }
 
-    /// Item 流的下一步：对 Item 执行其某个动作（默认无动作可执行）。
+    /// Next step of the Item stream: run one of the Item's actions (no action available by default).
     fn run_item_action(
         &self,
         _command_id: &str,
@@ -281,8 +282,8 @@ pub trait Extension: Send + Sync {
         Err(MoeError::NotFound)
     }
 
-    /// Side View 续聊（ADR-0004）：空 id 表示新建会话；返回实际会话 id。
-    /// 回复在后台流式产出，经 `CommandEvent` 增量送达（command_id 约定 `ai.side`）。
+    /// Continue a conversation in the Side View (ADR-0004): an empty id means a new conversation; returns the actual conversation id.
+    /// Replies are streamed in the background and delivered incrementally via `CommandEvent` (command_id convention: `ai.side`).
     fn side_continue(
         &self,
         _conversation_id: &str,
@@ -292,8 +293,8 @@ pub trait Extension: Send + Sync {
         Err(MoeError::NotFound)
     }
 
-    /// 请求停止本 Extension 正在进行的生成，返回被中止的生成数（默认无此能力）。
-    /// 平台级 Esc 在 Focused Item 为 `pending` 时优先调用它（IIE4AD-365）。
+    /// Request stopping this Extension's in-flight generation; returns the number of generations aborted (not available by default).
+    /// The platform-level Esc prioritizes calling it when the Focused Item is `pending` (IIE4AD-365).
     fn stop_generation(&self) -> usize {
         0
     }
@@ -303,15 +304,15 @@ pub trait Extension: Send + Sync {
 mod tests {
     use super::*;
 
-    /// 回归：枚举的 rename_all 只改变体名，struct 变体字段需 rename_all_fields；
-    /// UI 按 `payload.itemUpdated.commandId` 读取（曾因 snake_case 静默丢更新）。
+    /// Regression: the enum's rename_all only renames variant names; struct variant fields need rename_all_fields;
+    /// the UI reads `payload.itemUpdated.commandId` (snake_case once silently dropped updates).
     #[test]
     fn command_event_serializes_camel_case_for_ui() {
         let event = CommandEvent::ItemUpdated {
             command_id: "ai.quick-ask".into(),
             item: Item {
                 id: "ai.answer".into(),
-                title: "AI 回答".into(),
+                title: "AI Answer".into(),
                 subtitle: None,
                 actions: vec![],
                 payload: serde_json::Value::Null,
@@ -325,17 +326,17 @@ mod tests {
         assert_eq!(json["itemUpdated"]["item"]["id"], "ai.answer");
     }
 
-    /// 自动回写事件（ADR-0024）：形状稳定，平台层拦截用。
+    /// Automatic write-back event (ADR-0024): the shape is stable; used by the platform layer for interception.
     #[test]
     fn write_back_event_serializes() {
         let json = serde_json::to_value(CommandEvent::WriteBack {
-            text: "改写后的文本".into(),
+            text: "rewritten text".into(),
         })
         .unwrap();
-        assert_eq!(json["writeBack"]["text"], "改写后的文本");
+        assert_eq!(json["writeBack"]["text"], "rewritten text");
     }
 
-    /// 选择上下文（ADR-0021）：文字 + 文件同进同出，camelCase 形状稳定。
+    /// Selection context (ADR-0021): text + files round-trip together; the camelCase shape is stable.
     #[test]
     fn selection_round_trips_through_serde() {
         let selection = Selection {
@@ -349,7 +350,7 @@ mod tests {
         assert_eq!(back, selection);
         assert_eq!(back.text(), Some("hello"));
         assert!(back.has_files());
-        // 空上下文（只有文件 / 只有文字）都能表达
+        // Empty contexts (files only / text only) are both expressible
         assert!(!Selection::default().has_files());
         assert_eq!(Selection::default().text(), None);
     }
@@ -357,25 +358,25 @@ mod tests {
     fn answer() -> Item {
         Item {
             id: "ai.answer".into(),
-            title: "AI 回答".into(),
+            title: "AI Answer".into(),
             subtitle: None,
             icon: None,
             actions: vec![],
             payload: serde_json::Value::Null,
-            detail: Some("正文".into()),
+            detail: Some("Answer body".into()),
             pending: false,
         }
     }
 
-    /// 视图形态由 Extension 声明（ADR-0013）：UI 按 `list.detailFull` 决定
-    /// 详情整屏还是「左列表 + 右详情」，不再用 items 条数猜。
+    /// View layout is declared by the Extension (ADR-0013): the UI uses `list.detailFull` to decide
+    /// between full-screen detail and "list on the left + detail on the right", instead of guessing from item count.
     #[test]
     fn action_result_declares_view_layout() {
         let detail = serde_json::to_value(ActionResult::detail(vec![answer()])).unwrap();
         assert_eq!(detail["list"]["detailFull"], true);
 
         let list = serde_json::to_value(ActionResult::list(vec![answer()])).unwrap();
-        // 列表视图省略该字段（旧的 list 结果反序列化后仍是列表，向后兼容）
+        // List view omits this field (old list results still deserialize as lists, backward compatible)
         assert!(list["list"].get("detailFull").is_none());
         let legacy: ActionResult = serde_json::from_value(list).unwrap();
         assert_eq!(legacy, ActionResult::list(vec![answer()]));

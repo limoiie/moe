@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -17,28 +17,28 @@
         <span data-tauri-drag-region class="flex min-w-0 flex-1 items-center gap-2">
           <span id="chat-icon" class="text-zinc-500"></span>
           <span id="chat-title" data-tauri-drag-region class="min-w-0 truncate font-medium">
-            AI 对话
+            AI Chat
           </span>
         </span>
         <div class="flex shrink-0 items-center gap-0.5">
           <button
             id="actions-button"
-            title="更多操作"
+            title="More Actions"
             class="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
           ></button>
           <button
             id="history-button"
-            title="历史会话"
+            title="Chat History"
             class="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
           ></button>
           <button
             id="new-chat"
-            title="新对话"
+            title="New Chat"
             class="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
           ></button>
           <button
             id="close"
-            title="收起（Esc）"
+            title="Hide (Esc)"
             class="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
           ></button>
         </div>
@@ -54,7 +54,7 @@
         <input
           id="attach-path"
           class="min-w-0 flex-1 bg-transparent text-zinc-100 placeholder-zinc-500 outline-none"
-          placeholder="粘贴文件路径，Enter 添加附件（Esc 取消；支持 ~ 与空格路径）"
+          placeholder="Paste a file path, Enter to attach (Esc cancels; ~ and paths with spaces supported)"
           spellcheck="false"
         />
         <span id="attach-msg" class="shrink-0"></span>
@@ -63,7 +63,7 @@
         <textarea
           id="composer"
           rows="3"
-          placeholder="继续对话…（Enter 发送，Shift+Enter 换行）"
+          placeholder="Continue the conversation… (Enter to send, Shift+Enter for a new line)"
           spellcheck="false"
           class="w-full resize-none bg-transparent px-2 py-1 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
         ></textarea>
@@ -71,13 +71,13 @@
           <button
             id="attach"
             class="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-100"
-            title="添加附件（路径输入）"
+            title="Add attachment (path input)"
           ></button>
           <button id="send" class="flex items-center gap-1 rounded-md px-3 py-1 text-xs"></button>
         </div>
       </footer>
 
-      <!-- 悬浮历史卡（顶部居中，点击历史按钮/⌘P 展开） -->
+      <!-- Floating history card (centered at the top; open via the history button / ⌘P) -->
       <div
         id="history-card"
         class="absolute left-1/2 top-12 z-30 hidden w-96 -translate-x-1/2 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 shadow-2xl backdrop-blur-xl"
@@ -85,13 +85,13 @@
         <input
           id="history-search"
           class="w-full border-b border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
-          placeholder="搜索历史会话…"
+          placeholder="Search chat history…"
           spellcheck="false"
         />
         <ul id="history-list" class="max-h-80 overflow-y-auto p-1"></ul>
       </div>
 
-      <!-- 更多操作菜单（⌘ 按钮 / ⌘⇧P） -->
+      <!-- More Actions menu (⌘ button / ⌘⇧P) -->
       <div
         id="actions-menu"
         class="absolute right-3 top-11 z-30 hidden w-52 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 p-1 shadow-2xl backdrop-blur-xl"

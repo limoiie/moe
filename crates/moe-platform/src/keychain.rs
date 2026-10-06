@@ -1,11 +1,11 @@
-//! AI API key 存储（ADR-0005 的 ADR-0019 增补）：0600 本地文件，不进配置文件。
+//! AI API key storage (ADR-0019 amending ADR-0005): a 0600 local file, not the config file.
 //!
-//! 为什么不用系统钥匙串：未签名应用访问钥匙串时，macOS 会把每次访问都当成「未知应用」，
-//! 反复弹「改进安全性 / 输入 login 钥匙串密码」——因为钥匙串的 ACL 绑定应用的代码签名，
-//! 而我们没有签名（ADR-0011）。Raycast 不弹是因为它有 Apple Developer ID 签名。
-//! 0600 文件是同 gh CLI 存 token 的做法：只有当前用户能读，本机桌面应用够用。
+//! Why not the system keychain: for unsigned apps, macOS treats every keychain access as an "unknown app"
+//! and repeatedly prompts "Improve security / enter login keychain password" — the keychain ACL is bound to the app's code signature,
+//! which we don't have (ADR-0011). Raycast doesn't prompt because it has an Apple Developer ID signature.
+//! A 0600 file is how the gh CLI stores tokens: readable only by the current user, good enough for a local desktop app.
 //!
-//! 读取顺序：文件 →（macOS 一次性迁移）旧钥匙串 → 环境变量 `MOE_AI_API_KEY`。
+//! Read order: file → (macOS one-time migration) legacy keychain → environment variable `MOE_AI_API_KEY`.
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +25,7 @@ fn read_key_file_at(path: &Path) -> Option<String> {
         .filter(|key| !key.is_empty())
 }
 
-/// 写 0600 密钥文件（Unix；Windows 忽略 mode，等同普通文件）。
+/// Write a 0600 key file (Unix; Windows ignores the mode, same as a regular file).
 fn write_key_file_at(path: &Path, key: &str) -> Result<(), String> {
     use std::io::Write;
     if let Some(dir) = path.parent() {
@@ -49,8 +49,8 @@ pub fn ai_api_key() -> Option<String> {
     {
         return Some(key);
     }
-    // 一次性迁移：旧版本把 key 存在系统钥匙串里。读到就落盘并清掉，
-    // 让未签名应用以后不再触发钥匙串的授权弹窗。
+    // One-time migration: older versions stored the key in the system keychain. Persist it to disk when found,
+    // so the unsigned app no longer triggers keychain permission prompts.
     #[cfg(target_os = "macos")]
     {
         let migrated = keyring::Entry::new(SERVICE, ACCOUNT)
@@ -83,7 +83,7 @@ pub fn set_ai_api_key(key: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// 密钥文件往返 + 0600 权限（Unix）。
+    /// Key file round-trip + 0600 permissions (Unix).
     #[test]
     fn key_file_round_trips_with_private_permissions() {
         let path = std::env::temp_dir().join(format!("moe-key-{}.tmp", std::process::id()));
@@ -94,7 +94,11 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&path).expect("meta").permissions().mode();
-            assert_eq!(mode & 0o777, 0o600, "密钥文件只允许当前用户读写");
+            assert_eq!(
+                mode & 0o777,
+                0o600,
+                "key file must be readable/writable only by the current user"
+            );
         }
         let _ = std::fs::remove_file(&path);
     }

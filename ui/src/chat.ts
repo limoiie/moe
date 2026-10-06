@@ -11,7 +11,7 @@ import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
 import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
 
-/** 侧栏续聊事件约定（moe-extensions::ai::SIDE_COMMAND_ID）。 */
+/** Side View continue-chat event contract (moe-extensions::ai::SIDE_COMMAND_ID). */
 const SIDE_COMMAND_ID = "ai.side";
 
 const chatIconEl = document.querySelector<HTMLSpanElement>("#chat-icon")!;
@@ -37,14 +37,14 @@ const toastEl = document.querySelector<HTMLDivElement>("#toast")!;
 const toastIconEl = document.querySelector<HTMLSpanElement>("#toast-icon")!;
 const toastTextEl = document.querySelector<HTMLSpanElement>("#toast-text")!;
 
-/** 当前会话；null = 空状态（首次发送会自动新建）。 */
+/** Current conversation; null = empty state (a new one is created on first send). */
 let conversationId: string | null = null;
-/** 正在流式更新的回答气泡（首次事件时才建）。 */
+/** The answer bubble being streamed into (created on the first event). */
 let streaming: StreamingBubble | null = null;
 let sending = false;
-/** 后端仍在生成（收到 pending=false 或主动停止后结束）。 */
+/** The backend is still generating (ends on pending=false or an explicit stop). */
 let generating = false;
-/** 最近一次加载的会话列表（历史卡与 ⌃[/⌃] 步进共用）。 */
+/** The most recently loaded conversation list (shared by the history card and ⌃[/⌃] stepping). */
 let conversations: Conversation[] = [];
 
 interface StreamingBubble {
@@ -53,20 +53,20 @@ interface StreamingBubble {
   indicator: HTMLElement;
 }
 
-// ---- 固定图标（三个头部按钮靠右：更多操作 / 历史 / 新建对话）----
+// ---- Fixed icons (three header buttons on the right: More Actions / History / New Chat) ----
 
 chatIconEl.replaceChildren(iconEl("sparkles", { size: 15 }));
 actionsButtonEl.replaceChildren(iconEl("command", { size: 16 }));
 historyButtonEl.replaceChildren(iconEl("history", { size: 16 }));
 newChatEl.replaceChildren(iconEl("plus", { size: 16 }));
 closeEl.replaceChildren(iconEl("close", { size: 16 }));
-attachEl.replaceChildren(iconEl("paperclip", { size: 14 }), document.createTextNode("附件"));
-// 三个通用动作的 tooltip 也取自共享键位（ADR-0014），避免与键位表漂移
-actionsButtonEl.title = `更多操作（${GENERAL_KEY_LABELS.actions}）`;
-historyButtonEl.title = `历史会话（${GENERAL_KEY_LABELS.browse}）`;
-newChatEl.title = `新对话（${GENERAL_KEY_LABELS.new}）`;
+attachEl.replaceChildren(iconEl("paperclip", { size: 14 }), document.createTextNode("Attachment"));
+// The three generic-action tooltips also come from the shared keymap (ADR-0014), so they can't drift from the keymap table
+actionsButtonEl.title = `More Actions (${GENERAL_KEY_LABELS.actions})`;
+historyButtonEl.title = `Chat History (${GENERAL_KEY_LABELS.browse})`;
+newChatEl.title = `New Chat (${GENERAL_KEY_LABELS.new})`;
 
-// ---- 轻量 toast（菜单动作的即时反馈，如「已打开配置文件」）----
+// ---- Lightweight toast (instant feedback for menu actions, e.g. "Config file opened") ----
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -82,7 +82,7 @@ function toast(text: string, icon = "check") {
   }, 1600);
 }
 
-// ---- 历史会话：顶部居中的悬浮卡（点击历史按钮 / ⌘P 展开）----
+// ---- Chat history: floating card centered at the top (open via the history button / ⌘P) ----
 
 let historyOpen = false;
 let historyIndex = 0;
@@ -144,7 +144,7 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
   const time = document.createElement("span");
   if (conversation.id === conversationId) {
     time.className = "shrink-0 text-[10px] text-sky-400/80";
-    time.textContent = "当前";
+    time.textContent = "Current";
   } else {
     time.className = "shrink-0 text-[10px] text-zinc-500";
     time.textContent = relativeTime(conversation.updatedUnix);
@@ -168,7 +168,7 @@ function renderConversations() {
   if (conversations.length === 0) {
     const query = historySearchEl.value.trim();
     historyListEl.replaceChildren(
-      emptyRow(query ? "没有匹配的会话" : "还没有历史会话：在下方输入即可开始新对话"),
+      emptyRow(query ? "No matching conversations" : "No chat history yet: type below to start a new conversation"),
     );
     return;
   }
@@ -186,13 +186,13 @@ async function loadConversations() {
       query: query || null,
     });
   } catch (err) {
-    setError(`读取历史失败：${String(err)}`);
+    setError(`Failed to load history: ${String(err)}`);
     return;
   }
   renderConversations();
 }
 
-/** 侧栏删除槽（ADR-0022）：历史卡开着时作用于卡内焦点行 / 全部，删完刷新卡片。 */
+/** Side View delete slot (ADR-0022): with the history card open it acts on the card's focused row / all, then refreshes the card. */
 async function deleteInCard(all: boolean) {
   const target = conversations[historyIndex];
   if (!all && !target) return;
@@ -204,8 +204,8 @@ async function deleteInCard(all: boolean) {
           item: conversationItem(target),
         });
     if (!count) return;
-    toast(all ? `已删除 ${count} 个会话` : "已删除会话");
-    // 当前会话被删：退回空状态，避免后续消息写进已不存在的会话
+    toast(all ? `Deleted ${count} conversations` : "Deleted conversation");
+    // The current conversation was deleted: back to the empty state so later messages don't write into a nonexistent conversation
     if (all || target.id === conversationId) newChat();
     else await loadConversations();
   } catch (err) {
@@ -213,16 +213,16 @@ async function deleteInCard(all: boolean) {
   }
 }
 
-/** 侧栏删除槽（ADR-0022）：卡片关着时作用于当前会话 / 全部会话。 */
+/** Side View delete slot (ADR-0022): with the card closed it acts on the current conversation / all conversations. */
 async function deleteCurrent(all: boolean) {
   try {
     if (all) {
       const count = await invoke<number>("delete_all", { commandId: "ai.search-history" });
       if (!count) {
-        toast("没有可删除的会话", "alert");
+        toast("No conversations to delete", "alert");
         return;
       }
-      toast(`已删除 ${count} 个会话`);
+      toast(`Deleted ${count} conversations`);
       newChat();
       return;
     }
@@ -239,14 +239,14 @@ async function deleteCurrent(all: boolean) {
       item,
     });
     if (!count) return;
-    toast("已删除当前会话");
+    toast("Deleted current conversation");
     newChat();
   } catch (err) {
     setError(String(err));
   }
 }
 
-/** 历史条目 → 删除钩子要的 Item（payload 携带 conversationId，其余字段合成）。 */
+/** History entry → the Item the delete hook wants (payload carries conversationId; other fields synthesized). */
 function conversationItem(conversation: Conversation) {
   return {
     id: `ai.conversation.${conversation.id}`,
@@ -289,7 +289,7 @@ historySearchEl.addEventListener("keydown", (e) => {
   }
 });
 
-// ---- 更多操作（⌘ 图标按钮）：菜单式，点击外部 / Esc 收起 ----
+// ---- More Actions (the ⌘ icon button): menu-style; close on outside click / Esc ----
 
 let actionsOpen = false;
 
@@ -306,16 +306,16 @@ function openConfig() {
     query: null,
     record: false,
   }).then(
-    () => toast("已打开配置文件"),
+    () => toast("Config file opened"),
     (err) => setError(String(err)),
   );
 }
 
 function menuActions(): MenuAction[] {
   return [
-    { label: "新对话", icon: "plus", shortcut: GENERAL_KEY_LABELS.new, run: newChat },
-    { label: "打开配置文件", icon: "settings-2", run: openConfig },
-    { label: "收起侧栏", icon: "close", shortcut: "Esc", run: () => void getCurrentWindow().hide() },
+    { label: "New Chat", icon: "plus", shortcut: GENERAL_KEY_LABELS.new, run: newChat },
+    { label: "Open Config File", icon: "settings-2", run: openConfig },
+    { label: "Hide Side View", icon: "close", shortcut: "Esc", run: () => void getCurrentWindow().hide() },
   ];
 }
 
@@ -362,7 +362,7 @@ actionsButtonEl.addEventListener("click", () => {
   else openActionsMenu();
 });
 
-// 点击浮层之外收起（按钮自己的 click 已处理，这里排除两张浮层与两个触发按钮）
+// Close on outside click (the buttons' own clicks are handled; exclude the two overlays and the two trigger buttons here)
 document.addEventListener("mousedown", (e) => {
   const target = e.target as Node;
   if (historyOpen && !historyCardEl.contains(target) && !historyButtonEl.contains(target)) {
@@ -373,7 +373,7 @@ document.addEventListener("mousedown", (e) => {
   }
 });
 
-// ---- 会话切换 ----
+// ---- Conversation switching ----
 
 async function stepConversation(delta: number) {
   if (conversations.length === 0) return;
@@ -410,14 +410,14 @@ function newChat() {
 
 newChatEl.addEventListener("click", newChat);
 
-// ---- 消息区 ----
+// ---- Message area ----
 
 function relativeTime(updatedUnix: number): string {
   const secs = Math.max(0, Math.floor(Date.now() / 1000) - updatedUnix);
-  if (secs < 60) return "刚刚";
-  if (secs < 3600) return `${Math.floor(secs / 60)} 分钟前`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)} 小时前`;
-  return `${Math.floor(secs / 86400)} 天前`;
+  if (secs < 60) return "just now";
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
 }
 
 function setError(text: string | null) {
@@ -429,7 +429,7 @@ function markdown(text: string): string {
   return DOMPurify.sanitize(marked.parse(text, { async: false }));
 }
 
-/** 标题：取第一条用户消息首行（与历史列表的会话标题规则一致）。 */
+/** Title: the first line of the first user message (consistent with the history list's conversation title rule). */
 function titleFrom(messages: Message[]): string | null {
   const first = messages.find((message) => message.role === "user" && message.content.trim());
   if (!first) return null;
@@ -446,8 +446,8 @@ function scrollToBottom() {
 }
 
 /**
- * 滚到最后一行的底部：markdown/代码块/图片是异步撑开的，
- * 单次赋值可能没到底，用 rAF + 短延时各校正一次（IIE4AD-369）。
+ * Scroll to the bottom of the last line: markdown/code blocks/images expand asynchronously,
+ * so a single assignment may not reach the bottom; correct once each via rAF + a short delay (IIE4AD-369).
  */
 function scrollToEnd() {
   scrollToBottom();
@@ -455,7 +455,7 @@ function scrollToEnd() {
   setTimeout(scrollToBottom, 120);
 }
 
-/** 追加一条已完成的本地消息（用户气泡 / 历史里的回答）。 */
+/** Append a finished local message (user bubble / answer from history). */
 function appendMessage(message: Message): HTMLElement {
   const row = document.createElement("div");
   if (message.role === "user") {
@@ -487,8 +487,8 @@ function appendMessage(message: Message): HTMLElement {
 }
 
 /**
- * 流式气泡：正文与「正在生成」指示分开，
- * 每次事件只换正文，避免三点动画被重建打断（IIE4AD-36x 反馈）。
+ * Streaming bubble: the body and the "Generating" indicator are separate;
+ * each event only replaces the body, so the dot animation is never restarted (IIE4AD-36x feedback).
  */
 function ensureStreamingBubble(): StreamingBubble {
   if (!streaming) {
@@ -509,7 +509,7 @@ function updateStreamingBubble(text: string, pending: boolean) {
   bubble.indicator.classList.toggle("hidden", !pending);
 }
 
-/** 隐藏当前气泡的生成指示（收到末帧或用户停止时）。 */
+/** Hide the current bubble's generation indicator (on the final frame or user stop). */
 function settleStreamingBubble() {
   streaming?.indicator.classList.add("hidden");
 }
@@ -517,13 +517,13 @@ function settleStreamingBubble() {
 async function loadHistory() {
   messagesEl.replaceChildren();
   streaming = null;
-  // 切会话/新对话后，之前的生成状态不再属于当前视图
+  // After switching conversations / a new chat, the previous generation state no longer belongs to this view
   generating = false;
   updateSendUi();
   if (!conversationId) {
-    setTitle("新对话");
+    setTitle("New Chat");
     emptyEl.textContent =
-      "这是一段新对话：在下方输入即可开始；⌘P 或右上角历史按钮查看历史会话。";
+      "This is a new chat: type below to get started; use ⌘P or the history button at the top right to view chat history.";
     emptyEl.classList.remove("hidden");
     composerEl.focus();
     return;
@@ -531,12 +531,12 @@ async function loadHistory() {
   emptyEl.classList.add("hidden");
   try {
     const messages = await invoke<Message[]>("side_messages", { conversationId });
-    setTitle(titleFrom(messages) ?? "AI 对话");
+    setTitle(titleFrom(messages) ?? "AI Chat");
     for (const message of messages) {
       appendMessage(message);
     }
   } catch (err) {
-    setError(`读取历史失败：${String(err)}`);
+    setError(`Failed to load history: ${String(err)}`);
   }
   scrollToEnd();
   composerEl.focus();
@@ -550,8 +550,8 @@ async function send() {
   composerEl.value = "";
   emptyEl.classList.add("hidden");
   const row = appendMessage({ role: "user", content: message });
-  if (titleEl.textContent === "新对话") {
-    setTitle(titleFrom([{ role: "user", content: message }]) ?? "AI 对话");
+  if (titleEl.textContent === "New Chat") {
+    setTitle(titleFrom([{ role: "user", content: message }]) ?? "AI Chat");
   }
   streaming = null;
   try {
@@ -563,10 +563,10 @@ async function send() {
     scrollToEnd();
     generating = true;
     updateSendUi();
-    // 新会话立刻出现在历史卡（标题 = 首条消息）
+    // The new conversation appears in the history card immediately (title = first message)
     void loadConversations();
   } catch (err) {
-    // 失败回滚：这条消息没有落库，恢复输入避免用户重打。
+    // Rollback on failure: this message was not persisted; restore the input so the user doesn't retype it.
     row.remove();
     composerEl.value = message;
     setError(String(err));
@@ -577,9 +577,9 @@ async function send() {
   }
 }
 
-// ---- 事件 ----
+// ---- Events ----
 
-// 从命令盘 ⌘M / tray 带会话进来（payload.conversationId 为空 = 新对话）。
+// Entered with a conversation from the command panel ⌘M / tray (empty payload.conversationId = new chat).
 void listen<SideOpenPayload>("side-open", (event) => {
   const raw = event.payload?.conversationId;
   conversationId = typeof raw === "string" && raw.length > 0 ? raw : null;
@@ -590,13 +590,13 @@ void listen<SideOpenPayload>("side-open", (event) => {
   void loadConversations();
 });
 
-// 侧栏续聊的流式回答：commandId 与会话 id 都对上才采用。
+// Streamed answers of Side View continue-chat: adopt only when both commandId and conversation id match.
 void listen<CommandEventPayload>("command-event", (event) => {
   const update = event.payload?.itemUpdated;
   if (!update || update.commandId !== SIDE_COMMAND_ID) return;
   const payload = update.item.payload as { conversationId?: string } | null;
   if (!payload || payload.conversationId !== conversationId) return;
-  // 末帧（pending=false）标志生成结束（IIE4AD-365）
+  // The final frame (pending=false) marks the end of generation (IIE4AD-365)
   const pending = update.item.pending === true;
   updateStreamingBubble(update.item.detail ?? "", pending);
   scrollToEnd();
@@ -607,7 +607,7 @@ void listen<CommandEventPayload>("command-event", (event) => {
   }
 });
 
-// ---- 附件（📎 = 与面板 ⌘⇧A 同一条路径，ADR-0010）----
+// ---- Attachments (📎 = same path as the panel's ⌘⇧A, ADR-0010) ----
 
 const ATTACH_ROW_BASE =
   "flex items-center gap-2 border-t border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs";
@@ -666,7 +666,7 @@ attachEl.addEventListener("click", () => {
   }
 });
 
-// ---- 键盘：Enter 发送 / Shift+Enter 换行 / Esc 停止或收起 / ⌘N 新对话 ----
+// ---- Keyboard: Enter sends / Shift+Enter newlines / Esc stops or closes / ⌘N new chat ----
 
 function updateSendUi() {
   sendEl.className = generating
@@ -674,7 +674,7 @@ function updateSendUi() {
     : "flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500";
   sendEl.replaceChildren(
     iconEl(generating ? "stop" : "send", { size: 13 }),
-    document.createTextNode(generating ? "停止" : "发送"),
+    document.createTextNode(generating ? "Stop" : "Send"),
     kbdEl(generating ? "Esc" : "⏎", { firstOnly: true }),
   );
 }
@@ -686,7 +686,7 @@ composerEl.addEventListener("keydown", (e) => {
   }
 });
 
-/** 停止生成（平台级：停止所有进行中的生成，IIE4AD-365）。 */
+/** Stop generation (platform-wide: stops all in-progress generation, IIE4AD-365). */
 async function stopGeneration() {
   try {
     await invoke<number>("stop_generation");
@@ -700,8 +700,8 @@ async function stopGeneration() {
 
 window.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  // 通用动作（ADR-0014）：Browse ⌘P / Actions ⌘⇧P / New ⌘N。
-  // 语义与命令盘同源（./keymap），落点由本视图决定：历史卡 / 操作菜单 / 新对话。
+  // Generic actions (ADR-0014): Browse ⌘P / Actions ⌘⇧P / New ⌘N.
+  // Semantics shared with the command panel (./keymap); the landing spots are decided by this view: history card / actions menu / new chat.
   const general = generalActionOf(e);
   if (general === "actions") {
     e.preventDefault();
@@ -720,9 +720,9 @@ window.addEventListener("keydown", (e) => {
     newChat();
     return;
   }
-  // 删除槽（ADR-0022）：⌃X 删当前会话 / 历史卡焦点行，⌃⇧X 删全部会话。
-  // 语义与命令盘同源（./keymap），落点由本视图决定。
-  // 编辑器（composer/附件输入）聚焦时放行原生剪切，不误删会话。
+  // Delete slot (ADR-0022): ⌃X deletes the current conversation / focused row in the history card; ⌃⇧X deletes all conversations.
+  // Semantics shared with the command panel (./keymap); the landing spots are decided by this view.
+  // When an editor (composer/attachment input) is focused, let native cut through instead of deleting conversations by accident.
   if (general === "delete" || general === "deleteAll") {
     const target = e.target as HTMLElement | null;
     const inEditor =
@@ -734,7 +734,7 @@ window.addEventListener("keydown", (e) => {
     else void deleteCurrent(general === "deleteAll");
     return;
   }
-  // ⌃[ / ⌃]：按当前列表（含筛选）前后切换会话
+  // ⌃[ / ⌃]: step through conversations per the current list (including the filter)
   if (e.ctrlKey && (e.key === "[" || e.key === "]")) {
     e.preventDefault();
     void stepConversation(e.key === "]" ? 1 : -1);
@@ -745,8 +745,8 @@ window.addEventListener("keydown", (e) => {
     void back();
     return;
   }
-  // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
-  // 非空不动（正常删字）；空时逐层往回，但根层不收起侧栏（quit:false）。
+  // Backspace with empty input = Back (layered back, ADR-0017):
+  // leave it alone when non-empty (normal delete); when empty, back out layer by layer, but the root layer does not hide the side view (quit:false).
   if (e.key === "Backspace" && composerEl.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
@@ -754,8 +754,8 @@ window.addEventListener("keydown", (e) => {
 });
 
 /**
- * Esc / 空输入 Backspace 的分层回退：历史卡 → 操作菜单 → 停止生成 →（可收窗口）。
- * 空 Backspace 传 quit:false：没有可退的层时就停在原地，不收起窗口。
+ * Esc / empty-input Backspace layered back: history card → actions menu → stop generation → (may hide the window).
+ * Empty Backspace passes quit:false: when there is no layer left, stay in place instead of hiding the window.
  */
 async function back(options: { quit?: boolean } = {}) {
   const { quit = true } = options;
@@ -771,7 +771,7 @@ async function back(options: { quit?: boolean } = {}) {
     await stopGeneration();
     return;
   }
-  if (!quit) return; // 根层：空 Backspace 到此为止
+  if (!quit) return; // Root layer: empty Backspace stops here
   await getCurrentWindow().hide();
 }
 
@@ -784,7 +784,7 @@ sendEl.addEventListener("click", () => {
 
 closeEl.addEventListener("click", () => void getCurrentWindow().hide());
 
-// ---- 启动 ----
+// ---- Startup ----
 
 updateSendUi();
 void loadConversations();

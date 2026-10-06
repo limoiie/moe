@@ -27,9 +27,9 @@ import type {
   Item,
 } from "./types";
 
-// ---- 视图状态 ----
+// ---- View state ----
 
-/** actions 层的条目：Focused Item 的动作，或平台通用动作（Browse/New，ADR-0014）。 */
+/** An entry on the actions layer: actions of the focused item, or platform generic actions (Browse/New, ADR-0014). */
 interface ActionRow {
   action: Action;
   platform?: EntryAction;
@@ -40,18 +40,20 @@ interface View {
   mode: Mode;
   focus: number;
   commands: CommandMeta[];
-  /** 命令层的来源分组（ADR-0020）：渲染组头用；commands 是它的拍平，焦点/导航基于拍平列表。 */
+  /** Source grouping of the command layer (ADR-0020): used to render section headers; commands is its flattening, focus/navigation is based on the flat list. */
   sections: CommandSection[];
+  /** How many leading flat entries belong to the Suggestions section (0 = none, ADR-0025). */
+  suggestionsCount: number;
   items: Item[];
-  /** items 模式的来源 Command。 */
+  /** Source command of items mode. */
   sourceCommandId?: string;
-  /** 来源 Command 的图标（结果项未自带图标时的回退）。 */
+  /** Source command's icon (fallback when a result item has no icon of its own). */
   sourceIcon?: string;
-  /** 来源 Command 的标题（Input Bar 的 placeholder；经 ⌘P/⌘N 入口进来时也在命令表之外）。 */
+  /** Source command's title (Input Bar placeholder; also outside the command list when entered via the ⌘P/⌘N entry). */
   sourceTitle?: string;
-  /** 来源 Command 是否 Live（输入变化即重跑列表）。 */
+  /** Whether the source command is Live (re-runs the list as input changes). */
   sourceLive?: boolean;
-  /** 结果声明的视图形态：true = 唯一一条即内容，详情占满面板（ADR-0013）。 */
+  /** View shape declared by the result: true = the single result is the content, detail fills the panel (ADR-0013). */
   detailFull?: boolean;
 }
 
@@ -73,23 +75,24 @@ const view = store<View>({
   focus: 0,
   commands: [],
   sections: [],
+  suggestionsCount: 0,
   items: [],
 });
 
-/// 当前详情卡片对应的 item（流式事件据此重渲）
+/// The item the current detail card belongs to (streaming events re-render by it)
 let detailItemId: string | null = null;
-/** 详情卡片的形态：preview（焦点预览，列表仍在）/ message（全屏卡片，如错误）。 */
+/** Detail card shape: preview (focused preview, the list stays) / message (full-screen card, e.g. errors). */
 type DetailMode = "none" | "preview" | "message";
 let detailMode: DetailMode = "none";
-/** Esc 收起预览后，直到焦点变化才重新展开（Raycast 同款层级）。 */
+/** After Esc dismisses the preview, it stays collapsed until focus changes (Raycast-style layering). */
 let previewDismissed = false;
 
-/** 动作面板（⌘K / ⌘⇧P 弹出的浮层卡片）：全部动作 + 筛选，不替换主体。 */
+/** Actions card (the floating card opened by ⌘K / ⌘⇧P): all actions + filtering, without replacing the body. */
 let actionsCardRows: ActionRow[] = [];
 let actionsCardFocus = 0;
 let actionsCardOpen = false;
 
-// ---- 轻量反馈（⌥⏎ 复制等无 UI 结果的动作）----
+// ---- Lightweight feedback (for actions with no UI result, e.g. ⌥⏎ copy) ----
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 function toast(text: string, icon = "check") {
@@ -106,9 +109,9 @@ function toast(text: string, icon = "check") {
   }, 1200);
 }
 
-// ---- 悬浮动作条（Raycast 同款）：主操作 + 动作，键位仍取自 Rust 统一键位表 ----
+// ---- Floating action bar (Raycast-style): primary action + actions, keybindings still from the unified Rust keymap ----
 
-/** 语义 → 展示串（如 apply → "⏎"、showAllActions → "⌘K / ⌘⇧P"）。 */
+/** Semantic → display string (e.g. apply → "⏎", showAllActions → "⌘K / ⌘⇧P"). */
 const keyDisplay = new Map<string, string>();
 
 async function initActionBar() {
@@ -119,15 +122,15 @@ async function initActionBar() {
   renderActionBar();
 }
 
-/** 焦点项的主操作（与 Apply 同一语义）：返回标题与点击时的落点。 */
+/** Primary action of the focused item (same semantics as Apply): returns the title and where a click lands. */
 function primaryActionOf(): { title: string; keys: string; run: () => void; disabled: boolean } {
   const v = view.get();
   const applyKeys = keyDisplay.get("apply") ?? "⏎";
-  // 动作面板开着时：胶囊的主操作跟随面板里高亮的那条动作（Raycast 同款）
+  // When the actions card is open: the pill's primary action follows the highlighted action in the card (Raycast-style)
   if (actionsCardOpen) {
     const row = filteredActionRows()[actionsCardFocus];
     return {
-      title: row?.action.title ?? "应用",
+      title: row?.action.title ?? "Apply",
       keys: row?.action.keybinding ?? applyKeys,
       run: () => void runActionRow(row),
       disabled: !row,
@@ -135,10 +138,10 @@ function primaryActionOf(): { title: string; keys: string; run: () => void; disa
   }
   if (v.mode === "items") {
     const item = v.items[v.focus];
-    // 生成中：主操作让位给停止（IIE4AD-365，Esc 的第一优先级）
+    // While generating: the primary action yields to Stop (IIE4AD-365, Esc's first priority)
     if (item?.pending) {
       return {
-        title: "停止生成",
+        title: "Stop Generation",
         keys: keyDisplay.get("back") ?? "Esc",
         run: () => void stopGeneration(),
         disabled: false,
@@ -146,13 +149,13 @@ function primaryActionOf(): { title: string; keys: string; run: () => void; disa
     }
     const action = item ? primaryOf(item) : undefined;
     return {
-      title: action?.title ?? "应用",
+      title: action?.title ?? "Apply",
       keys: action?.keybinding ?? applyKeys,
       run: () => void applyFocused(false),
       disabled: !action,
     };
   }
-  return { title: "应用", keys: applyKeys, run: () => void applyFocused(false), disabled: false };
+  return { title: "Apply", keys: applyKeys, run: () => void applyFocused(false), disabled: false };
 }
 
 function renderActionBar() {
@@ -160,27 +163,27 @@ function renderActionBar() {
   const primaryButton = document.createElement("button");
   primaryButton.id = "primary-action";
   primaryButton.disabled = primary.disabled;
-  primaryButton.title = `${primary.title}（${primary.keys}）`;
+  primaryButton.title = `${primary.title} (${primary.keys})`;
   primaryButton.append(
     document.createTextNode(primary.title),
     kbdEl(primary.keys, { firstOnly: true }),
   );
   primaryButton.addEventListener("click", () => {
     primary.run();
-    q.focus(); // 动作条不抢输入栏焦点（keyboard-first）
+    q.focus(); // the action bar does not steal the input bar focus (keyboard-first)
   });
 
   const actionsKeys = keyDisplay.get("showAllActions") ?? "⌘K";
   const actionsButton = document.createElement("button");
   actionsButton.id = "actions-action";
-  actionsButton.title = `全部动作（${actionsKeys}）`;
-  actionsButton.append(document.createTextNode("动作"), kbdEl(actionsKeys, { firstOnly: true }));
+  actionsButton.title = `All Actions (${actionsKeys})`;
+  actionsButton.append(document.createTextNode("Actions"), kbdEl(actionsKeys, { firstOnly: true }));
   actionsButton.addEventListener("click", () => {
     if (actionsCardOpen) closeActionsCard();
     else void openActionsCard();
   });
 
-  // 按钮不能抢走输入栏焦点（否则后续 Enter 会重复点击按钮）
+  // Buttons must not steal the input bar focus (otherwise a later Enter would re-click the button)
   for (const button of [primaryButton, actionsButton]) {
     button.addEventListener("mousedown", (e) => e.preventDefault());
   }
@@ -188,14 +191,14 @@ function renderActionBar() {
   actionBarEl.replaceChildren(primaryButton, actionsButton);
 }
 
-// ---- 渲染 ----
+// ---- Rendering ----
 
-/** 当前页面形态：list/split/detail（细节见 ui/src/layout.ts）。 */
+/** Current page shape: list/split/detail (details in ui/src/layout.ts). */
 let currentShape: PageShape | null = null;
 
 /**
- * 按页面形态调整面板窗口（ADR-0018）：尺寸恒定，形态切换时也保持同一尺寸。
- * 形态不变不动窗口；失败不影响渲染（窗口尺寸只是体验）。
+ * Resize the panel window by page shape (ADR-0018): the size is constant and stays the same across shape switches.
+ * The window is untouched while the shape is unchanged; failure does not affect rendering (window size is only polish).
  */
 function applyPanelSize(shape: PageShape) {
   if (shape === currentShape) return;
@@ -204,7 +207,7 @@ function applyPanelSize(shape: PageShape) {
     width: PANEL_WIDTH,
     height: PANEL_HEIGHT,
   }).catch(() => {
-    // 忽略：拿不到窗口就不动它
+    // Ignore: without a window handle, leave it alone
   });
 }
 
@@ -212,9 +215,9 @@ interface Row {
   title: string;
   subtitle?: string;
   key?: string;
-  /** 语义名；undefined = 用来源 Command 的图标，仍无则回退。 */
+  /** Semantic name; undefined = use the source command's icon, or fall back if there is none. */
   icon?: string;
-  /** 回退图形（未指定图标）時淡化显示。 */
+  /** Fallback shape (no icon specified) is displayed dimmed. */
   iconMuted?: boolean;
 }
 
@@ -232,7 +235,7 @@ function currentEntries(): Row[] {
   });
 }
 
-/** 组头（ADR-0020）：来源即分组，组头不聚焦、不参与导航、不响应 hover。 */
+/** Section header (ADR-0020): source is the group; headers are not focusable, do not participate in navigation, and do not respond to hover. */
 function sectionHeaderEl(title: string): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
@@ -241,7 +244,7 @@ function sectionHeaderEl(title: string): HTMLLIElement {
   return li;
 }
 
-/** 单行：hover = 可交互提示（不夺焦点），焦点行才是唯一高亮主色。 */
+/** A single row: hover = interactive hint (does not steal focus); only the focused row gets the main highlight. */
 function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
@@ -269,7 +272,7 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   }
   li.append(left);
   if (e.key) {
-    // 键位块（shadcn Kbd 同款）：与动作条、⌘K 面板保持同一种嵌键样式
+    // Key blocks (shadcn Kbd style): same inline-key style as the action bar and the ⌘K card
     const keys = kbdEl(e.key, { firstOnly: true });
     keys.classList.add("shrink-0");
     li.append(keys);
@@ -282,8 +285,8 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
 
 function render() {
   const v = view.get();
-  // 页面形态决定窗口尺寸（ADR-0018）：两栏页面加宽加高，其余用默认尺寸。
-  // 只在形态变化时调 IPC，避免每次渲染都去动窗口。
+  // Page shape decides window size (ADR-0018): split pages are wider and taller, others use the default size.
+  // Only call IPC when the shape changes, so the window isn't touched on every render.
   const shape = pageShapeOf(
     v.mode === "items" ? v.items[v.focus] : undefined,
     v.detailFull === true,
@@ -292,7 +295,7 @@ function render() {
   applyPanelSize(shape);
   let focusedLi: HTMLLIElement | null = null;
   if (v.mode === "commands") {
-    // 命令层：按来源分组渲染（组头 + 组内命令行），焦点索引仍在拍平列表上。
+    // Command layer: render grouped by source (headers + command rows within each group); the focus index stays on the flat list.
     const lis: HTMLLIElement[] = [];
     let flat = 0;
     for (const section of v.sections) {
@@ -319,32 +322,32 @@ function render() {
     focusedLi = rows[v.focus] ?? null;
     listEl.replaceChildren(...rows);
   }
-  // 键盘导航：焦点行始终留在视口内（长列表）
+  // Keyboard navigation: the focused row always stays in the viewport (long lists)
   focusedLi?.scrollIntoView({ block: "nearest" });
   renderDetail();
   renderActionBar();
   updatePlaceholder();
 }
 
-/** Input Bar 的 placeholder 跟随当前层（Raycast 同款：进了哪个命令就显示哪个）。 */
+/** Input Bar placeholder follows the current layer (Raycast-style: shows whichever command you are in). */
 function updatePlaceholder() {
-  if (attaching) return; // 附件模式自己管
+  if (attaching) return; // attachment mode manages its own
   const v = view.get();
   if (v.mode === "commands") {
     q.placeholder = QUERY_PLACEHOLDER;
   } else {
     const command = v.commands.find((c) => c.id === v.sourceCommandId);
-    q.placeholder = v.sourceTitle ?? command?.title ?? "结果…";
+    q.placeholder = v.sourceTitle ?? command?.title ?? "Results…";
   }
 }
 
-// ---- 页面形态（ADR-0018）：列表 / 两栏 / 详情，三种形态共用一套排版 ----
+// ---- Page shapes (ADR-0018): list / split / detail, one shared layout for all three ----
 
-// 详情容器（两栏页面与详情整屏共用）：吃满列表剩下的宽度，底部留出悬浮动作条的高度。
-// 两栏页面的「窄列表 + 宽详情」由 layout.ts 的三个类决定，见那里的说明。
+// Detail container (shared by the split page and full-screen detail): takes the width left by the list, leaving bottom space for the floating action bar.
+// The split page's "narrow list + wide detail" comes from the three classes in layout.ts; see there.
 const DETAIL_MESSAGE_CLASS = DETAIL_PANE_CLASS;
 
-/** 两栏页面里详情栏的头部：焦点项的图标 + 标题 + 副标题（与列表行同一套元素）。 */
+/** Detail pane header on the split page: the focused item's icon + title + subtitle (same elements as the list row). */
 function detailHeaderEl(item: Item): HTMLElement {
   const header = document.createElement("div");
   header.className =
@@ -381,8 +384,8 @@ function paintDetail(
   prose.className = "md";
   prose.innerHTML = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
   body.append(prose);
-  // 生成中的行内指示（像 ChatGPT 的加载点，而不是把状态写成正文）：
-  // 正文与指示分开，流式事件只换正文，三点动画不被重建打断
+  // Inline generating indicator (like ChatGPT's loading dots, rather than writing status into the body):
+  // body and indicator are separate; streaming events only replace the body, so the dot animation is never restarted
   parts.indicator.classList.toggle("hidden", !pending);
   detailItemId = itemId;
   if (nearBottom) detailEl.scrollTop = detailEl.scrollHeight;
@@ -394,7 +397,7 @@ interface DetailParts {
 }
 let detailParts: DetailParts | null = null;
 
-/** 详情正文容器 + 固定的行内生成指示（clearDetail 后重建）。 */
+/** Detail body container + fixed inline generating indicator (rebuilt after clearDetail). */
 function ensureDetailParts(): DetailParts {
   if (!detailParts || !detailEl.contains(detailParts.body)) {
     const body = document.createElement("div");
@@ -411,11 +414,11 @@ function clearDetail() {
   detailParts = null;
   detailEl.className = "md hidden";
   detailEl.replaceChildren();
-  // 回到单列：列表恢复满宽（形态由 layout.ts 统一决定）
+  // Back to single column: the list regains full width (shape decided uniformly by layout.ts)
   listEl.className = LIST_FULL_CLASS;
 }
 
-/** 全屏卡片（错误、回写失败等）：隐藏列表。 */
+/** Full-screen card (errors, write-back failures, etc.): hides the list. */
 function showMessage(markdown: string) {
   detailMode = "message";
   detailEl.className = DETAIL_MESSAGE_CLASS;
@@ -424,16 +427,16 @@ function showMessage(markdown: string) {
 }
 
 /**
- * items 模式的详情栏（ADR-0018）：形态由 `pageShapeOf` 统一决定，
- * 扩展只负责给内容（item.detail），不用自己排版。
- * - detail：整屏就是内容（AI 回答、通知），生成中在正文末尾显示行内指示；
- * - split ：左列表 + 右详情，详情顶部带焦点项的标题/副标题（与列表同一套图标与文案）。
+ * Detail pane of items mode (ADR-0018): the shape is decided uniformly by `pageShapeOf`;
+ * extensions only provide content (item.detail) and never lay it out themselves.
+ * - detail: the whole screen is the content (AI answers, notifications); an inline indicator shows at the end of the body while generating;
+ * - split : left list + right detail; the detail top carries the focused item's title/subtitle (same icon and copy set as the list).
  */
 function renderDetail() {
   const v = view.get();
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
   const shape = pageShapeOf(item, v.detailFull === true, v.items.length);
-  // 两栏页面的详情栏是页面的一部分（不可收起）：previewDismissed 只作用于整屏详情
+  // The split page's detail pane is part of the page (not dismissible): previewDismissed only applies to full-screen detail
   const dismissible = shape === "detail";
   if (
     detailMode === "message" ||
@@ -451,15 +454,15 @@ function renderDetail() {
   if (full) {
     listEl.classList.add("hidden");
   } else {
-    // 两栏：左侧换成窄栏，详情吃掉剩下的宽度
+    // Split: the left side becomes the narrow column; detail takes the remaining width
     listEl.className = LIST_NARROW_CLASS;
   }
 }
 
 /**
- * Esc/Backspace 的第一层：消费掉可收起的详情（返回 true 表示已消费）。
- * 只有「整屏详情」可以收起（收掉后能看到那条结果行）；两栏页面的详情栏
- * 是页面的一部分，不收起——Back 直接回根（ADR-0018）。
+ * First layer of Esc/Backspace: consumes a dismissible detail (returns true if consumed).
+ * Only "full-screen detail" can be dismissed (after which the result row is visible); the split
+ * page's detail pane is part of the page and is not dismissed — Back goes straight to the root (ADR-0018).
  */
 function dismissDetail(): boolean {
   if (detailMode === "none") return false;
@@ -474,7 +477,7 @@ function dismissDetail(): boolean {
 
 view.subscribe(render);
 
-// ---- 语义动作 ----
+// ---- Semantic actions ----
 
 function primaryOf(item: Item) {
   return item.actions.find((a) => a.kind === "primary") ?? item.actions[0];
@@ -491,15 +494,15 @@ function applyResult(
   title?: string,
 ) {
   if (typeof res === "string") {
-    // silent：无需 UI 动作（openSideView 的开窗已由后端完成）
+    // silent: no UI action needed (the backend already opened the side view window)
     return;
   }
   if ("writeBack" in res) {
-    // 回写由后端完成（收面板 → AX / 剪贴板降级投递）；面板此刻已被收起
+    // Write-back is done by the backend (dismiss panel → AX / clipboard fallback delivery); the panel is already hidden by now
     return;
   }
   if ("openSideView" in res) {
-    // 侧栏窗口由后端展示并收到载荷；面板已收起
+    // The side view window is shown by the backend and receives the payload; the panel is already hidden
     return;
   }
   if ("list" in res) {
@@ -522,13 +525,13 @@ function applyResult(
 }
 
 /**
- * 通用动作（ADR-0014）：Browse（⌘P）打开当前 Extension 的记录列表，
- * New（⌘N）新建一条记录。平台只定键位与路由，入口由 Extension 声明；
- * 没声明就给一次内联提示，不静默。
+ * Generic actions (ADR-0014): Browse (⌘P) opens the current Extension's record list,
+ * New (⌘N) creates a new record. The platform only sets bindings and routing; entries
+ * are declared by the Extension; when none is declared, show an inline hint instead of failing silently.
  */
 async function openEntry(kind: "browse" | "new") {
   const v = view.get();
-  // 当前 Extension：进了结果/动作层用来源 Command，还在命令层用焦点 Command
+  // Current Extension: use the source command once in the results/actions layers; on the command layer, use the focused command
   const from = v.sourceCommandId ?? (v.mode === "commands" ? v.commands[v.focus]?.id : undefined);
   if (!from) return;
   let command: CommandMeta | null;
@@ -538,23 +541,23 @@ async function openEntry(kind: "browse" | "new") {
       kind,
     });
   } catch (err) {
-    showMessage(`执行失败：${String(err)}`);
+    showMessage(`Failed to run: ${String(err)}`);
     return;
   }
   if (!command) {
-    toast(kind === "browse" ? "该扩展没有记录列表" : "该扩展没有新建入口");
+    toast(kind === "browse" ? "This extension has no record list" : "This extension has no New entry");
     return;
   }
   try {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: command.id,
-      // Live 命令以自己的视图接管输入：进入时清空输入框（同 applyFocused）
+      // Live commands take over input with their own view: clear the input on entry (same as applyFocused)
       query: null,
     });
     if (command.live) q.value = "";
     applyResult(res, command.id, command.live, command.icon, command.title);
   } catch (err) {
-    showMessage(`执行失败：${String(err)}`);
+    showMessage(`Failed to run: ${String(err)}`);
   }
 }
 
@@ -566,7 +569,7 @@ async function applyFocused(alt: boolean) {
     try {
       const res = await invoke<ActionResult>("invoke_command", {
         commandId: cmd.id,
-        // Live 命令以自己的视图接管输入：进入时清空输入框，之后的输入即该命令的查询
+        // Live commands take over input with their own view: clear the input on entry; subsequent input is that command's query
         query: cmd.live ? null : q.value || null,
       });
       if (cmd.live) {
@@ -574,7 +577,7 @@ async function applyFocused(alt: boolean) {
       }
       applyResult(res, cmd.id, cmd.live, cmd.icon, cmd.title);
     } catch (err) {
-      showMessage(`执行失败：${String(err)}`);
+      showMessage(`Failed to run: ${String(err)}`);
     }
     return;
   }
@@ -590,10 +593,10 @@ async function applyFocused(alt: boolean) {
         item,
         action,
       });
-      if (action.id === "copy") toast("已复制");
+      if (action.id === "copy") toast("Copied");
       applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
     } catch (err) {
-      showMessage(`执行失败：${String(err)}`);
+      showMessage(`Failed to run: ${String(err)}`);
     }
     return;
   }
@@ -608,9 +611,9 @@ function move(delta: number) {
 }
 
 /**
- * 打开动作面板（Raycast 同款浮层卡片）：Focused Item 的主/副操作，
- * 末尾附上该 Extension 真的声明了的平台通用动作（Browse ⌘P / New ⌘N，ADR-0014）。
- * 主体（命令列表/结果）保持不变，不再像过去那样换掉整个面板。
+ * Open the actions card (Raycast-style floating card): the focused item's primary/secondary
+ * actions, plus the platform generic actions the Extension actually declared (Browse ⌘P / New ⌘N, ADR-0014).
+ * The body (command list / results) stays in place; it no longer replaces the whole panel as before.
  */
 async function openActionsCard() {
   const v = view.get();
@@ -634,7 +637,7 @@ async function openActionsCard() {
         platform: kind,
         action: {
           id: `moe.platform.${kind}`,
-          title: kind === "browse" ? "浏览记录" : "新建记录",
+          title: kind === "browse" ? "Browse Records" : "New Record",
           kind: "secondary",
           keybinding: GENERAL_KEY_LABELS[kind],
         },
@@ -651,7 +654,7 @@ async function openActionsCard() {
   renderActionBar();
 }
 
-/** 关闭动作面板，把焦点交回 Input Bar。 */
+/** Close the actions card and return focus to the Input Bar. */
 function closeActionsCard() {
   if (!actionsCardOpen) return;
   actionsCardOpen = false;
@@ -660,7 +663,7 @@ function closeActionsCard() {
   q.focus();
 }
 
-/** 按标题过滤（大小写不敏感）。 */
+/** Filter by title (case-insensitive). */
 function filteredActionRows(): ActionRow[] {
   const needle = actionSearchEl.value.trim().toLowerCase();
   if (!needle) return actionsCardRows;
@@ -678,7 +681,7 @@ function renderActionsCard() {
   if (rows.length === 0) {
     const empty = document.createElement("li");
     empty.className = "px-2 py-3 text-xs text-zinc-600";
-    empty.textContent = actionSearchEl.value.trim() ? "没有匹配的动作" : "这个结果没有动作";
+    empty.textContent = actionSearchEl.value.trim() ? "No matching actions" : "This result has no actions";
     actionListEl.replaceChildren(empty);
     return;
   }
@@ -722,7 +725,7 @@ function moveActionFocus(delta: number) {
   renderActionBar();
 }
 
-/** 执行动作面板的一条：平台通用动作走 ⌘P/⌘N 同一条路，其余交给 Extension。 */
+/** Run one entry of the actions card: platform generic actions take the same path as ⌘P/⌘N; the rest go to the Extension. */
 async function runActionRow(row: ActionRow | undefined) {
   if (!row) return;
   closeActionsCard();
@@ -739,10 +742,10 @@ async function runActionRow(row: ActionRow | undefined) {
       item,
       action: row.action,
     });
-    if (row.action.id === "copy") toast("已复制");
+    if (row.action.id === "copy") toast("Copied");
     applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
   } catch (err) {
-    showMessage(`执行失败：${String(err)}`);
+    showMessage(`Failed to run: ${String(err)}`);
   }
 }
 
@@ -760,7 +763,7 @@ async function materialize() {
   }
 }
 
-/** Live 命令：输入变化即用新查询重跑列表（如「AI: 搜索历史会话」）。 */
+/** Live commands: re-run the list with the new query as input changes (e.g. "AI: Search Chat History"). */
 async function rerunLive(query: string) {
   const v = view.get();
   if (!v.sourceCommandId) return;
@@ -768,15 +771,15 @@ async function rerunLive(query: string) {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: v.sourceCommandId,
       query: query || null,
-      record: false, // 重跑不算一次启动（frecency 语义）
+      record: false, // a re-run is not a launch (frecency semantics)
     });
     applyResult(res, v.sourceCommandId, true, v.sourceIcon, v.sourceTitle);
   } catch (err) {
-    showMessage(`执行失败：${String(err)}`);
+    showMessage(`Failed to run: ${String(err)}`);
   }
 }
 
-/** 删除槽（ADR-0022）：⌃X 删焦点记录、⌃⇧X 删全部；成功后重跑当前列表。 */
+/** Delete slot (ADR-0022): ⌃X deletes the focused record, ⌃⇧X deletes all; re-runs the current list on success. */
 async function deleteFocused(all: boolean) {
   const v = view.get();
   if (!v.sourceCommandId) return;
@@ -790,10 +793,10 @@ async function deleteFocused(all: boolean) {
           item,
         });
     if (!count) {
-      toast("没有可删除的记录", "alert");
+      toast("No records to delete", "alert");
       return;
     }
-    toast(all ? `已删除 ${count} 条记录` : "已删除 1 条记录");
+    toast(all ? `Deleted ${count} records` : "Deleted 1 record");
     if (v.sourceLive) {
       await rerunLive(q.value);
     } else {
@@ -805,21 +808,44 @@ async function deleteFocused(all: boolean) {
       applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
     }
   } catch (err) {
-    toast(`删除失败：${String(err)}`, "alert");
+    toast(`Delete failed: ${String(err)}`, "alert");
   }
 }
 
-// Esc / 空输入 Backspace 的分层回退：停止生成 → 动作面板 → 预览/详情 → 结果层 → 清空输入 →（可关面板）
-// 空 Backspace 传 quit:false：根层停在原地，不关面板（关面板只归 Esc）
+/** Forget one recently used command (⌃X on a suggestion, ADR-0025). */
+async function deleteSuggestion(commandId: string | undefined) {
+  if (!commandId) return;
+  try {
+    await invoke<boolean>("delete_suggestion", { commandId });
+    toast("Removed from suggestions");
+    await refresh(q.value);
+  } catch (err) {
+    toast(`Delete failed: ${String(err)}`, "alert");
+  }
+}
+
+/** Clear all recently used commands (⌃⇧X on suggestions, ADR-0025). */
+async function clearSuggestions() {
+  try {
+    const count = await invoke<number>("clear_suggestions");
+    toast(count ? `Forgot ${count} recent commands` : "No suggestions to clear", count ? "check" : "alert");
+    await refresh(q.value);
+  } catch (err) {
+    toast(`Delete failed: ${String(err)}`, "alert");
+  }
+}
+
+// Esc / empty-input Backspace layered back: stop generation → actions card → preview/detail → results layer → clear input → (may close panel)
+// Empty Backspace passes quit:false: the root layer stays in place and does not close the panel (closing the panel belongs to Esc alone)
 async function back(options: { quit?: boolean } = {}) {
   const { quit = true } = options;
   const v = view.get();
-  // 流式生成中：Esc 的第一优先级是停止（IIE4AD-365）
+  // While streaming: Esc's first priority is stop (IIE4AD-365)
   if (v.mode === "items" && v.items[v.focus]?.pending) {
     await stopGeneration();
     return;
   }
-  // 动作面板是浮层：先收它，再往下退（Raycast 同款）
+  // The actions card is an overlay: close it first, then back out further (Raycast-style)
   if (actionsCardOpen) {
     closeActionsCard();
     return;
@@ -836,7 +862,7 @@ async function back(options: { quit?: boolean } = {}) {
     await refresh("");
     return;
   }
-  if (!quit) return; // 根层：空 Backspace 到此为止
+  if (!quit) return; // Root layer: empty Backspace stops here
   await invoke("hide_panel");
 }
 
@@ -848,27 +874,30 @@ async function refresh(query: string) {
     ...v,
     mode: "commands",
     sections,
-    // 焦点/导航基于拍平列表，sections 只负责组头渲染。
+    // Focus/navigation is based on the flat list; sections only render headers.
     commands: sections.flatMap((s) => s.items),
+    // The Suggestions section only appears on the empty query and always comes first (ADR-0023).
+    suggestionsCount:
+      sections[0]?.title === "Suggestions" ? sections[0].items.length : 0,
     focus: 0,
   }));
 }
 
-/** 停止进行中的生成（平台级：不区分扩展/会话，IIE4AD-365）。 */
+/** Stop in-progress generation (platform-wide: not per extension/conversation, IIE4AD-365). */
 async function stopGeneration() {
   try {
     const stopped = await invoke<number>("stop_generation");
-    toast(stopped > 0 ? "已停止生成" : "没有进行中的生成");
+    toast(stopped > 0 ? "Generation stopped" : "No generation in progress");
   } catch (err) {
-    showMessage(`停止失败：${String(err)}`);
+    showMessage(`Failed to stop: ${String(err)}`);
   }
 }
 
-// ---- 附件输入（⌘⇧A）：复用同一 Input Bar 输入路径，Enter 插入 `@"path"` mention（ADR-0010）----
+// ---- Attachment input (⌘⇧A): reuses the same Input Bar input path; Enter inserts an `@"path"` mention (ADR-0010) ----
 
 const attachBarEl = document.querySelector<HTMLDivElement>("#attach")!;
 const attachTextEl = document.querySelector<HTMLSpanElement>("#attach-text")!;
-const QUERY_PLACEHOLDER = "搜索 Command…";
+const QUERY_PLACEHOLDER = "Search commands…";
 const ATTACH_BAR_BASE =
   "items-center justify-between gap-3 border-b px-4 py-2 text-xs";
 
@@ -876,9 +905,9 @@ let attaching = false;
 let savedQuery = "";
 let attachBarToken = 0;
 
-/** Input Bar 前置图标：平时搜索，附件模式换纸夹（ADR-0012）。 */
+/** Input Bar leading icon: search normally, paperclip in attachment mode (ADR-0012). */
 function renderInputIcon() {
-  // 与列表行同一列：尺寸/颜色对齐（ADR：Input Bar 与 Result List 同一网格）
+  // Same column as list rows: aligned size/color (ADR: Input Bar and Result List share one grid)
   inputIconEl.replaceChildren(
     iconEl(attaching ? "paperclip" : "search", { size: 16, className: "text-zinc-400" }),
   );
@@ -903,10 +932,10 @@ function startAttach() {
   renderInputIcon();
   savedQuery = q.value;
   q.value = "";
-  q.placeholder = "粘贴文件路径，Enter 添加附件";
+  q.placeholder = "Paste a file path, Enter to attach";
   setAttachBar(
     "hint",
-    "附件模式：粘贴文件路径，Enter 添加（Esc 取消；支持 ~ 与含空格路径）",
+    "Attachment mode: paste a file path, Enter to add (Esc cancels; ~ and paths with spaces are supported)",
   );
   q.focus();
 }
@@ -934,24 +963,24 @@ async function submitAttach() {
     q.value = appendMention(savedQuery, info.path);
     savedQuery = "";
     updatePlaceholder();
-    const kind = info.kind === "image" ? "图片" : "文本";
+    const kind = info.kind === "image" ? "Image" : "Text";
     setAttachBar(
       "hint",
-      `已添加附件：${info.name}（${kind}，${humanBytes(info.bytes)}）`,
+      `Attachment added: ${info.name} (${kind}, ${humanBytes(info.bytes)})`,
     );
     const token = ++attachBarToken;
     window.setTimeout(() => {
       if (!attaching && token === attachBarToken) hideAttachBar();
     }, 3000);
-    // 列表跟随新查询（纯附件时会出现「AI: 带附件的提问」入口，避免误跑第一个命令）
+    // The list follows the new query (an attachment-only query surfaces the "AI: Ask with Attachment" entry, avoiding an accidental run of the first command)
     void refresh(q.value);
     q.focus();
   } catch (err) {
-    setAttachBar("error", `附件添加失败：${String(err)}`);
+    setAttachBar("error", `Failed to add attachment: ${String(err)}`);
   }
 }
 
-// ---- 全局键盘事件（keyboard-first：所有能力都可达，鼠标仅冗余）----
+// ---- Global keyboard events (keyboard-first: every capability is reachable, the mouse is only redundant) ----
 
 window.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "a") {
@@ -961,7 +990,7 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (attaching) {
-    // 附件模式下输入栏只服务路径：不触发任何面板语义
+    // In attachment mode the input bar serves paths only: no panel semantics are triggered
     if (e.key === "Enter") {
       e.preventDefault();
       void submitAttach();
@@ -971,24 +1000,37 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  // 通用动作（ADR-0014/0022）：Browse ⌘P / Actions ⌘⇧P / New ⌘N /
-  // Delete ⌃X / DeleteAll ⌃⇧X。语义由共享键位模块识别，落点由本表面决定。
+  // Generic actions (ADR-0014/0022): Browse ⌘P / Actions ⌘⇧P / New ⌘N /
+  // Delete ⌃X / DeleteAll ⌃⇧X. Semantics are recognized by the shared keymap module; the landing spot is decided by this surface.
   const general = generalActionOf(e);
   if (general) {
     if (general === "delete" || general === "deleteAll") {
-      // 删除槽只在结果层生效（ADR-0022）；命令层放行给输入框的原生剪切
       const v = view.get();
-      if (v.mode !== "items" || !v.sourceCommandId) return;
+      // The delete slot works on the results layer (ADR-0022)…
+      if (v.mode === "items" && v.sourceCommandId) {
+        e.preventDefault();
+        void deleteFocused(general === "deleteAll");
+        return;
+      }
+      // …and on the Suggestions section (ADR-0025): ⌃X forgets the focused command,
+      // ⌃⇧X clears all recent usage. Elsewhere the input's native cut stays.
+      if (v.mode === "commands" && v.suggestionsCount > 0) {
+        if (general === "deleteAll" || v.focus < v.suggestionsCount) {
+          e.preventDefault();
+          if (general === "deleteAll") void clearSuggestions();
+          else void deleteSuggestion(v.commands[v.focus]?.id);
+          return;
+        }
+      }
+      return;
     }
     e.preventDefault();
     if (general === "actions") toggleActionsCard();
-    else if (general === "delete" || general === "deleteAll") {
-      void deleteFocused(general === "deleteAll");
-    } else void openEntry(general);
+    else void openEntry(general);
     return;
   }
-  // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
-  // 输入非空不动它（正常删字）；空时逐层往回，但根层不关面板（quit:false）。
+  // Backspace with empty input = Back (layered back, ADR-0017):
+  // leave it alone when the input is non-empty (normal delete); when empty, back out layer by layer, but the root layer does not close the panel (quit:false).
   if (e.key === "Backspace" && q.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
@@ -1015,20 +1057,20 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-/** 动作面板开关（⌘K / ⌘⇧P / 胶囊上的「动作」按钮）。 */
+/** Actions card toggle (⌘K / ⌘⇧P / the "Actions" button on the pill). */
 function toggleActionsCard() {
   if (actionsCardOpen) closeActionsCard();
   else void openActionsCard();
 }
 
-// 动作面板自己的键位：↑↓ 选择、⏎ 执行、Esc/空 Backspace 收起（Raycast 同款）
+// The actions card's own bindings: ↑↓ select, ⏎ run, Esc/empty Backspace closes (Raycast-style)
 actionSearchEl.addEventListener("input", () => {
   actionsCardFocus = 0;
   renderActionsCard();
   renderActionBar();
 });
 
-// 点击面板/胶囊以外的地方收起（胶囊要排除，否则会与「动作」按钮的 click 相消）
+// Click outside the card/pill to close (the pill is excluded, otherwise it would cancel the "Actions" button's click)
 document.addEventListener("mousedown", (e) => {
   if (!actionsCardOpen) return;
   const target = e.target as Node;
@@ -1069,7 +1111,7 @@ q.addEventListener("input", () => {
   }, 60);
 });
 
-// ---- 呼出授权引导（ADR-0008）：未授权时常显，授权后自动消失 ----
+// ---- Summon permission guidance (ADR-0008): always visible until granted, disappears once authorized ----
 
 interface SummonStatus {
   status: "ready" | "needsPermission" | "unsupported";
@@ -1079,10 +1121,10 @@ interface SummonStatus {
 }
 
 const KEY_LABELS: Record<string, string> = {
-  "double-cmd": "双击 ⌘",
-  "double-option": "双击 ⌥",
-  "double-ctrl": "双击 ⌃",
-  "double-shift": "双击 ⇧",
+  "double-cmd": "double-tap ⌘",
+  "double-option": "double-tap ⌥",
+  "double-ctrl": "double-tap ⌃",
+  "double-shift": "double-tap ⇧",
 };
 
 const bannerEl = document.querySelector<HTMLDivElement>("#banner")!;
@@ -1098,21 +1140,21 @@ async function refreshBanner() {
   const status = await invoke<SummonStatus>("summon_status");
   if (status.status === "needsPermission") {
     const key = KEY_LABELS[status.key] ?? status.key;
-    bannerTextEl.textContent = `${key} 呼出需要「输入监控」授权；授权后自动生效，个别系统版本需重启 Moe 一次。`;
-    bannerActionEl.textContent = "打开输入监控设置";
+    bannerTextEl.textContent = `${key} to summon needs Input Monitoring permission (System Settings → Privacy & Security → Input Monitoring); it takes effect automatically once granted, though some macOS versions require restarting Moe once.`;
+    bannerActionEl.textContent = "Open Input Monitoring Settings";
     bannerActionEl.dataset.action = "input-monitoring";
     showBanner();
   } else if (status.status === "unsupported") {
-    // Linux/Wayland 等无法全局拦截键盘的会话（IIE4AD-350）：给替代路径
+    // Sessions that cannot globally intercept the keyboard (Linux/Wayland etc., IIE4AD-350): offer the alternative paths
     const key = KEY_LABELS[status.key] ?? status.key;
-    bannerTextEl.textContent = `${key} 呼出在当前会话不可用（Wayland 等环境无法全局拦截键盘）：改 config.toml 的 [summon] key 用组合键，或用 WM 绑定 \`moe --toggle\`。`;
-    bannerActionEl.textContent = "打开配置文件";
+    bannerTextEl.textContent = `${key} to summon is unavailable in this session (Wayland and similar cannot globally intercept the keyboard): set [summon] key in config.toml to a combo, or bind \`moe --toggle\` in your WM.`;
+    bannerActionEl.textContent = "Open Config File";
     bannerActionEl.dataset.action = "config";
     showBanner();
   } else if (!status.accessibility) {
     bannerTextEl.textContent =
-      "读取选区与回写需要「辅助功能」授权（写回时也会自动弹系统引导）；授权后无需重启。";
-    bannerActionEl.textContent = "打开辅助功能设置";
+      "Reading the selection and writing back needs Accessibility permission (System Settings → Privacy & Security → Accessibility; write-back also auto-prompts); no restart needed once granted.";
+    bannerActionEl.textContent = "Open Accessibility Settings";
     bannerActionEl.dataset.action = "accessibility";
     showBanner();
   } else {
@@ -1143,7 +1185,7 @@ bannerActionEl.addEventListener("click", () => {
   );
 });
 
-// 流式命令事件：按 item id 就地更新（如 AI 回答逐字到达）
+// Streaming command events: update in place by item id (e.g. AI answers arriving word by word)
 void listen<CommandEventPayload>("command-event", (event) => {
   const payload = event.payload?.itemUpdated;
   if (!payload) return;
@@ -1153,13 +1195,13 @@ void listen<CommandEventPayload>("command-event", (event) => {
   if (idx === -1) return;
   const items = v.items.slice();
   items[idx] = payload.item;
-  // view 更新会触发 render() → 预览就地在流式事件上重渲（保持贴底）
+  // view updates trigger render() → the preview re-renders in place on streaming events (staying pinned to the bottom)
   view.update((s) => ({ ...s, items }));
 });
 void listen("summon-authorized", () => hideBanner());
 
-// 呼出时保留上次的输入与结果（用户可能在隐藏后补充输入），
-// 只刷新权限引导状态（可能刚去系统设置授过权）；未完成的附件输入不跨呼出保留。
+// Keep the previous input and results across summons (the user may add input after hiding);
+// only refresh the permission guidance (the user may have just granted it in System Settings); unfinished attachment input is not kept across summons.
 window.addEventListener("focus", () => {
   cancelAttach();
   void refreshBanner();

@@ -1,5 +1,5 @@
-// Lucide 图标（ADR-0012）：契约里只存语义名，具体图形由视图层映射。
-// 未知名字回退到 Circle，保证任何 Extension 都不会因为图标名而破坏布局。
+// Lucide icons (ADR-0012): the contract stores only semantic names; concrete shapes are mapped by the view layer.
+// Unknown names fall back to Circle, so no Extension can break the layout with an icon name.
 
 import {
   ArrowRight,
@@ -42,7 +42,7 @@ import {
   type IconNode,
 } from "lucide";
 
-/** 语义名 → Lucide 图形（扩展只用这里注册过的名字）。 */
+/** Semantic name → Lucide shape (extensions may only use names registered here). */
 const ICONS: Record<string, IconNode> = {
   sparkles: Sparkles,
   history: History,
@@ -55,7 +55,7 @@ const ICONS: Record<string, IconNode> = {
   list: List,
   megaphone: Megaphone,
   quote: Quote,
-  // AI Commands（ADR-0024）
+  // AI Commands (ADR-0024)
   "wand-2": Wand2,
   "spell-check": SpellCheck,
   shrink: Shrink,
@@ -67,7 +67,7 @@ const ICONS: Record<string, IconNode> = {
   smile: Smile,
   lightbulb: Lightbulb,
   "arrow-right": ArrowRight,
-  // 固定用途（界面自己用，不由扩展指定）
+  // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
   command: Command,
   copy: Copy,
@@ -88,12 +88,12 @@ export interface IconOptions {
   className?: string;
 }
 
-/** 图标名是否已知（UI 需要区分「扩展给了图标」与「回退图形」时用）。 */
+/** Whether the icon name is known (used when the UI must tell "extension-provided icon" from "fallback shape"). */
 export function hasIcon(name: string | null | undefined): boolean {
   return !!name && name in ICONS;
 }
 
-/** 语义名 → 内联 SVG（16px 描边图标，颜色随 currentColor）。 */
+/** Semantic name → inline SVG (16px stroke icon, color follows currentColor). */
 export function iconEl(name: string | null | undefined, options: IconOptions = {}): SVGElement {
   const node = (name && ICONS[name]) || Circle;
   const size = options.size ?? 16;

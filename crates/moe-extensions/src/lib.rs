@@ -1,4 +1,4 @@
-//! 内置 Extensions（ADR-0003：v1 全部编译内置，但按 Extension/Namespace 组织）。
+//! Built-in Extensions (ADR-0003: in v1 everything is compiled in, organized by Extension/Namespace).
 
 use moe_core::registry::Registry;
 

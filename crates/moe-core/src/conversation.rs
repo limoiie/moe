@@ -1,4 +1,4 @@
-//! 会话与消息：AI 问答的领域类型（归属 `ai` Namespace，ADR-0003/0005）。
+//! Conversations and messages: domain types for AI Q&A (owned by the `ai` Namespace, ADR-0003/0005).
 
 use serde::{Deserialize, Serialize};
 
@@ -11,13 +11,13 @@ pub struct Conversation {
     pub updated_unix: u64,
 }
 
-/// 消息上的附件引用（只存引用，内容在请求时现读，ADR-0010）。
+/// Attachment reference on a message (stores the reference only; content is read on demand, ADR-0010).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentRef {
-    /// 展示名（文件名）。
+    /// Display name (file name).
     pub name: String,
-    /// 绝对路径（写入时已做 `~` 展开）。
+    /// Absolute path (`~` expanded at write time).
     pub path: String,
 }
 
@@ -25,7 +25,7 @@ pub struct AttachmentRef {
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub role: Role,
-    /// 用户可见文本（mention 已剥离，ADR-0010）。
+    /// User-visible text (mentions already stripped, ADR-0010).
     pub content: String,
     #[serde(default)]
     pub attachments: Vec<AttachmentRef>,

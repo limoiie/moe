@@ -1,10 +1,14 @@
-//! AI Commands（ADR-0024）：批量文本变换命令——润色 / 修语法 / 缩短 / 扩写 / 简化 /
-//! 总结 / 翻译 / 改语气 / 提取要点 / 续写，Raycast Pro 同款语义。
+//! AI Commands (ADR-0024): batch text-transform commands — Improve Writing / Fix Spelling &
+//! Grammar / Make Shorter / Make Longer / Simplify Language / Summarize / Translate / Tone /
+//! Extract Key Ideas / Continue Writing, with Raycast Pro-style semantics.
 //!
-//! 输入 = 呼出前选中的文字，没有选区则用输入框里的文字；两种都没有则给引导卡。
-//! 流式产出到面板的结果卡；**自然完成后自动回写选区并收起面板**（`CommandEvent::WriteBack`，
-//! 平台层拦截执行）。被 Esc 停止时只保留已生成部分，不自动回写。
-//! 单次变换不落库、不建会话（无历史语义）。
+//! Input = the text selected before opening the palette, or the text in the input box when
+//! there is no selection; when neither exists, a guidance card is shown.
+//! Streaming output goes to a result card in the panel; **on natural completion the result is
+//! automatically written back to the selection and the panel closes** (`CommandEvent::WriteBack`,
+//! intercepted and executed by the platform layer). When stopped with Esc, only the generated
+//! part is kept and nothing is written back automatically.
+//! A single transform is never persisted and never creates a conversation (no history semantics).
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -21,7 +25,7 @@ use crate::ai_client::{chat_body_with_stream, chat_completions_url};
 
 pub struct AiCommands;
 
-/// 一条 AI 命令的规格：id / 展示 / 系统指令。
+/// Spec of one AI command: id / presentation / system instruction.
 struct Spec {
     id: &'static str,
     title: &'static str,
@@ -33,87 +37,87 @@ struct Spec {
 const SPECS: [Spec; 12] = [
     Spec {
         id: "aicmd.improve",
-        title: "润色",
-        subtitle: "让表达更清晰流畅，保持原意",
+        title: "Improve Writing",
+        subtitle: "Clearer, smoother wording without changing the meaning",
         icon: "wand-2",
-        instruction: "改进写作：让表达更清晰、流畅、专业，保持原意与信息完整。只输出改写后的文本。",
+        instruction: "Improve the writing: make it clearer, smoother, and more professional, keeping the meaning and all information intact. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.fix-grammar",
-        title: "修语法",
-        subtitle: "修正拼写与语法错误",
+        title: "Fix Spelling & Grammar",
+        subtitle: "Fix spelling and grammar errors",
         icon: "spell-check",
-        instruction: "修正文本中的拼写、语法与标点错误，保持原意与风格不变。只输出修正后的文本。",
+        instruction: "Fix spelling, grammar, and punctuation errors in the text, keeping the meaning and style unchanged. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.shorten",
-        title: "缩短",
-        subtitle: "去掉冗余，保留核心信息",
+        title: "Make Shorter",
+        subtitle: "Remove redundancy, keep the key points",
         icon: "shrink",
-        instruction: "压缩文本：去掉冗余与重复表达，保留核心信息与关键细节，不引入新信息。只输出压缩后的文本。",
+        instruction: "Condense the text: remove redundancy and repetition, keep the core information and key details, and introduce no new information. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.lengthen",
-        title: "扩写",
-        subtitle: "补充细节与论证，让内容更充实",
+        title: "Make Longer",
+        subtitle: "Add details and arguments for more substance",
         icon: "expand",
-        instruction: "扩写文本：补充必要的细节、例子与论证，让内容更充实完整，保持原意与风格。只输出扩写后的文本。",
+        instruction: "Expand the text: add necessary details, examples, and arguments to make it more complete, keeping the meaning and style. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.simplify",
-        title: "简化",
-        subtitle: "用更简单的语言重写",
+        title: "Simplify Language",
+        subtitle: "Rewrite in simpler language",
         icon: "pen-line",
-        instruction: "用更简单、直白的语言重写文本，降低阅读难度，保持原意。只输出重写后的文本。",
+        instruction: "Rewrite the text in simpler, plainer language to make it easier to read, keeping the meaning. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.summarize",
-        title: "总结",
-        subtitle: "提炼核心要点",
+        title: "Summarize",
+        subtitle: "Condense the core points",
         icon: "list-checks",
-        instruction: "总结这段文字：提炼核心信息，结构清晰、条理分明。只输出总结。",
+        instruction: "Summarize this text: extract the core information, clearly structured and well organized. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.translate-en",
-        title: "翻译成英文",
-        subtitle: "保持原意与语气",
+        title: "Translate to English",
+        subtitle: "Keep the meaning and tone",
         icon: "languages",
-        instruction: "把下面的文本翻译成英文，保持原意与语气。只输出译文。",
+        instruction: "Translate the text below into English, keeping the meaning and tone. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.translate-zh",
-        title: "翻译成中文",
-        subtitle: "保持原意与语气",
+        title: "Translate to Chinese",
+        subtitle: "Keep the meaning and tone",
         icon: "languages",
-        instruction: "把下面的文本翻译成中文，保持原意与语气。只输出译文。",
+        instruction: "Translate the text below into Chinese, keeping the meaning and tone. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.tone-professional",
-        title: "语气更专业",
-        subtitle: "正式、客观，适合工作场合",
+        title: "Tone: Professional",
+        subtitle: "Formal and objective, for work settings",
         icon: "briefcase",
-        instruction: "改写得更正式、专业、客观，适合工作与商务场合，保持原意。只输出改写后的文本。",
+        instruction: "Rewrite it to be more formal, professional, and objective, suitable for work and business contexts, keeping the meaning. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.tone-friendly",
-        title: "语气更友好",
-        subtitle: "温暖亲切，语气自然",
+        title: "Tone: Friendly",
+        subtitle: "Warm and approachable, natural tone",
         icon: "smile",
-        instruction: "改写得更友好、温暖、亲切，语气自然不刻意，保持原意。只输出改写后的文本。",
+        instruction: "Rewrite it to be friendlier, warmer, and more approachable, with a natural tone, keeping the meaning. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.key-ideas",
-        title: "提取要点",
-        subtitle: "用项目符号列出关键点",
+        title: "Extract Key Ideas",
+        subtitle: "List the key points as bullets",
         icon: "lightbulb",
-        instruction: "提取这段文字的关键要点，用简洁的项目符号列出。只输出要点。",
+        instruction: "Extract the key points of this text and list them as concise bullets. Only output the transformed text.",
     },
     Spec {
         id: "aicmd.continue-writing",
-        title: "续写",
-        subtitle: "接着这段文字自然地写下去",
+        title: "Continue Writing",
+        subtitle: "Keep writing naturally from this text",
         icon: "arrow-right",
-        instruction: "接着这段文字自然地续写下去，风格与语气保持一致。只输出续写的内容。",
+        instruction: "Continue writing naturally from this text, keeping the style and tone consistent. Only output the transformed text.",
     },
 ];
 
@@ -121,23 +125,23 @@ fn spec_of(command_id: &str) -> Option<&'static Spec> {
     SPECS.iter().find(|spec| spec.id == command_id)
 }
 
-/// 结果卡（流式占位 / 最终文本）：Apply = 回写，⌥⏎ = 复制。
+/// Result card (streaming placeholder / final text): Apply = write back, ⌥⏎ = copy.
 fn transform_item(text: &str, pending: bool) -> Item {
     Item {
         id: "aicmd.result".into(),
-        title: "AI 命令结果".into(),
+        title: "AI Command Result".into(),
         subtitle: None,
         icon: Some("sparkles".into()),
         actions: vec![
             Action {
                 id: "write-back".into(),
-                title: "回写结果".into(),
+                title: "Write Back Result".into(),
                 kind: ActionKind::Primary,
                 keybinding: None,
             },
             Action {
                 id: "copy".into(),
-                title: "复制".into(),
+                title: "Copy".into(),
                 kind: ActionKind::Secondary,
                 keybinding: Some("⌥⏎".into()),
             },
@@ -148,11 +152,11 @@ fn transform_item(text: &str, pending: bool) -> Item {
     }
 }
 
-/// 无动作的引导/提示卡。
+/// Guidance/notice card without actions.
 fn notice_item(detail: &str) -> Item {
     Item {
         id: "aicmd.notice".into(),
-        title: "AI 命令".into(),
+        title: "AI Command".into(),
         subtitle: None,
         icon: Some("sparkles".into()),
         actions: vec![],
@@ -162,7 +166,7 @@ fn notice_item(detail: &str) -> Item {
     }
 }
 
-/// 输入文本：选区优先，其次输入框文字；两者皆空为 None（走引导卡）。
+/// Input text: selection first, then the input box; None when both are empty (guidance card).
 fn resolve_text(query: Option<&str>, selection: Option<&Selection>) -> Option<String> {
     let non_empty = |text: &str| text.trim().chars().count() > 0;
     selection
@@ -173,7 +177,7 @@ fn resolve_text(query: Option<&str>, selection: Option<&Selection>) -> Option<St
         .map(str::to_string)
 }
 
-/// 单次变换的请求体：系统指令 + 用户文本（可测）。
+/// Request body for a single transform: system instruction + user text (testable).
 fn prompt_body(model: &str, instruction: &str, text: &str, stream: bool) -> serde_json::Value {
     chat_body_with_stream(
         model,
@@ -185,7 +189,7 @@ fn prompt_body(model: &str, instruction: &str, text: &str, stream: bool) -> serd
     )
 }
 
-/// 非流式响应解析（阻塞 invoke 路径）：`choices[0].message.content`。
+/// Non-streaming response parsing (blocking invoke path): `choices[0].message.content`.
 fn parse_completion(payload: &str) -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(payload).ok()?;
     json["choices"][0]["message"]["content"]
@@ -194,7 +198,7 @@ fn parse_completion(payload: &str) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-/// 每次运行唯一的取消登记键（无会话可挂靠，Esc 停止仍要可用，ADR-0024）。
+/// Unique cancellation key per run (no conversation to attach to; Esc stop must still work, ADR-0024).
 fn run_key() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -203,7 +207,7 @@ fn run_key() -> String {
     format!("aicmd:{nanos}")
 }
 
-/// 阻塞式单发（`invoke` 路径，非面板主路径）：返回结果文本或错误卡。
+/// Blocking one-shot (`invoke` path, not the panel's main path): returns result text or an error card.
 fn completion_blocking(
     base_url: &str,
     key: &str,
@@ -213,13 +217,13 @@ fn completion_blocking(
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(300))
         .build()
-        .map_err(|err| format!("无法初始化 HTTP 客户端：{err}"))?;
+        .map_err(|err| format!("Failed to initialize HTTP client: {err}"))?;
     let response = client
         .post(chat_completions_url(base_url))
         .bearer_auth(key)
         .json(&body)
         .send()
-        .map_err(|err| format!("请求失败：{err}"))?;
+        .map_err(|err| format!("Request failed: {err}"))?;
     if !response.status().is_success() {
         let status = response.status();
         let text: String = response
@@ -228,10 +232,10 @@ fn completion_blocking(
             .chars()
             .take(500)
             .collect();
-        return Err(format!("端点返回 {status}：{text}"));
+        return Err(format!("Endpoint returned {status}: {text}"));
     }
     let payload = response.text().map_err(|err| err.to_string())?;
-    parse_completion(&payload).ok_or_else(|| "（端点没有返回内容）".to_string())
+    parse_completion(&payload).ok_or_else(|| "(the endpoint returned no content)".to_string())
 }
 
 impl Extension for AiCommands {
@@ -269,7 +273,7 @@ impl Extension for AiCommands {
         };
         let Some(text) = resolve_text(query, selection) else {
             return Ok(ActionResult::detail(vec![notice_item(
-                "先选中要处理的文字，或在输入框里输入文字，再按 Enter。",
+                "First select the text to transform, or type it into the input box, then press Enter.",
             )]));
         };
         let config = MoeConfig::load();
@@ -285,7 +289,7 @@ impl Extension for AiCommands {
         match completion_blocking(&base_url, &key, body) {
             Ok(out) => Ok(ActionResult::WriteBack { text: out }),
             Err(err) => Ok(ActionResult::detail(vec![notice_item(&format!(
-                "## 请求失败\n\n```\n{err}\n```"
+                "## Request failed\n\n```\n{err}\n```"
             ))])),
         }
     }
@@ -302,7 +306,7 @@ impl Extension for AiCommands {
         };
         let Some(text) = resolve_text(query, selection) else {
             return Ok(ActionResult::detail(vec![notice_item(
-                "先选中要处理的文字，或在输入框里输入文字，再按 Enter。",
+                "First select the text to transform, or type it into the input box, then press Enter.",
             )]));
         };
         let config = MoeConfig::load();
@@ -321,7 +325,7 @@ impl Extension for AiCommands {
         let on_done: ai::StreamFinish = {
             let emitter = emitter.clone();
             Arc::new(move |text| {
-                // 自然完成：请求平台回写选区并收起面板（被 Esc 停止时 run_stream 不回调）。
+                // Natural completion: ask the platform to write back to the selection and close the panel (run_stream does not call back when stopped with Esc).
                 emitter.emit(CommandEvent::WriteBack {
                     text: text.to_string(),
                 });
@@ -344,7 +348,7 @@ impl Extension for AiCommands {
                 emitter,
             );
         });
-        // 占位帧：正文留空——「正在生成」行内指示已经是唯一的状态反馈
+        // Placeholder frame: body left empty — the "generating" inline indicator is already the only status feedback
         Ok(ActionResult::detail(vec![transform_item("", true)]))
     }
 
@@ -368,7 +372,7 @@ impl Extension for AiCommands {
         }
     }
 
-    /// 停止进行中的生成（与 AI 问答共用同一套取消登记）。
+    /// Stops in-progress generation (shares the same cancellation registry as AI Q&A).
     fn stop_generation(&self) -> usize {
         ai::stop_all_streams()
     }
@@ -386,56 +390,71 @@ mod tests {
         }
     }
 
-    /// 同款守卫：每条命令都注册在 commands() 里，Apply 才能路由到。
+    /// Same guard: every command is registered in commands(), so Apply can route to it.
     #[test]
     fn every_command_is_registered_and_routable() {
         let ext = AiCommands;
         let ids: Vec<String> = ext.commands().into_iter().map(|c| c.id).collect();
         for spec in SPECS.iter() {
-            assert!(ids.contains(&spec.id.to_string()), "{} 未注册", spec.id);
+            assert!(
+                ids.contains(&spec.id.to_string()),
+                "{} not registered",
+                spec.id
+            );
         }
-        assert!(ids.len() >= 10, "命令要成规模：{}", ids.len());
+        assert!(
+            ids.len() >= 10,
+            "commands must be a substantial set: {}",
+            ids.len()
+        );
     }
 
-    /// 输入解析：选区优先；没有选区用输入框文字；都没有 → None（引导卡）。
+    /// Input resolution: selection first; no selection → input box text; neither → None (guidance card).
     #[test]
     fn resolve_text_prefers_selection_then_query() {
         assert_eq!(
-            resolve_text(None, Some(&selection("  选中文字 "))).as_deref(),
-            Some("选中文字")
+            resolve_text(None, Some(&selection("  selected text "))).as_deref(),
+            Some("selected text")
         );
         assert_eq!(
-            resolve_text(Some("输入框文字"), Some(&selection("选中文字"))).as_deref(),
-            Some("选中文字"),
-            "选区优先"
+            resolve_text(Some("input box text"), Some(&selection("selected text"))).as_deref(),
+            Some("selected text"),
+            "selection wins"
         );
         assert_eq!(
-            resolve_text(Some("  输入框文字 "), None).as_deref(),
-            Some("输入框文字")
+            resolve_text(Some("  input box text "), None).as_deref(),
+            Some("input box text")
         );
         assert_eq!(resolve_text(Some("   "), None), None);
         assert_eq!(resolve_text(None, None), None);
         assert_eq!(resolve_text(Some(""), Some(&selection("  "))), None);
     }
 
-    /// 请求体：系统指令在前、用户文本在后；stream 可关（阻塞路径）。
+    /// Request body: system instruction first, user text second; stream can be off (blocking path).
     #[test]
     fn prompt_body_puts_instruction_before_text() {
-        let body = prompt_body("m", "只输出译文。", "你好", false);
+        let body = prompt_body("m", "Only output the translation.", "hello", false);
         assert_eq!(body["stream"], false);
         assert_eq!(body["messages"][0]["role"], "system");
-        assert_eq!(body["messages"][0]["content"], "只输出译文。");
+        assert_eq!(
+            body["messages"][0]["content"],
+            "Only output the translation."
+        );
         assert_eq!(body["messages"][1]["role"], "user");
-        assert_eq!(body["messages"][1]["content"], "你好");
-        let streaming = prompt_body("m", "指令", "文本", true);
+        assert_eq!(body["messages"][1]["content"], "hello");
+        let streaming = prompt_body("m", "instruction", "text", true);
         assert_eq!(streaming["stream"], true);
     }
 
-    /// 非流式响应解析：拿 message.content；空内容 None。
+    /// Non-streaming response parsing: takes message.content; empty content → None.
     #[test]
     fn parse_completion_reads_message_content() {
-        let payload = r#"{"choices":[{"message":{"role":"assistant","content":"改写后的文本"}}]}"#;
-        assert_eq!(parse_completion(payload).as_deref(), Some("改写后的文本"));
+        let payload =
+            r#"{"choices":[{"message":{"role":"assistant","content":"the rewritten text"}}]}"#;
+        assert_eq!(
+            parse_completion(payload).as_deref(),
+            Some("the rewritten text")
+        );
         assert_eq!(parse_completion(r#"{"choices":[]}"#), None);
         assert_eq!(parse_completion("not-json"), None);
         assert_eq!(
@@ -444,10 +463,10 @@ mod tests {
         );
     }
 
-    /// 结果卡动作：Apply 回写、⌥⏎ 复制（run_item_action 的落点）。
+    /// Result card actions: Apply writes back, ⌥⏎ copies (the run_item_action landing spots).
     #[test]
     fn transform_item_actions_write_back_and_copy() {
-        let item = transform_item("结果", false);
+        let item = transform_item("result", false);
         let write = &item.actions[0];
         assert_eq!(write.kind, ActionKind::Primary);
         assert_eq!(
@@ -455,13 +474,14 @@ mod tests {
                 .run_item_action("aicmd.improve", &item, write)
                 .unwrap(),
             ActionResult::WriteBack {
-                text: "结果".into()
+                text: "result".into()
             }
         );
     }
 
-    /// 端到端：流自然完成 → 末帧 pending=false，且 on_done 拿到最终全文（AI 命令把它发成
-    /// `WriteBack` 自动回写事件，ADR-0024；停止路径已在 ai.rs 的 stop 测试覆盖）。
+    /// End to end: the stream finishes naturally → the last frame has pending=false, and on_done
+    /// receives the final full text (AI commands turn it into a `WriteBack` auto write-back event,
+    /// ADR-0024; the stop path is covered by the stop test in ai.rs).
     #[test]
     fn streaming_completion_invokes_on_done_with_final_text() {
         let _guard = ai::STREAM_TEST_LOCK.lock().expect("stream test lock");
@@ -476,13 +496,13 @@ mod tests {
                 return;
             };
             let mut buf = [0u8; 4096];
-            let _ = socket.read(&mut buf); // 请求头
+            let _ = socket.read(&mut buf); // request headers
             let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
             let delta = |content: &str| {
                 format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{content}\"}}}}]}}\n\n")
             };
-            let _ = socket.write_all(delta("润色").as_bytes());
-            let _ = socket.write_all(delta("完成").as_bytes());
+            let _ = socket.write_all(delta("Improved").as_bytes());
+            let _ = socket.write_all(delta(" text").as_bytes());
             let _ = socket.write_all(b"data: [DONE]\n\n");
         });
 
@@ -508,14 +528,14 @@ mod tests {
         let base_url = format!("http://{addr}/v1");
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         {
-            // on_done = AI 命令的自动回写回调（invoke_streaming 里就是这个形状）
+            // on_done = the AI commands' auto write-back callback (this is the shape used in invoke_streaming)
             let recorder = recorder.clone();
             std::thread::spawn(move || {
                 ai::run_stream(
                     ai::StreamRequest {
                         base_url,
                         key: "test-key".into(),
-                        body: prompt_body("m", "只输出译文。", "你好", true),
+                        body: prompt_body("m", "Only output the translation.", "hello", true),
                         command_id: "aicmd.improve".into(),
                         stream_key: "aicmd:test-run".into(),
                         item_of: Arc::new(transform_item),
@@ -531,17 +551,17 @@ mod tests {
         }
         done_rx
             .recv_timeout(Duration::from_secs(5))
-            .expect("流应自然完成");
+            .expect("the stream should finish naturally");
 
         let items = recorder.items.lock().unwrap();
-        let last = items.last().expect("至少一帧");
-        assert!(!last.pending, "末帧应为 pending=false");
-        assert_eq!(last.detail.as_deref(), Some("润色完成"));
+        let last = items.last().expect("at least one frame");
+        assert!(!last.pending, "the last frame should have pending=false");
+        assert_eq!(last.detail.as_deref(), Some("Improved text"));
         let done_texts = recorder.done_texts.lock().unwrap();
         assert_eq!(
             done_texts.as_slice(),
-            ["润色完成"],
-            "自然完成时回调最终全文"
+            ["Improved text"],
+            "on natural completion the callback gets the final full text"
         );
         let _ = server.join();
     }

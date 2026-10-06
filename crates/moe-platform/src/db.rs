@@ -1,4 +1,4 @@
-//! 平台级 SQLite：Conversation 存储（ADR-0005；按 Namespace 隔离）。
+//! Platform-level SQLite: Conversation storage (ADR-0005; isolated by Namespace).
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,7 +10,7 @@ pub struct Db {
     conn: Connection,
 }
 
-/// `data_dir/moe/moe.db`。
+/// `data_dir/moe/moe.db`.
 pub fn db_path() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join("moe").join("moe.db"))
 }
@@ -55,7 +55,7 @@ impl Db {
                  ON messages(conversation_id);",
         )
         .map_err(|err| err.to_string())?;
-        // 旧库升级：messages.attachments 是 IIE4AD-358 新增列。
+        // Legacy DB upgrade: messages.attachments is a column added in IIE4AD-358.
         let has_attachments = conn
             .prepare("PRAGMA table_info(messages)")
             .and_then(|mut stmt| {
@@ -74,7 +74,7 @@ impl Db {
         Ok(Self { conn })
     }
 
-    /// 创建会话，返回 id；`updated_unix` 初始为 `now`。
+    /// Create a conversation, returning its id; `updated_unix` starts at `now`.
     pub fn create_conversation(
         &self,
         namespace: &str,
@@ -92,7 +92,7 @@ impl Db {
         Ok(self.conn.last_insert_rowid().to_string())
     }
 
-    /// 追加消息（append-only）并 touch 会话的 `updated_unix`；附件只存引用（ADR-0010）。
+    /// Append a message (append-only) and touch the conversation's `updated_unix`; attachments store only references (ADR-0010).
     pub fn append_message(
         &self,
         conversation_id: &str,
@@ -120,7 +120,7 @@ impl Db {
         Ok(())
     }
 
-    /// 会话列表：`query` 模糊搜标题；按最近更新倒序；Namespace 隔离。
+    /// Conversation list: `query` fuzzy-matches titles; ordered by most recent update; Namespace-isolated.
     pub fn conversations(
         &self,
         namespace: &str,
@@ -177,7 +177,7 @@ impl Db {
         Ok(rows)
     }
 
-    /// 删除一个会话及其全部消息，返回删除的会话条数（不存在为 0）。
+    /// Delete one conversation and all of its messages, returning the number of conversations deleted (0 if missing).
     pub fn delete_conversation(&self, conversation_id: &str) -> Result<usize, String> {
         self.conn
             .execute(
@@ -193,7 +193,7 @@ impl Db {
             .map_err(|err| err.to_string())
     }
 
-    /// 删除 Namespace 下全部会话及其消息（ADR-0022 的 DeleteAll），返回删除的会话条数。
+    /// Delete all conversations and their messages under a Namespace (ADR-0022's DeleteAll), returning the number deleted.
     pub fn delete_all_conversations(&self, namespace: &str) -> Result<usize, String> {
         self.conn
             .execute(
@@ -210,7 +210,7 @@ impl Db {
             .map_err(|err| err.to_string())
     }
 
-    /// 会话里最后一条 assistant 消息（历史预览用，IIE4AD-370）。
+    /// The last assistant message in a conversation (used for history preview, IIE4AD-370).
     pub fn last_assistant_message(&self, conversation_id: &str) -> Result<Option<String>, String> {
         let mut stmt = self
             .conn
@@ -229,7 +229,7 @@ impl Db {
         }
     }
 
-    /// 会话内的消息（按时间正序）。
+    /// Messages within a conversation (in chronological order).
     pub fn messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
         let mut stmt = self
             .conn
@@ -245,7 +245,7 @@ impl Db {
                 Ok(Message {
                     role: Role::parse(&role),
                     content: row.get(1)?,
-                    // 解析失败视作无附件（不因一行脏数据丢整段历史）
+                    // Parse failures count as no attachments (one dirty row must not drop the whole history)
                     attachments: serde_json::from_str(&raw).unwrap_or_default(),
                 })
             })
@@ -278,10 +278,14 @@ mod tests {
     #[test]
     fn conversations_round_trip_and_order_by_recency() {
         let db = db();
-        let a = db.create_conversation("ai", "解释闭包", at(100)).unwrap();
-        let b = db.create_conversation("ai", "写一段排序", at(200)).unwrap();
-        // 追加消息会 touch a → a 最近更新
-        db.append_message(&a, Role::User, "解释闭包", &[], at(300))
+        let a = db
+            .create_conversation("ai", "explain closures", at(100))
+            .unwrap();
+        let b = db
+            .create_conversation("ai", "write a sort", at(200))
+            .unwrap();
+        // Appending a message touches a → a is now most recently updated
+        db.append_message(&a, Role::User, "explain closures", &[], at(300))
             .unwrap();
 
         let list = db.conversations("ai", None, 10).unwrap();
@@ -289,7 +293,7 @@ mod tests {
             list.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             [a.as_str(), b.as_str()]
         );
-        assert_eq!(list[0].title, "解释闭包");
+        assert_eq!(list[0].title, "explain closures");
         assert_eq!(list[0].updated_unix, 300);
     }
 
@@ -298,16 +302,16 @@ mod tests {
         let db = db();
         let ai = db.create_conversation("ai", "hi", at(0)).unwrap();
         let other = db.create_conversation("echo", "hi", at(0)).unwrap();
-        db.append_message(&ai, Role::User, "问", &[], at(1))
+        db.append_message(&ai, Role::User, "question", &[], at(1))
             .unwrap();
-        db.append_message(&ai, Role::Assistant, "答", &[], at(2))
+        db.append_message(&ai, Role::Assistant, "answer", &[], at(2))
             .unwrap();
 
         let msgs = db.messages(&ai).unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, Role::User);
         assert_eq!(msgs[1].role, Role::Assistant);
-        assert_eq!(msgs[1].content, "答");
+        assert_eq!(msgs[1].content, "answer");
         assert!(msgs[0].attachments.is_empty());
 
         let ai_list = db.conversations("ai", None, 10).unwrap();
@@ -321,12 +325,15 @@ mod tests {
     #[test]
     fn title_search_filters_within_namespace() {
         let db = db();
-        let target = db.create_conversation("ai", "写一段排序", at(200)).unwrap();
-        db.create_conversation("ai", "解释闭包", at(100)).unwrap();
-        db.create_conversation("echo", "排序 demo", at(300))
+        let target = db
+            .create_conversation("ai", "write a sort", at(200))
+            .unwrap();
+        db.create_conversation("ai", "explain closures", at(100))
+            .unwrap();
+        db.create_conversation("echo", "sort demo", at(300))
             .unwrap();
 
-        let hits = db.conversations("ai", Some("排序"), 10).unwrap();
+        let hits = db.conversations("ai", Some("sort"), 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, target);
         assert!(db.conversations("ai", Some("zzz"), 10).unwrap().is_empty());
@@ -342,18 +349,20 @@ mod tests {
         assert_eq!(db.conversations("ai", None, 3).unwrap().len(), 3);
     }
 
-    /// 附件引用随消息落库（IIE4AD-358）。
+    /// Attachment references persist with the message (IIE4AD-358).
     #[test]
     fn messages_round_trip_attachment_refs() {
         let db = db();
-        let conv = db.create_conversation("ai", "看图", at(0)).unwrap();
+        let conv = db
+            .create_conversation("ai", "look at image", at(0))
+            .unwrap();
         let refs = vec![AttachmentRef {
             name: "shot.png".into(),
             path: "/tmp/shot.png".into(),
         }];
-        db.append_message(&conv, Role::User, "这张图里是什么", &refs, at(1))
+        db.append_message(&conv, Role::User, "what is in this image", &refs, at(1))
             .unwrap();
-        db.append_message(&conv, Role::Assistant, "是一只猫", &[], at(2))
+        db.append_message(&conv, Role::Assistant, "it is a cat", &[], at(2))
             .unwrap();
 
         let messages = db.messages(&conv).unwrap();
@@ -361,36 +370,36 @@ mod tests {
         assert!(messages[1].attachments.is_empty());
     }
 
-    /// 不存在的会话不能落消息（悬空行防护；测试/异步入库都不会污染库）。
+    /// Missing conversations accept no messages (dangling-row guard; neither tests nor async writes pollute the DB).
     #[test]
     fn append_to_missing_conversation_is_noop() {
         let db = db();
-        db.append_message("424242", Role::User, "悬空", &[], at(1))
+        db.append_message("424242", Role::User, "dangling", &[], at(1))
             .unwrap();
         assert!(db.messages("424242").unwrap().is_empty());
     }
 
-    /// 历史预览取最后一条 assistant 消息（IIE4AD-370）。
+    /// History preview takes the last assistant message (IIE4AD-370).
     #[test]
     fn last_assistant_message_prefers_latest() {
         let db = db();
-        let conv = db.create_conversation("ai", "预览", at(0)).unwrap();
+        let conv = db.create_conversation("ai", "preview", at(0)).unwrap();
         assert_eq!(db.last_assistant_message(&conv).unwrap(), None);
-        db.append_message(&conv, Role::User, "问", &[], at(1))
+        db.append_message(&conv, Role::User, "question", &[], at(1))
             .unwrap();
-        db.append_message(&conv, Role::Assistant, "答一", &[], at(2))
+        db.append_message(&conv, Role::Assistant, "answer one", &[], at(2))
             .unwrap();
-        db.append_message(&conv, Role::User, "再问", &[], at(3))
+        db.append_message(&conv, Role::User, "ask again", &[], at(3))
             .unwrap();
-        db.append_message(&conv, Role::Assistant, "答二", &[], at(4))
+        db.append_message(&conv, Role::Assistant, "answer two", &[], at(4))
             .unwrap();
         assert_eq!(
             db.last_assistant_message(&conv).unwrap().as_deref(),
-            Some("答二")
+            Some("answer two")
         );
     }
 
-    /// 旧库（无 attachments 列）打开时自动升级，不丢历史。
+    /// Legacy DBs (no attachments column) are upgraded on open, keeping history.
     #[test]
     fn opens_legacy_db_and_migrates_attachments_column() {
         let path = std::env::temp_dir().join(format!(
@@ -417,9 +426,9 @@ mod tests {
                      created_unix INTEGER NOT NULL
                  );
                  INSERT INTO conversations (namespace, title, created_unix, updated_unix)
-                     VALUES ('ai', '老会话', 1, 1);
+                     VALUES ('ai', 'old conversation', 1, 1);
                  INSERT INTO messages (conversation_id, role, content, created_unix)
-                     VALUES (1, 'user', '老消息', 1);",
+                     VALUES (1, 'user', 'old message', 1);",
             )
             .unwrap();
         }
@@ -427,13 +436,13 @@ mod tests {
         let db = Db::open(&path).unwrap();
         let messages = db.messages("1").unwrap();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].content, "老消息");
+        assert_eq!(messages[0].content, "old message");
         assert!(messages[0].attachments.is_empty());
-        // 升级后的库可写入附件
+        // The upgraded DB accepts attachments
         db.append_message(
             "1",
             Role::User,
-            "新消息",
+            "new message",
             &[AttachmentRef {
                 name: "a.md".into(),
                 path: "/tmp/a.md".into(),
@@ -445,42 +454,50 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// 删除单个会话：消息级联删除，不存在返回 0，其他 Namespace 不受影响（ADR-0022）。
+    /// Deleting one conversation: messages cascade-delete, missing returns 0, other Namespaces are unaffected (ADR-0022).
     #[test]
     fn delete_conversation_cascades_and_isolates() {
         let db = db();
-        let a = db.create_conversation("ai", "会话 A", at(1)).unwrap();
-        let b = db.create_conversation("other", "别的扩展", at(1)).unwrap();
-        db.append_message(&a, Role::User, "问题", &[], at(2))
+        let a = db
+            .create_conversation("ai", "conversation A", at(1))
             .unwrap();
-        db.append_message(&a, Role::Assistant, "回答", &[], at(3))
+        let b = db
+            .create_conversation("other", "another extension", at(1))
+            .unwrap();
+        db.append_message(&a, Role::User, "question", &[], at(2))
+            .unwrap();
+        db.append_message(&a, Role::Assistant, "answer", &[], at(3))
             .unwrap();
 
         assert_eq!(db.delete_conversation(&a).unwrap(), 1);
         assert_eq!(db.conversations("ai", None, 10).unwrap().len(), 0);
-        assert!(db.messages(&a).unwrap().is_empty(), "消息级联删除");
+        assert!(
+            db.messages(&a).unwrap().is_empty(),
+            "messages cascade-delete"
+        );
         assert_eq!(
             db.conversations("other", None, 10).unwrap().len(),
             1,
-            "Namespace 隔离"
+            "Namespace isolation"
         );
-        // 再删一次：0（不存在）
+        // Delete again: 0 (does not exist)
         assert_eq!(db.delete_conversation(&a).unwrap(), 0);
         assert_eq!(db.delete_conversation(&b).unwrap(), 1);
     }
 
-    /// 删除全部：只清本 Namespace，返回删除条数（ADR-0022）。
+    /// Delete all: clears only this Namespace, returns the count deleted (ADR-0022).
     #[test]
     fn delete_all_conversations_clears_only_own_namespace() {
         let db = db();
-        db.create_conversation("ai", "一", at(1)).unwrap();
-        db.create_conversation("ai", "二", at(2)).unwrap();
-        db.create_conversation("other", "别的扩展", at(1)).unwrap();
+        db.create_conversation("ai", "one", at(1)).unwrap();
+        db.create_conversation("ai", "two", at(2)).unwrap();
+        db.create_conversation("other", "another extension", at(1))
+            .unwrap();
 
         assert_eq!(db.delete_all_conversations("ai").unwrap(), 2);
         assert_eq!(db.conversations("ai", None, 10).unwrap().len(), 0);
         assert_eq!(db.conversations("other", None, 10).unwrap().len(), 1);
-        // 空命名空间：0
+        // Empty namespace: 0
         assert_eq!(db.delete_all_conversations("ai").unwrap(), 0);
     }
 }

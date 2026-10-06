@@ -1,9 +1,9 @@
-//! 平台级统一键位表（Keymap）。Extension 不得覆写，只能为自己的动作附带快捷键。
+//! Platform-level unified keymap (Keymap). Extensions must not override it; they can only attach shortcuts to their own actions.
 //!
-//! 通用动作跨所有 Command / 子应用共用同一套键位语义（ADR-0014/0022）：
-//! Browse（⌘P，记录列表）、Actions（⌘⇧P，动作清单）、New（⌘N，新建记录）、
-//! Delete（⌃X，删除当前记录）、DeleteAll（⌃⇧X，删除全部记录）。
-//! 平台只定键位与路由，具体入口由 Extension 声明。
+//! General actions share one set of keybinding semantics across all Commands / sub-apps (ADR-0014/0022):
+//! Browse (⌘P, record list), Actions (⌘⇧P, action list), New (⌘N, new record),
+//! Delete (⌃X, delete current record), DeleteAll (⌃⇧X, delete all records).
+//! The platform only fixes keybindings and routing; concrete entries are declared by Extensions.
 
 use serde::Serialize;
 
@@ -12,29 +12,29 @@ use serde::Serialize;
 pub enum SystemKey {
     NavDown,
     NavUp,
-    /// Apply：Focused Item 的主操作。
+    /// Apply: the Focused Item's primary action.
     Apply,
-    /// 第一副操作（默认语义：复制纯文本）。
+    /// First secondary action (default semantic: copy plain text).
     SecondaryCopy,
-    /// Show All Actions：展开当前上下文的主/副操作清单（面板 ⌘K，子应用 ⌘⇧P）。
+    /// Show All Actions: expand the current context's primary/secondary action list (panel ⌘K, sub-app ⌘⇧P).
     ShowAllActions,
-    /// Browse：打开当前 Extension 的记录列表（AI = 历史会话）。通用动作，默认 ⌘P。
+    /// Browse: open the current Extension's record list (AI = conversation history). General action, default ⌘P.
     Browse,
-    /// New：新建一条记录（AI = 新会话）。通用动作，默认 ⌘N。
+    /// New: create a new record (AI = new conversation). General action, default ⌘N.
     New,
-    /// Delete：删除当前记录（AI = 当前会话）。通用动作，默认 ⌃X（ADR-0022）。
+    /// Delete: delete the current record (AI = current conversation). General action, default ⌃X (ADR-0022).
     Delete,
-    /// DeleteAll：删除全部记录（AI = 全部会话）。通用动作，默认 ⌃⇧X（ADR-0022）。
+    /// DeleteAll: delete all records (AI = all conversations). General action, default ⌃⇧X (ADR-0022).
     DeleteAll,
-    /// Esc：分层回退（有输入→清空；有结果层→回上层；否则关面板）。
+    /// Esc: layered back (with input → clear; on a result layer → back up one layer; otherwise close the panel).
     Back,
-    /// Materialize：转为该 Extension 的 Side View。
+    /// Materialize: turn into the Extension's Side View.
     Materialize,
-    /// Attach：为该次提问添加附件（AI 语义：`@path` mention，ADR-0010）。
+    /// Attach: add attachments to the current question (AI semantic: `@path` mention, ADR-0010).
     Attach,
 }
 
-/// (展示串, 语义)。UI 与键盘事件按语义绑定，展示串进 Hints Bar。
+/// (display string, semantic). The UI and keyboard events bind by semantic; the display string goes into the Hints Bar.
 pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
     use SystemKey as K;
     vec![
@@ -42,7 +42,7 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("↑ / ⌃P", K::NavUp),
         ("⏎", K::Apply),
         ("⌥⏎", K::SecondaryCopy),
-        // 同一语义两个键位：⌘K 是命令盘惯例，⌘⇧P 是子应用通用键（ADR-0014）
+        // Two keybindings for one semantic: ⌘K is the command palette convention, ⌘⇧P the sub-app general key (ADR-0014)
         ("⌘K / ⌘⇧P", K::ShowAllActions),
         ("⌘P", K::Browse),
         ("⌘N", K::New),
@@ -58,23 +58,27 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
 mod tests {
     use super::*;
 
-    /// 每个语义在键位表里只出现一次（展示串可含多个键位，如 "⌘K / ⌘⇧P"）。
+    /// Each semantic appears exactly once in the keymap (a display string may hold multiple keybindings, e.g. "⌘K / ⌘⇧P").
     #[test]
     fn every_semantic_has_exactly_one_row() {
         let table = default_keymap();
         let mut seen: Vec<SystemKey> = Vec::new();
         for (display, key) in &table {
-            assert!(!display.trim().is_empty(), "{key:?} 缺展示串");
+            assert!(!display.trim().is_empty(), "{key:?} missing display string");
             assert!(
                 !seen.contains(key),
-                "{key:?} 出现多次：语义应唯一，键位可多个",
+                "{key:?} appears multiple times: semantics must be unique, keybindings may be many",
             );
             seen.push(*key);
         }
-        assert_eq!(seen.len(), 12, "新增语义时同步 Hints Bar 的分组");
+        assert_eq!(
+            seen.len(),
+            12,
+            "keep the Hints Bar grouping in sync when adding semantics"
+        );
     }
 
-    /// 通用动作的默认键位是跨 Command/子应用的契约（ADR-0014/0022）。
+    /// General actions' default keybindings are a contract across Commands/sub-apps (ADR-0014/0022).
     #[test]
     fn general_actions_keep_their_default_bindings() {
         let table = default_keymap();
@@ -83,7 +87,7 @@ mod tests {
                 .iter()
                 .find(|(_, k)| *k == key)
                 .map(|(d, _)| *d)
-                .unwrap_or_else(|| panic!("{key:?} 未登记"))
+                .unwrap_or_else(|| panic!("{key:?} not registered"))
         };
         assert_eq!(display(SystemKey::Browse), "⌘P");
         assert_eq!(display(SystemKey::New), "⌘N");

@@ -8,7 +8,7 @@ export default defineConfig({
   build: {
     target: "es2022",
     rollupOptions: {
-      // 面板（index.html）与侧栏（chat.html）两个入口
+      // Two entry points: the panel (index.html) and the Side View (chat.html)
       input: { main: "index.html", chat: "chat.html" },
     },
   },

@@ -1,7 +1,7 @@
 name: Release
 
-# 手动触发（Actions 页面）或推 v* 标签时，构建 macOS .app/.dmg 并上传工件。
-# 不做签名/公证：首次打开需右键 →「打开」（README「安装」一节）。
+# Manually (Actions page) or on a v* tag push: build the macOS .app/.dmg and upload artifacts.
+# No signing/notarization: first open needs right-click → "Open" (see README "Install").
 on:
   workflow_dispatch:
   push:
@@ -31,7 +31,7 @@ jobs:
         with:
           workspaces: ". -> target"
 
-      # tauri-action 负责装 tauri-cli 并执行 `cargo tauri build`（含前端产物嵌入）
+      # tauri-action installs tauri-cli and runs `cargo tauri build` (frontend artifacts embedded)
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

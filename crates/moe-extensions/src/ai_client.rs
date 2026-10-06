@@ -1,13 +1,13 @@
-//! OpenAI 兼容端点的请求构造与 SSE 解析（纯函数，可测）。
+//! Request construction and SSE parsing for OpenAI-compatible endpoints (pure functions, testable).
 
-/// 一行 SSE 的处理结果。
+/// Outcome of processing one SSE line.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SseLine {
-    /// 本行携带的增量文本。
+    /// Incremental text carried by this line.
     Delta(String),
-    /// 流结束（`[DONE]`）。
+    /// Stream end (`[DONE]`).
     Done,
-    /// 忽略（心跳、空行、非 JSON、无 content 的首包等）。
+    /// Ignore (heartbeats, empty lines, non-JSON, first packet without content, etc.).
     Ignore,
 }
 
@@ -39,13 +39,13 @@ pub fn chat_body(model: &str, question: &str) -> serde_json::Value {
     )
 }
 
-/// 请求体：messages 已按 OpenAI 格式构造（含附件的多模态 parts，ADR-0010），
-/// 历史按时间正序交给端点。
+/// Request body: messages are already built in OpenAI format (multimodal parts with attachments,
+/// ADR-0010); history is passed to the endpoint in chronological order.
 pub fn chat_body_from_messages(model: &str, messages: Vec<serde_json::Value>) -> serde_json::Value {
     chat_body_with_stream(model, messages, true)
 }
 
-/// 同上，但可关流（阻塞式单发请求用 `stream: false`，AI 命令的 invoke 路径，ADR-0024）。
+/// Same as above, but streaming can be disabled (`stream: false` for blocking one-shot requests, the AI commands invoke path, ADR-0024).
 pub fn chat_body_with_stream(
     model: &str,
     messages: Vec<serde_json::Value>,
@@ -65,8 +65,8 @@ mod tests {
     #[test]
     fn parses_sse_delta_lines() {
         assert_eq!(
-            sse_delta("data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}"),
-            SseLine::Delta("你好".into())
+            sse_delta("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}"),
+            SseLine::Delta("hello".into())
         );
         assert_eq!(sse_delta("data: [DONE]"), SseLine::Done);
     }
@@ -76,12 +76,12 @@ mod tests {
         assert_eq!(sse_delta(""), SseLine::Ignore);
         assert_eq!(sse_delta(": keep-alive"), SseLine::Ignore);
         assert_eq!(sse_delta("data: not-json"), SseLine::Ignore);
-        // 首个 chunk 常只有 role，没有 content
+        // The first chunk usually only has role, no content
         assert_eq!(
             sse_delta("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}"),
             SseLine::Ignore
         );
-        // content 为空串（部分端点的收尾包）
+        // content is an empty string (some endpoints send a closing packet)
         assert_eq!(
             sse_delta("data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}"),
             SseLine::Ignore
@@ -102,14 +102,14 @@ mod tests {
 
     #[test]
     fn builds_chat_request_body() {
-        let body = chat_body("deepseek-chat", "你好");
+        let body = chat_body("deepseek-chat", "hello");
         assert_eq!(body["model"], "deepseek-chat");
         assert_eq!(body["stream"], true);
         assert_eq!(body["messages"][0]["role"], "user");
-        assert_eq!(body["messages"][0]["content"], "你好");
+        assert_eq!(body["messages"][0]["content"], "hello");
     }
 
-    /// 关流（AI 命令的阻塞 invoke，ADR-0024）。
+    /// Streaming off (blocking invoke of AI commands, ADR-0024).
     #[test]
     fn builds_non_stream_body() {
         let body = chat_body_with_stream(
@@ -121,21 +121,24 @@ mod tests {
         assert_eq!(body["messages"][0]["content"], "hi");
     }
 
-    /// 多轮历史（含附件 parts）原样进入请求体，顺序不乱（IIE4AD-360/358）。
+    /// Multi-turn history (including attachment parts) enters the request body unchanged and in order (IIE4AD-360/358).
     #[test]
     fn multi_turn_body_keeps_history_in_order() {
         let messages = vec![
-            serde_json::json!({ "role": "user", "content": "你好" }),
-            serde_json::json!({ "role": "assistant", "content": "你好！有什么可以帮你？" }),
+            serde_json::json!({ "role": "user", "content": "hello" }),
+            serde_json::json!({ "role": "assistant", "content": "Hello! How can I help?" }),
             serde_json::json!({ "role": "user", "content": [
-                { "type": "text", "text": "再解释一下闭包" },
+                { "type": "text", "text": "explain closures again" },
                 { "type": "image_url", "image_url": { "url": "data:image/png;base64,AA==" } }
             ] }),
         ];
         let body = chat_body_from_messages("deepseek-chat", messages);
         assert_eq!(body["messages"].as_array().unwrap().len(), 3);
         assert_eq!(body["messages"][1]["role"], "assistant");
-        assert_eq!(body["messages"][2]["content"][0]["text"], "再解释一下闭包");
+        assert_eq!(
+            body["messages"][2]["content"][0]["text"],
+            "explain closures again"
+        );
         assert_eq!(body["messages"][2]["content"][1]["type"], "image_url");
     }
 }

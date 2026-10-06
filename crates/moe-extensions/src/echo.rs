@@ -1,4 +1,4 @@
-//! Echo：Command 契约的活文档——一个 Extension 如何产出 WriteBack 与 Item 流。
+//! Echo: living documentation of the Command contract — how an Extension produces WriteBack and Item streams.
 
 use moe_core::contract::{
     Action, ActionKind, ActionResult, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
@@ -41,21 +41,21 @@ impl Extension for Echo {
             meta(
                 "echo.write-back",
                 "Echo: Write Back",
-                "把输入文本回写到光标处",
+                "Write the input text back at the cursor",
                 "terminal",
                 InputKind::Query,
             ),
             meta(
                 "echo.items",
                 "Echo: List Demo",
-                "演示 Item 流：结果仍可 Apply / 副操作",
+                "Demo of an Item stream: results still support Apply / secondary actions",
                 "list",
                 InputKind::Query,
             ),
             meta(
                 "echo.shout",
                 "Echo: Shout",
-                "有选区则大写回写，无选区则插入标记",
+                "With a selection: write back uppercased; without: insert a marker",
                 "megaphone",
                 InputKind::Selection,
             ),
@@ -83,11 +83,21 @@ impl Extension for Echo {
                     .map(|word| Item {
                         id: format!("echo.word.{word}"),
                         title: (*word).to_string(),
-                        subtitle: Some("示例词".into()),
+                        subtitle: Some("Sample word".into()),
                         icon: Some("quote".into()),
                         actions: vec![
-                            action("write-back", "回写该词", ActionKind::Primary, None),
-                            action("copy", "复制纯文本", ActionKind::Secondary, Some("⌥⏎")),
+                            action(
+                                "write-back",
+                                "Write back this word",
+                                ActionKind::Primary,
+                                None,
+                            ),
+                            action(
+                                "copy",
+                                "Copy as plain text",
+                                ActionKind::Secondary,
+                                Some("⌥⏎"),
+                            ),
                         ],
                         payload: serde_json::json!({ "word": word }),
                         detail: None,
@@ -109,7 +119,7 @@ impl Extension for Echo {
             "write-back" => Ok(ActionResult::WriteBack {
                 text: item.title.clone(),
             }),
-            // 与 AI 回答同一语义：只写剪贴板，不动宿主应用（ADR-0002 增补）
+            // Same semantics as the AI answer: only write to the clipboard, leave the host app alone (ADR-0002 amendment)
             "copy" => {
                 moe_platform::clipboard::copy(&item.title)
                     .map_err(|err| MoeError::Internal(err.to_string()))?;
@@ -124,7 +134,7 @@ impl Extension for Echo {
 mod tests {
     use super::*;
 
-    /// 契约一致性（ADR-0006）：Item 流里每个 item 都有 Primary 与副操作（⌥⏎ 复制）。
+    /// Contract consistency (ADR-0006): every item in an Item stream has a Primary and a secondary action (⌥⏎ copies).
     #[test]
     fn list_items_follow_unified_action_semantics() {
         let ext = Echo;
@@ -133,19 +143,22 @@ mod tests {
         else {
             panic!("expected list");
         };
-        assert!(!detail_full, "词表是列表视图（左列表 + 右预览）—ADR-0013");
+        assert!(
+            !detail_full,
+            "the word list is a list view (left list + right preview) — ADR-0013"
+        );
         assert!(!items.is_empty());
         for item in &items {
             assert!(
                 item.actions.iter().any(|a| a.kind == ActionKind::Primary),
-                "{} 缺 Primary",
+                "{} missing Primary",
                 item.id
             );
             let secondary = item
                 .actions
                 .iter()
                 .find(|a| a.kind == ActionKind::Secondary)
-                .expect("缺副操作");
+                .expect("missing secondary action");
             assert_eq!(secondary.id, "copy");
             assert_eq!(secondary.keybinding.as_deref(), Some("⌥⏎"));
         }

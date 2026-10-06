@@ -1,6 +1,6 @@
-//! 平台边界（ADR-0002/0008）：与宿主应用的文字互动、呼出键监听。
-//! 呼出监听：macOS = CGEventTap（授权门），Linux = X11 XRecord（免授权，见
-//! [`x11`]；Wayland 自查并报 Unsupported）；TextTarget 的 macOS AX 实现是 M2。
+//! Platform boundary (ADR-0002/0008): text interaction with the host app and summon-key listening.
+//! Summon listening: macOS = CGEventTap (permission gate), Linux = X11 XRecord (no permission needed, see
+//! [`x11`]; Wayland self-detects and reports Unsupported); the macOS AX implementation of TextTarget is M2.
 
 pub mod clipboard;
 pub mod config;
@@ -22,9 +22,9 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum PlatformError {
-    /// 需要辅助功能/输入监控授权；调用方应展示内联引导（ADR-0008）。
+    /// Needs Accessibility/Input Monitoring permission; callers should show inline guidance (ADR-0008).
     PermissionRequired,
-    /// 该平台/会话下不可用（如 Wayland 读选区）。
+    /// Unavailable on this platform/session (e.g. reading the selection on Wayland).
     Unsupported(&'static str),
 }
 
@@ -37,16 +37,16 @@ impl fmt::Display for PlatformError {
     }
 }
 
-/// Command 层只通过这个边界读写宿主应用文本，不感知具体手段。
+/// The Command layer reads and writes host-app text only through this boundary, without knowing the concrete mechanism.
 pub trait TextTarget: Send + Sync {
-    /// 抓取当前 Selection（文字）。无选区返回 Ok(None)，走光标降级。
+    /// Grab the current Selection (text). Returns Ok(None) when there is no selection, falling back to the cursor.
     fn read_selection(&self) -> Result<Option<String>, PlatformError>;
 
-    /// 有 Selection 则替换之，否则插入到光标处。
+    /// Replace the Selection if there is one, otherwise insert at the cursor.
     fn write_text(&self, text: &str) -> Result<(), PlatformError>;
 }
 
-/// 全平台占位实现：在真实实现落地前让上层可以编译与接线。
+/// Cross-platform placeholder implementation: lets upper layers compile and wire up before the real implementation lands.
 pub struct Unsupported;
 
 impl TextTarget for Unsupported {

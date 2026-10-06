@@ -5,20 +5,21 @@ body {
   background: transparent;
 }
 
-/* 悬浮窗口卡片："浮起"交给 AppKit 系统窗口阴影（窗口是真透明的，CSS 阴影会被窗口边界裁切）；
-   这里只补一层贴边的接触阴影，让卡片边缘在任何背景下都有分界（ADR-0016）。 */
+/* Floating window card: the "lift" comes from the AppKit system window shadow (the window is truly
+   transparent; CSS shadows would be clipped by the window bounds); here we only add a contact shadow
+   hugging the edges, so the card edges read against any background (ADR-0016). */
 .moe-window-card {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
 }
 
-/* 动作面板（⌘K / ⌘⇧P）：浮层卡片，浮在结果之上（阴影不超出 8px 内边距，不被窗口裁切） */
+/* Actions card (⌘K / ⌘⇧P): floating card above the results (shadow stays within the 8px padding, unclipped by the window) */
 .moe-actions-card {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
 }
 
-/* 键位块（shadcn Kbd 同款）：每键一个方块，字符居中、行内基线对齐。
-   固定正方形（18×18，不随内容撑开），长键名（Esc…）靠缩字号塞进去，
-   一个语义里所有块因此同宽同高，长键位也不会把布局撞开。 */
+/* Key blocks (shadcn Kbd style): one square per key, centered characters, inline baseline alignment.
+   Fixed square (18×18, never stretched by content); long key names (Esc…) are squeezed in via smaller
+   font, so every block in one binding is the same width and height and long bindings can't break the layout. */
 .moe-keys {
   display: inline-flex;
   align-items: center;
@@ -51,24 +52,24 @@ body {
   line-height: 1;
   letter-spacing: 0;
 }
-/* 具名键（Esc、Tab…）：同一个方块，只把字缩紧——不撑宽、不换行 */
+/* Named keys (Esc, Tab…): same square, just tighter text — never widens, never wraps */
 .moe-kbd[data-wide] {
   font-size: 9px;
   letter-spacing: -0.4px;
 }
 
-/* 底部悬浮胶囊（Raycast 同款）：主操作与动作同一个胶囊，按钮自身无边框 */
+/* Bottom floating pill (Raycast-style): primary action and actions in the same pill; buttons themselves have no border */
 .moe-action-bar {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  /* 按钮与胶囊边界之间的留白 */
+  /* Padding between the buttons and the pill edge */
   padding: 3px;
   border: 1px solid rgb(82 82 91 / 0.5);
   border-radius: 999px;
   background: rgb(24 24 27 / 0.82);
   backdrop-filter: blur(14px);
-  /* 贴合卡片的浅阴影：胶囊浮在列表之上，但不留黑块 */
+  /* Soft shadow hugging the card: the pill floats above the list without leaving a dark block */
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.25),
     0 4px 12px rgb(0 0 0 / 0.22),
@@ -93,7 +94,7 @@ body {
   opacity: 0.45;
 }
 
-/* 生成中的行内指示：三点跳动 + 文案（面板与侧栏共用） */
+/* Inline generating indicator: bouncing dots + label (shared by the panel and the Side View) */
 .moe-generating {
   display: inline-flex;
   align-items: center;
@@ -102,9 +103,9 @@ body {
   font-size: 12px;
   color: #a1a1aa;
 }
-/* 关键：Tailwind 的 .hidden 在 utilities 层，而未分层样式永远压过层内样式——
-   光 toggle .hidden 不生效（display:inline-flex 会把 display:none 顶掉）。
-   用 class+class 选择器显式压回去（注意是 class，不是 [hidden] 属性）。 */
+/* Critical: Tailwind's .hidden lives in the utilities layer, and unlayered styles always beat layered
+   ones — toggling .hidden alone does nothing (display:inline-flex overrides display:none).
+   Use a class+class selector to explicitly force it back (note: a class, not the [hidden] attribute). */
 .moe-generating.hidden {
   display: none;
 }
@@ -139,7 +140,7 @@ body {
   }
 }
 
-/* 详情卡片的 Markdown 样式（无 typography 插件，保持小体积） */
+/* Markdown styles for the detail card (no typography plugin, keeping it small) */
 .md h1,
 .md h2,
 .md h3 {

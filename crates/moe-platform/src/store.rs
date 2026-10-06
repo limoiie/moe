@@ -1,7 +1,7 @@
-//! 平台级 KV：命令 frecency 与窗口位置尺寸的持久化。
+//! Platform-level KV: persisting command frecency and window position/size.
 //!
-//! 命令使用记录与窗口状态不属于任何 Extension 的 Namespace（隔离域留给扩展自己的数据），
-//! 因此落在平台自己的数据目录（IIE4AD-346 / IIE4AD-369）。
+//! Command usage records and window state don't belong to any Extension's Namespace (the isolation domain is reserved for extension-owned data),
+//! so they live in the platform's own data directory (IIE4AD-346 / IIE4AD-369).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use moe_core::frecency::Frecency;
 use serde::{Deserialize, Serialize};
 
-/// `data_dir/moe/frecency.json`（macOS: ~/Library/Application Support；Linux: ~/.local/share）。
+/// `data_dir/moe/frecency.json` (macOS: ~/Library/Application Support; Linux: ~/.local/share).
 pub fn frecency_path() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join("moe").join("frecency.json"))
 }
@@ -20,7 +20,10 @@ pub fn load_frecency() -> Frecency {
     };
     match std::fs::read_to_string(&path) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|err| {
-            eprintln!("moe: {} 解析失败（{err}），frecency 重置", path.display());
+            eprintln!(
+                "moe: {} parse failed ({err}), frecency reset",
+                path.display()
+            );
             Frecency::default()
         }),
         Err(_) => Frecency::default(),
@@ -37,14 +40,14 @@ pub fn save_frecency(frecency: &Frecency) {
     match serde_json::to_string(frecency) {
         Ok(json) => {
             if let Err(err) = std::fs::write(&path, json) {
-                eprintln!("moe: frecency 保存失败: {err}");
+                eprintln!("moe: frecency save failed: {err}");
             }
         }
-        Err(err) => eprintln!("moe: frecency 序列化失败: {err}"),
+        Err(err) => eprintln!("moe: frecency serialization failed: {err}"),
     }
 }
 
-/// 窗口位置与尺寸（逻辑像素，顶左原点）。
+/// Window position and size (logical pixels, top-left origin).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowFrame {
@@ -54,7 +57,7 @@ pub struct WindowFrame {
     pub height: u32,
 }
 
-/// `data_dir/moe/windows.json`：窗口名 → 帧。
+/// `data_dir/moe/windows.json`: window name → frame.
 pub fn windows_path() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join("moe").join("windows.json"))
 }
@@ -69,12 +72,12 @@ fn load_frames() -> HashMap<String, WindowFrame> {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
-/// 读某个窗口的记忆帧；没有则 None（调用方走默认摆放）。
+/// Read a window's remembered frame; None when absent (the caller falls back to default placement).
 pub fn load_window_frame(name: &str) -> Option<WindowFrame> {
     load_frames().remove(name)
 }
 
-/// 记住某个窗口的位置与尺寸（拖拽/缩放后调用）。
+/// Remember a window's position and size (call after drag/resize).
 pub fn save_window_frame(name: &str, frame: WindowFrame) {
     let Some(path) = windows_path() else {
         return;
@@ -87,10 +90,10 @@ pub fn save_window_frame(name: &str, frame: WindowFrame) {
     match serde_json::to_string(&frames) {
         Ok(json) => {
             if let Err(err) = std::fs::write(&path, json) {
-                eprintln!("moe: 窗口状态保存失败: {err}");
+                eprintln!("moe: window state save failed: {err}");
             }
         }
-        Err(err) => eprintln!("moe: 窗口状态序列化失败: {err}"),
+        Err(err) => eprintln!("moe: window state serialization failed: {err}"),
     }
 }
 
@@ -100,7 +103,7 @@ mod tests {
 
     #[test]
     fn window_frames_round_trip_in_memory() {
-        // 直接验证 JSON 形状（落盘路径依赖 data_dir，不在此测）
+        // Verify the JSON shape directly (the persist-to-disk path depends on data_dir and isn't tested here)
         let frame = WindowFrame {
             x: 100,
             y: 24,

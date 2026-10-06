@@ -1,16 +1,16 @@
-//! 附件（ADR-0005 v1：文本文件 + 图片；ADR-0010 `@path` mention）。
+//! Attachments (ADR-0005 v1: text files + images; ADR-0010 `@path` mentions).
 //!
-//! mention 语法：`@/abs/path`（到空白为止）或 `@"path with spaces"`。
-//! 面板的 ⌘⇧A 与侧栏的 📎 只做「校验 + 插入 mention」，读取与展开都在这里。
+//! Mention syntax: `@/abs/path` (up to whitespace) or `@"path with spaces"`.
+//! The panel's ⌘⇧A and the side view's 📎 only do "validate + insert mention"; reading and expanding happen here.
 
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
 use moe_core::conversation::{AttachmentRef, Message};
 
-/// 文本附件上限（读入为消息内容）。
+/// Text attachment limit (read in as message content).
 pub const TEXT_LIMIT: u64 = 512 * 1024;
-/// 图片附件上限（base64 进多模态请求）。
+/// Image attachment limit (base64 into multimodal requests).
 pub const IMAGE_LIMIT: u64 = 5 * 1024 * 1024;
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
@@ -70,27 +70,27 @@ impl Kind {
     }
 }
 
-/// 只读探测结果：面板/侧栏「校验 + 展示」用，不读入内容。
+/// Read-only inspection result: used by the panel/side view for "validate + display", without reading content.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentInfo {
     pub name: String,
-    /// 解析后的绝对路径（`~` 展开）。
+    /// Resolved absolute path (`~` expanded).
     pub path: String,
     /// "text" | "image"
     pub kind: &'static str,
     pub bytes: u64,
 }
 
-/// 读入后的附件内容。
+/// Attachment content after reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attachment {
     pub kind: Kind,
-    /// 文本内容，或图片的 `data:` URL（base64）。
+    /// Text content, or a `data:` URL for images (base64).
     pub payload: String,
 }
 
-/// `~` 展开为 home；其余原样（相对路径按进程 cwd 解析）。
+/// Expands `~` to home; everything else is kept as-is (relative paths resolve against the process cwd).
 pub fn expand_path(raw: &str) -> PathBuf {
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix("~/")
@@ -107,14 +107,14 @@ pub fn expand_path(raw: &str) -> PathBuf {
 }
 
 fn dirs_home() -> Option<PathBuf> {
-    // Windows 上 HOME 常缺省，回退 USERPROFILE
+    // On Windows HOME is often unset; fall back to USERPROFILE
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
 }
 
-/// 提取 mention：返回（剥离 mention 的可见文本，展开后的路径列表）。
-/// `@` 必须落在 token 边界（行首或空白后），`foo@bar.com` 不算。
+/// Extracts mentions: returns (visible text with mentions stripped, list of expanded paths).
+/// `@` must sit on a token boundary (start of line or after whitespace); `foo@bar.com` does not count.
 pub fn parse_mentions(input: &str) -> (String, Vec<PathBuf>) {
     let chars: Vec<char> = input.chars().collect();
     let mut cleaned = String::new();
@@ -124,7 +124,7 @@ pub fn parse_mentions(input: &str) -> (String, Vec<PathBuf>) {
         let at_boundary = i == 0 || chars[i - 1].is_whitespace();
         if chars[i] == '@' && at_boundary {
             if chars.get(i + 1) == Some(&'"') {
-                // @"带空格 的路径"
+                // @"path with spaces"
                 if let Some(end) = chars[i + 2..].iter().position(|c| *c == '"') {
                     let token: String = chars[i + 2..i + 2 + end].iter().collect();
                     if !token.trim().is_empty() {
@@ -153,7 +153,7 @@ pub fn parse_mentions(input: &str) -> (String, Vec<PathBuf>) {
     (tidy(&cleaned), paths)
 }
 
-/// 去掉 mention 留下的多余空格（保留换行结构）。
+/// Removes extra whitespace left behind by mentions (preserving line structure).
 fn tidy(text: &str) -> String {
     text.lines()
         .map(|line| {
@@ -178,7 +178,7 @@ fn tidy(text: &str) -> String {
         .to_string()
 }
 
-/// 生成落库用的引用（不读文件：文件在请求时现读）。
+/// Builds the reference used for persistence (does not read the file: files are read at request time).
 pub fn ref_for_path(path: &Path) -> AttachmentRef {
     let name = path
         .file_name()
@@ -190,15 +190,19 @@ pub fn ref_for_path(path: &Path) -> AttachmentRef {
     }
 }
 
-/// 探测文件：存在性、类型（扩展名 + UTF-8 嗅探）、大小上限；`~` 展开与 `load` 一致。
+/// Inspects a file: existence, kind (extension + UTF-8 sniffing), size limit; `~` expansion matches `load`.
 pub fn inspect(raw_path: &Path) -> Result<AttachmentInfo, String> {
     if raw_path.as_os_str().is_empty() {
-        return Err("路径为空".into());
+        return Err("Path is empty".into());
     }
     let path = expand_path(&raw_path.to_string_lossy());
-    let meta = std::fs::metadata(&path).map_err(|_| format!("文件不存在：{}", path.display()))?;
+    let meta =
+        std::fs::metadata(&path).map_err(|_| format!("File not found: {}", path.display()))?;
     if meta.is_dir() {
-        return Err(format!("这是目录，不是文件：{}", path.display()));
+        return Err(format!(
+            "This is a directory, not a file: {}",
+            path.display()
+        ));
     }
     let bytes = meta.len();
     let head = read_head(&path, 8192)?;
@@ -215,19 +219,23 @@ pub fn inspect(raw_path: &Path) -> Result<AttachmentInfo, String> {
     })
 }
 
-/// 读入附件内容（文本 → 原文；图片 → `data:` URL）。
+/// Reads attachment content (text → as-is; image → `data:` URL).
 pub fn load(raw_path: &Path) -> Result<Attachment, String> {
     let path = expand_path(&raw_path.to_string_lossy());
-    let meta = std::fs::metadata(&path).map_err(|_| format!("文件不存在：{}", path.display()))?;
+    let meta =
+        std::fs::metadata(&path).map_err(|_| format!("File not found: {}", path.display()))?;
     if meta.is_dir() {
-        return Err(format!("这是目录，不是文件：{}", path.display()));
+        return Err(format!(
+            "This is a directory, not a file: {}",
+            path.display()
+        ));
     }
-    let bytes = std::fs::read(&path).map_err(|err| format!("读取失败：{err}"))?;
+    let bytes = std::fs::read(&path).map_err(|err| format!("Failed to read: {err}"))?;
     let kind = classify(&path, &bytes)?;
     limit_of(kind, meta.len())?;
     match kind {
         Kind::Text => {
-            let text = String::from_utf8(bytes).map_err(|_| "不是有效的 UTF-8 文本".to_string())?;
+            let text = String::from_utf8(bytes).map_err(|_| "Not valid UTF-8 text".to_string())?;
             Ok(Attachment {
                 kind,
                 payload: text,
@@ -244,8 +252,8 @@ pub fn load(raw_path: &Path) -> Result<Attachment, String> {
     }
 }
 
-/// 一条消息 → OpenAI messages 项：文本内联，图片进多模态 content 数组。
-/// 附件不可读时不失败整次提问，而是在文本里留下可读的提示。
+/// One message → one OpenAI messages entry: text inlined, images into the multimodal content array.
+/// Unreadable attachments do not fail the whole question; a readable note is left in the text instead.
 pub fn expand_message(message: &Message) -> serde_json::Value {
     let mut text = message.content.clone();
     let mut image_names: Vec<String> = Vec::new();
@@ -260,7 +268,7 @@ pub fn expand_message(message: &Message) -> serde_json::Value {
                 Kind::Text => text.push_str(&text_block(&loaded_name(reference), &loaded.payload)),
             },
             Err(err) => text.push_str(&format!(
-                "\n\n[附件不可读：{}（{err}）]",
+                "\n\n[Attachment unreadable: {} ({err})]",
                 loaded_name(reference)
             )),
         }
@@ -270,7 +278,7 @@ pub fn expand_message(message: &Message) -> serde_json::Value {
     } else {
         let mut content = vec![serde_json::json!({
             "type": "text",
-            "text": format!("[图片附件：{}]\n{text}", image_names.join("、")),
+            "text": format!("[Image attachment: {}]\n{text}", image_names.join(", ")),
         })];
         for url in images {
             content.push(serde_json::json!({
@@ -290,9 +298,9 @@ fn loaded_name(reference: &AttachmentRef) -> String {
     }
 }
 
-/// 文本附件的内联块（模型可读，且不依赖代码围栏，避免内容里出现 ``` 时破碎）。
+/// Inline block for a text attachment (model-readable, and not dependent on code fences, so content containing ``` does not break it).
 fn text_block(name: &str, content: &str) -> String {
-    format!("\n\n--- 附件 {name} ---\n{content}\n--- 附件结束 ---")
+    format!("\n\n--- Attachment {name} ---\n{content}\n--- End of attachment ---")
 }
 
 fn limit_of(kind: Kind, bytes: u64) -> Result<(), String> {
@@ -302,7 +310,7 @@ fn limit_of(kind: Kind, bytes: u64) -> Result<(), String> {
     };
     if bytes > limit {
         return Err(format!(
-            "文件过大：{}（上限 {}）",
+            "File too large: {} (limit {})",
             human(bytes),
             human(limit)
         ));
@@ -320,11 +328,11 @@ fn human(bytes: u64) -> String {
 
 fn read_head(path: &Path, max: usize) -> Result<Vec<u8>, String> {
     use std::io::Read as _;
-    let mut file = std::fs::File::open(path).map_err(|err| format!("读取失败：{err}"))?;
+    let mut file = std::fs::File::open(path).map_err(|err| format!("Failed to read: {err}"))?;
     let mut buf = vec![0u8; max];
     let read = file
         .read(&mut buf)
-        .map_err(|err| format!("读取失败：{err}"))?;
+        .map_err(|err| format!("Failed to read: {err}"))?;
     buf.truncate(read);
     Ok(buf)
 }
@@ -344,12 +352,12 @@ fn classify(path: &Path, head: &[u8]) -> Result<Kind, String> {
         return Ok(Kind::Text);
     }
     Err(format!(
-        "不支持的文件类型（v1 只收文本与图片）：{}",
+        "Unsupported file type (v1 accepts text and images only): {}",
         path.display()
     ))
 }
 
-/// UTF-8 嗅探：无 NUL 且可解码（仅末尾被截断的多字节序列视为文本）。
+/// UTF-8 sniffing: no NUL bytes and decodable (a multibyte sequence truncated only at the end still counts as text).
 fn looks_like_text(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
@@ -395,19 +403,20 @@ mod tests {
 
     #[test]
     fn parses_quoted_and_bare_mentions_at_boundaries() {
-        let (text, paths) =
-            parse_mentions("总结一下 @/tmp/a.md 和 @\"/tmp/with space.txt\"，邮箱 x@y.com 不算");
+        let (text, paths) = parse_mentions(
+            "Summarize @/tmp/a.md and @\"/tmp/with space.txt\", email x@y.com is not a mention",
+        );
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[0], PathBuf::from("/tmp/a.md"));
         assert_eq!(paths[1], PathBuf::from("/tmp/with space.txt"));
-        assert_eq!(text, "总结一下 和 ，邮箱 x@y.com 不算");
+        assert_eq!(text, "Summarize and , email x@y.com is not a mention");
     }
 
     #[test]
     fn unclosed_quote_is_not_a_mention() {
-        let (text, paths) = parse_mentions("看 @\"没闭合");
+        let (text, paths) = parse_mentions("see @\"unclosed");
         assert!(paths.is_empty());
-        assert_eq!(text, "看 @\"没闭合");
+        assert_eq!(text, "see @\"unclosed");
     }
 
     #[test]
@@ -428,26 +437,29 @@ mod tests {
         assert_eq!(info.bytes, 7);
 
         let tiny_binary = temp_file("blob.bin", &[0x00, 0x01, 0xff, 0x00]);
-        assert!(inspect(&tiny_binary).unwrap_err().contains("不支持"));
+        assert!(inspect(&tiny_binary).unwrap_err().contains("Unsupported"));
 
         let big = temp_file("big.txt", &vec![b'a'; (TEXT_LIMIT + 1) as usize]);
-        assert!(inspect(&big).unwrap_err().contains("文件过大"));
+        assert!(inspect(&big).unwrap_err().contains("File too large"));
 
         assert!(
             inspect(Path::new("/definitely/missing.md"))
                 .unwrap_err()
-                .contains("不存在")
+                .contains("not found")
         );
     }
 
-    /// `~` 在探测与读取两处一致展开（错误信息里是展开后的路径）。
+    /// `~` expands consistently in both inspect and load (error messages contain the expanded path).
     #[test]
     fn inspect_expands_home() {
         if dirs_home().is_none() {
             return;
         }
         let err = inspect(Path::new("~/definitely-missing-moe.md")).unwrap_err();
-        assert!(!err.contains('~'), "错误信息应已是展开后的路径：{err}");
+        assert!(
+            !err.contains('~'),
+            "the error message should already contain the expanded path: {err}"
+        );
     }
 
     #[test]
@@ -467,11 +479,11 @@ mod tests {
 
     #[test]
     fn expand_message_inlines_text_and_multimodal_images() {
-        let text = temp_file("notes.md", "正文内容".as_bytes());
+        let text = temp_file("notes.md", "body content".as_bytes());
         let image = temp_file("shot.png", &[0x89, 0x50, 0x4e, 0x47]);
         let message = Message {
             role: Role::User,
-            content: "总结".into(),
+            content: "Summarize".into(),
             attachments: vec![ref_for_path(&text), ref_for_path(&image)],
         };
         let json = expand_message(&message);
@@ -479,9 +491,9 @@ mod tests {
         let parts = json["content"].as_array().expect("multimodal parts");
         assert_eq!(parts[0]["type"], "text");
         let text_part = parts[0]["text"].as_str().unwrap();
-        assert!(text_part.contains("附件 notes.md"));
-        assert!(text_part.contains("正文内容"));
-        assert!(text_part.contains("图片附件：shot.png"));
+        assert!(text_part.contains("Attachment notes.md"));
+        assert!(text_part.contains("body content"));
+        assert!(text_part.contains("Image attachment: shot.png"));
         assert_eq!(parts[1]["type"], "image_url");
         assert!(
             parts[1]["image_url"]["url"]
@@ -495,18 +507,18 @@ mod tests {
     fn expand_message_keeps_plain_text_when_no_attachments() {
         let message = Message {
             role: Role::User,
-            content: "你好".into(),
+            content: "hello".into(),
             attachments: vec![],
         };
         let json = expand_message(&message);
-        assert_eq!(json["content"], "你好");
+        assert_eq!(json["content"], "hello");
     }
 
     #[test]
     fn expand_message_reports_unreadable_attachment_without_failing() {
         let message = Message {
             role: Role::User,
-            content: "看看".into(),
+            content: "Check".into(),
             attachments: vec![AttachmentRef {
                 name: "gone.md".into(),
                 path: "/definitely/missing.md".into(),
@@ -514,7 +526,7 @@ mod tests {
         };
         let json = expand_message(&message);
         let text = json["content"].as_str().unwrap();
-        assert!(text.contains("附件不可读：gone.md"));
-        assert!(text.contains("看看"));
+        assert!(text.contains("Attachment unreadable: gone.md"));
+        assert!(text.contains("Check"));
     }
 }

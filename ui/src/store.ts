@@ -1,4 +1,4 @@
-//! 微型 signal store：状态主权在 Rust，这里只承载视图层瞬时状态（ADR-0007）。
+//! Tiny signal store: Rust owns the state; this carries only view-layer transient state (ADR-0007).
 
 type Listener = () => void;
 

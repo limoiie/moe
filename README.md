@@ -1,142 +1,174 @@
 # Moe
 
-键盘优先的桌面命令盘：任意应用中双击 ⌘ 呼出居中面板，搜索 Command，
-把结果回写到 Selection 或光标处。产品语言见 `CONTEXT.md`，全部设计决策
-见 `docs/adr/0001–0024`。
+A keyboard-first desktop command palette: double-tap ⌘ in any app to summon a centered panel,
+search commands, and write results back to the selection or cursor. Product language lives in
+`CONTEXT.md`; every design decision lives in `docs/adr/0001–0025`.
 
-## 安装（macOS）
+## Install (macOS)
 
-1. 从 GitHub Actions 的 **Release** 工作流下载 `Moe_<版本>_<arch>.dmg`
-   （Actions → Release → 对应 run → Artifacts；推 `v*` 标签或手动触发）。
-2. 打开 dmg，把 **Moe.app** 拖进「应用程序」。
-3. **未签名/未公证**：首次启动请右键点 Moe.app →「打开」→ 再点「打开」
-   （之后可正常双击；这是 Gatekeeper 对未公证应用的一次性确认）。
-4. 首次运行：菜单栏出现 Moe 图标；面板内会引导授予**「输入监控」**（双击 ⌘ 的门槛）
-   与**「辅助功能」**（抓选区/回写文本的门槛）。授权后无需重启即生效。
+1. Download `Moe_<version>_<arch>.dmg` from the GitHub Actions **Release** workflow
+   (Actions → Release → the run → Artifacts; triggered by pushing a `v*` tag or manually).
+2. Open the dmg and drag **Moe.app** into Applications.
+3. **Unsigned / unnotarized**: on first launch right-click Moe.app → Open → Open again
+   (a one-time Gatekeeper confirmation for unnotarized apps; normal double-click works after that).
+4. First run: the Moe tray icon appears; the panel guides you through granting
+   **Input Monitoring** (the gate for double-tap ⌘) and **Accessibility** (the gate for
+   reading the selection / writing back). Both take effect immediately after granting.
 
-## 使用
+## Usage
 
-双击 ⌘ 呼出面板，输入即搜 Command；一套键位语义贯通所有 Extension：
+Double-tap ⌘ to summon the panel; typing searches commands. One set of keybinding semantics
+spans every extension:
 
-根页结果**按来源分组**（ADR-0020）：每个 Extension 一个 section，组头是扩展名、
-不可聚焦；组序按组内最优项（查询时即匹配分、空查询即 frecency），组内保持得分顺序。
-空输入时最上面还有一个**「建议」section**（ADR-0023）：最近使用的命令置顶（最多 5 条、最近优先），
-进过建议的不在下方分组里重复；没有使用记录时不显示。
+Root results are **grouped by source** (ADR-0020): one section per extension, headed by the
+extension name (headers are not focusable); section order follows each group's best item
+(match score when searching, frecency on an empty query), and items keep their score order
+within a group. On an empty query there is also a **Suggestions** section on top (ADR-0023):
+the most recently used commands (at most 5, most recent first) that are not repeated in the
+sections below; it is hidden when nothing has been used yet. **⌃X forgets the focused
+suggestion, ⌃⇧X clears all recent usage** (ADR-0025) — the commands themselves stay listed
+in their own sections.
 
-| 键位 | 语义 | 说明 |
+| Keys | Semantics | Notes |
 |---|---|---|
-| `↓` / `⌃N`、`↑` / `⌃P` | 导航 | 移动 Focused Item |
-| `⏎` | Apply | 对 Focused Item 执行主操作 |
-| `⌥⏎` | 副操作 | 默认语义：复制（如复制 AI 回答全文到剪贴板） |
-| `⌘K` / `⌘⇧P` | 展开全部动作 | 当前 Item 的主/副操作清单 |
-| `⌘P` | Browse | 当前 Extension 的记录列表（AI = 历史会话；扩展未声明则提示） |
-| `⌘N` | New | 新建一条记录（AI = 新对话；扩展未声明则提示） |
-| `⌃X` | Delete | 删除当前记录（AI = 当前会话；只在结果层/列表上下文生效，ADR-0022） |
-| `⌃⇧X` | DeleteAll | 删除全部记录（AI = 全部会话，ADR-0022） |
-| `⌘M` | Materialize | 把当前会话转入该 Extension 的 Side View |
-| `⌘⇧A` | 附件 | 输入/粘贴文件路径，插入 `@"path"`（ADR-0010） |
-| `Esc` | 分层回退 | 生成中→停止；否则 动作面板 →（整屏详情的）详情 → 根 → 清空输入 → 关闭面板；两栏页面的详情不收起、直接回根 |
-| `⌫` | 分层回退 | 输入非空=正常删字；**输入为空时逐层退回**（同 `Esc`，但根层不关面板，ADR-0017） |
+| `↓` / `⌃N`, `↑` / `⌃P` | Navigate | Move the Focused Item |
+| `⏎` | Apply | Run the primary action on the Focused Item |
+| `⌥⏎` | Secondary | Default semantics: copy (e.g. copy the full AI answer to the clipboard) |
+| `⌘K` / `⌘⇧P` | Show All Actions | The current item's primary/secondary action list |
+| `⌘P` | Browse | The current extension's record list (AI = chat history; a hint if the extension declares none) |
+| `⌘N` | New | Create a new record (AI = new chat; a hint if the extension declares none) |
+| `⌃X` | Delete | Delete the current record (AI = current conversation; results layer and Suggestions only, ADR-0022/0025) |
+| `⌃⇧X` | DeleteAll | Delete all records (AI = all conversations; also clears all suggestions, ADR-0022/0025) |
+| `⌘M` | Materialize | Move the current conversation into the extension's Side View |
+| `⌘⇧A` | Attach | Type/paste a file path, inserted as `@"path"` (ADR-0010) |
+| `Esc` | Layered back | While generating → stop; otherwise actions card → (full-screen) detail → root → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
+| `⌫` | Layered back | Non-empty input = normal delete; **empty input steps back one layer** (like `Esc`, but the root layer never closes the panel, ADR-0017) |
 
-面板右下角**悬浮两个按钮**（Raycast 同款）：**主操作**（当前焦点项的主操作，生成中变成「停止生成」）
-与**动作**（`⌘K` / `⌘⇧P`）。`⌘K` 弹出**动作面板**：一块浮层卡片，顶部输入可筛选动作、
-下方是动作列表（含扩展声明了的 `⌘P`/`⌘N` 入口），不替换主体内容；`↑↓` 选择、`⏎` 执行、
-`Esc` 或空 `⌫` 收起（ADR-0015）。所有键位用 Kbd 方块展示，一个键一个块。
+Two **floating buttons** sit at the panel's bottom right (Raycast-style): **primary action**
+(the focused item's main action; becomes "Stop Generation" while generating) and **actions**
+(`⌘K` / `⌘⇧P`). `⌘K` pops up the **actions card**: a floating overlay whose top input filters
+actions and whose list below shows the item's actions (plus the `⌘P`/`⌘N` entries the extension
+declared), without replacing the main body; `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss
+(ADR-0015). Every shortcut is rendered as Kbd blocks, one key per block.
 
-- **结果页形态**：只有三种——**列表** / **两栏**（左窄栏列表 + 右详情）/ **详情整屏**，版式与窗口尺寸由平台统一渲染
-  （ADR-0018）。扩展只要给 `item.detail` 就自动获得两栏页面（左侧列表固定 280px、右侧详情吃满剩余，
-  详情顶部带该条目的图标/标题/时间），不需要写任何布局代码；面板尺寸恒定 768×540。
-- **面板**：失焦自动收起；隐藏/重现之间保留输入与结果。菜单栏图标提供
-  显示面板 / AI 对话 / 开机自启 / 打开配置文件 / 退出。
-  结果层有两种形态，由 Command 声明（ADR-0013）：「详情整屏」（如 AI 回答、系统通知）占满面板，
-  生成中在正文末尾显示三点行内指示；其余（如 AI 历史搜索）左侧列表、右侧详情。
-- **AI 问答**：直接输入问题回车（无匹配时自动出现「AI: 提问「…」」），回答流式渲染为
-  Markdown 卡片；`⌥⏎` 复制全文，`⌘M` 转入右侧栏续聊。
-  **呼出前选中的文字自动作为提问上下文**（问题里已含该文字则不重复，超长截断；历史只存问题本身）；
-  **在 Finder 里选中文件再呼出，文件自动成为提问附件**（与 `@path` 按路径去重；首次需「自动化」授权，ADR-0021）。
-- **AI Commands（文本变换，ADR-0024）**：12 条单次变换命令——润色 / 修语法 / 缩短 / 扩写 / 简化 /
-  总结 / 翻译成英文 / 翻译成中文 / 语气更专业 / 语气更友好 / 提取要点 / 续写。
-  **选中文字后呼出**、输入命令名（如「润色」）回车：流式产出到结果卡，**完成后自动替换选区并收起面板**；
-  没有选区时用输入框文字；Esc 停止时保留已生成部分、不自动回写（可 ⏎ 手动回写 / ⌥⏎ 复制）。
-- **侧栏（AI 对话）**：右侧窗口，无常驻历史栏。头部右侧三个图标按钮：
-  **更多操作（⌘ 图标：新对话 / 打开配置文件 / 收起）**、**历史**、**新建对话**。
-  点历史按钮（或 `⌘P`）在顶部居中弹出**悬浮历史卡**：顶部搜索框输入即筛标题，
-  下方会话列表 `↑` `↓` 高亮、`⏎` 打开、`Esc` 收起，点击卡片之外也自动收起。
-  `⌘P`（Browse）/ `⌘⇧P`（Actions）/ `⌘N`（New）/ `⌃X`（Delete）/ `⌃⇧X`（DeleteAll）
-  是跨 Command/子应用的通用动作（ADR-0014/0022），在侧栏分别落到历史卡 / 操作菜单 / 新对话 /
-  删除当前会话 / 删除全部会话（历史卡开着时作用于卡内焦点行；删除当前会话后退回空态）。
-  在面板则落到该 Extension 声明的记录列表 / 动作层 / 新建记录 / 删除钩子（未实现时给错误提示）。
-  `⌃[` / `⌃]` 按当前列表前后切换会话；打开/切换会话自动滚到最后一行底部；
-  `⏎` 发送 / `⇧⏎` 换行 / `Esc` 浮层优先收起、生成中=停止、否则收起；
-  📎 添加附件；窗口位置尺寸拖过后会记住。
-  历史会话也可以从命令「AI: 搜索历史会话」找回（左窄栏列表 + 右详情，右侧显示最后一条回答）。
-- **配置**：命令「Moe: 打开配置文件」或直接编辑
-  `~/Library/Application Support/moe/config.toml`：
+- **Page shapes**: exactly three — **list** / **split** (narrow list on the left + detail on the
+  right) / **full-screen detail** — laid out and window-sized by the platform (ADR-0018). An
+  extension gets the split page for free by providing `item.detail` (left list fixed at 280px,
+  detail fills the rest with the item's icon/title/time on top); the panel is fixed at 768×540.
+- **Panel**: auto-dismisses on losing focus; input and results are kept across hide/show. The
+  tray icon offers Show Panel / AI Chat / Launch at Login / Open Config File / Quit. The results
+  layer has two shapes declared by the command (ADR-0013): full-screen detail (AI answers,
+  notices) fills the panel and shows an inline three-dot indicator while generating; everything
+  else (like AI history search) is a list on the left with a detail preview on the right.
+- **AI Chat**: type a question and press Enter (the fallback "AI: Ask \"…\"" appears when nothing
+  matches); answers stream as Markdown cards; `⌥⏎` copies the full text, `⌘M` continues in the
+  Side View. **Text selected before summoning automatically becomes question context** (not
+  repeated when the question already contains it, truncated when overlong; history stores only
+  the question itself). **Files selected in Finder before summoning automatically become
+  attachments** (deduplicated with `@path` by path; the first use asks for Automation permission,
+  ADR-0021).
+- **AI Commands (text transforms, ADR-0024)**: 12 one-shot transform commands — Improve Writing /
+  Fix Spelling & Grammar / Make Shorter / Make Longer / Simplify Language / Summarize /
+  Translate to English / Translate to Chinese / Tone: Professional / Tone: Friendly /
+  Extract Key Ideas / Continue Writing. **Select text, summon, type the command name (e.g.
+  "improve") and press Enter**: the result streams into a result card and **automatically
+  replaces the selection and dismisses the panel when done**; with no selection the input-bar
+  text is used; Esc keeps what was generated so far and does not write back (⏎ writes back
+  manually, ⌥⏎ copies).
+- **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
+  buttons sit at the end of the header: **More Actions (⌘ icon: New Chat / Open Config File /
+  Hide)** , **History**, and **New Chat**. Clicking History (or `⌘P`) pops up a **floating history
+  card** centered at the top: its top input filters titles, the list below highlights with `↑` `↓`,
+  `⏎` opens, `Esc` dismisses, and clicking outside also dismisses it. `⌘P` (Browse) / `⌘⇧P`
+  (Actions) / `⌘N` (New) / `⌃X` (Delete) / `⌃⇧X` (DeleteAll) are the general actions spanning
+  every command/sub-app (ADR-0014/0022); in the Side View they land on the history card / actions
+  menu / new chat / delete current conversation / delete all conversations (while the history card
+  is open they act on the focused row; deleting the current conversation returns to the empty
+  state). In the panel they land on the extension's declared record list / actions layer / new
+  record / delete hooks (an error toast when the extension implements none). `⌃[` / `⌃]` step
+  through the current conversation list; opening/switching a conversation scrolls to the bottom
+  of the last line; `⏎` sends / `⇧⏎` newline / `Esc` dismisses overlays first, stops while
+  generating, otherwise hides; 📎 adds attachments; window position and size are remembered after
+  dragging. Past conversations are also reachable from the command "AI: Search Chat History"
+  (narrow list on the left + detail on the right, showing the last answer).
+- **Config**: run "Moe: Open Config File" or edit
+  `~/Library/Application Support/moe/config.toml` directly:
 
   ```toml
   [summon]
-  key = "double-cmd"   # double-cmd | double-option | double-ctrl | 组合键如 cmd+shift+space
+  key = "double-cmd"   # double-cmd | double-option | double-ctrl | a combo such as cmd+shift+space
   double_tap_ms = 400  # 100..=1000
 
   [ai]
-  base_url = "https://api.deepseek.com/v1"  # 任意 OpenAI 兼容端点
+  base_url = "https://api.deepseek.com/v1"  # any OpenAI-compatible endpoint
   model = "deepseek-chat"
   ```
 
-  API key 存在 `~/Library/Application Support/moe/api-key`（0600 权限，不回显；
-  未签名应用用系统钥匙串会反复弹授权，见 ADR-0019）。面板输入 `key <你的key>` 回车，
-  或设 `MOE_AI_API_KEY` 环境变量；旧版存在钥匙串里的 key 会自动迁移到文件。
+  The API key lives in `~/Library/Application Support/moe/api-key` (0600, never echoed;
+  an unsigned app triggers repeated keychain prompts, see ADR-0019). Type `key <your-key>` in
+  the panel, or set the `MOE_AI_API_KEY` environment variable; keys stored by older versions
+  in the keychain migrate to the file automatically.
 
-## 结构
+## Structure
 
-| 路径 | 职责 |
+| Path | Responsibility |
 |---|---|
-| `crates/moe-core` | Extension / Command / Item 契约（ADR-0006）、统一键位表、Registry 与搜索 |
-| `crates/moe-platform` | 平台边界（ADR-0002/0008）：TextTarget、剪贴板、呼出监听（macOS CGEventTap / Linux X11 XRecord） |
-| `crates/moe-extensions` | 内置 Extension（Moe 设置命令、Echo 契约演示、AI 问答） |
-| `crates/moe-app` | Tauri 2 壳：面板/侧栏窗口、tray、IPC |
-| `ui/` | 原生 TS + Tailwind 薄视图层（ADR-0007） |
+| `crates/moe-core` | Extension / Command / Item contract (ADR-0006), unified keymap, Registry and search |
+| `crates/moe-platform` | Platform boundary (ADR-0002/0008): TextTarget, clipboard, summon listener (macOS CGEventTap / Linux X11 XRecord) |
+| `crates/moe-extensions` | Built-in extensions (Moe settings commands, Echo contract demo, AI chat, AI Commands) |
+| `crates/moe-app` | Tauri 2 shell: panel/Side View windows, tray, IPC |
+| `ui/` | Thin vanilla TS + Tailwind view layer (ADR-0007) |
 
-## 开发
+## Development
 
 ```sh
 pnpm -C ui install
-cargo test                                     # 契约与平台测试
-cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：自动起 Vite + 热更新）
+cargo test                                     # contract and platform tests
+cd crates/moe-app && cargo tauri dev           # run the panel in development (recommended: starts Vite + hot reload)
 ```
 
-⚠️ 直接 `cargo run -p moe-app` 是 **dev 构建**：WebView 会去连 `devUrl`（http://localhost:1420），
-没有 Vite dev server 时得到的是一个「全透明空窗口」（看起来像没启动）。可用跑法：
+⚠️ A plain `cargo run -p moe-app` is a **dev build**: the WebView connects to `devUrl`
+(http://localhost:1420), so without the Vite dev server you get a fully transparent empty window
+(it looks like nothing started). Working options:
 
-1. `cd crates/moe-app && cargo tauri dev`（推荐）
-2. 两个终端：`pnpm -C ui dev` + `cargo run -p moe-app`
-3. 生产构建：`cd crates/moe-app && cargo tauri build`（嵌入 `ui/dist`，产出 .app/.dmg）
+1. `cd crates/moe-app && cargo tauri dev` (recommended)
+2. Two terminals: `pnpm -C ui dev` + `cargo run -p moe-app`
+3. Production build: `cd crates/moe-app && cargo tauri build` (embeds `ui/dist`, produces .app/.dmg)
 
-图标源图：`python3 crates/moe-app/icons/gen-app-icon.py`（应用图标，再跑 `cargo tauri icon`）
-与 `gen-tray-icon.py`（菜单栏模板图）。
+Icon sources: `python3 crates/moe-app/icons/gen-app-icon.py` (app icon, then run
+`cargo tauri icon`) and `gen-tray-icon.py` (menu bar template).
 
-## 功能现状
+## Current feature set
 
-- **呼出**：双击 ⌘（macOS CGEventTap，需输入监控授权；Linux/X11 用 XRecord 免授权）。
-- **文本**：呼出前抓取 Selection；`WriteBack` 经 AX 替换选区/插光标，被拒时降级
-  「剪贴板快照 → 合成 ⌘V → 恢复」（演示命令 `Echo: Shout`）。
-- **搜索**：nucleo 模糊匹配（精确前缀 > 匹配位置）+ frecency 平分决胜；空查询按 frecency 排序。
-- **AI**：OpenAI 兼容端点流式问答；会话与消息存本地 SQLite（`data_dir/moe/moe.db`，`ai` Namespace）；
-  附件（文本内联 / 图片多模态）；侧栏续聊把整段历史作为上下文。
-- **常驻**：菜单栏 tray（含开机自启，LaunchAgent）；macOS 无 Dock 图标、不参与 ⌘-Tab。
-- **界面**：一套键位语义（`↓`/`⌃N`、`↑`/`⌃P`、`⏎`、`⌥⏎`、`⌘K`、`⌘M`、`Esc`）贯通所有 Command；
-  结果层两种形态由 Command 声明（详情整屏 / 左列表右详情，ADR-0013）；图标为 Lucide（ADR-0012）。
+- **Summon**: double-tap ⌘ (macOS CGEventTap, needs Input Monitoring; Linux/X11 uses XRecord,
+  no permission needed).
+- **Text**: the selection is captured before summoning; `WriteBack` replaces the selection or
+  inserts at the cursor via AX, falling back to "clipboard snapshot → synthesize ⌘V → restore"
+  when denied (demo command `Echo: Shout`).
+- **Search**: nucleo fuzzy matching (exact prefix > match position) with frecency breaking ties;
+  the empty query lists everything by frecency with a recent-commands Suggestions section on top.
+- **AI**: streaming chat against any OpenAI-compatible endpoint; conversations and messages live
+  in local SQLite (`data_dir/moe/moe.db`, `ai` namespace); attachments (text inlined / images
+  multimodal); Side View continuation uses the whole history as context; AI Commands transform
+  text and write the result back automatically.
+- **Resident**: menu bar tray (with Launch at Login via LaunchAgent); no Dock icon on macOS,
+  not in ⌘-Tab.
+- **UI**: one keybinding semantics set (`↓`/`⌃N`, `↑`/`⌃P`, `⏎`, `⌥⏎`, `⌘K`, `⌘M`, `Esc`)
+  spans every command; the results layer has two shapes declared by the command (full-screen
+  detail / list + detail, ADR-0013); icons are Lucide (ADR-0012).
 
-## 常见问题
+## FAQ
 
-- **双击 ⌘ 没反应**：看面板顶部引导条——多半是「输入监控」未授权（系统设置 → 隐私与安全性）。
-  个别系统版本授权后需重启 Moe 一次。
-- **回写没生效 / 提示权限**：需要「辅助功能」授权；部分应用（如某些 Electron 应用）AX 只读，
-  会自动走剪贴板降级。
-- **首次打开提示「无法验证开发者」**：未签名应用，右键 →「打开」即可（见「安装」）。
-- **Wayland**：无法全局拦截键盘（XRecord 只能看到 XWayland 客户端）。两条替代路径：
-  1）`config.toml` 改用组合键（`[summon] key = "cmd+shift+space"`）；
-  2）窗口管理器绑定 `moe --toggle`（单实例转发：已在运行则切换面板，未运行则启动并亮面板）：
+- **Double-tap ⌘ does nothing**: check the guidance banner at the top of the panel — usually
+  Input Monitoring hasn't been granted (System Settings → Privacy & Security). On some macOS
+  versions a restart of Moe is needed after granting.
+- **Write-back does nothing / asks for permission**: Accessibility needs to be granted; some apps
+  (e.g. certain Electron apps) expose read-only AX, in which case the clipboard fallback kicks in.
+- **"Developer cannot be verified" on first open**: unsigned app — right-click → Open (see Install).
+- **Wayland**: global keyboard interception is impossible (XRecord only sees XWayland clients).
+  Two alternative paths: 1) use a combo key in `config.toml` (`[summon] key = "cmd+shift+space"`);
+  2) bind `moe --toggle` in the window manager (single-instance forwarding: toggles the panel when
+  already running, otherwise starts and shows it):
 
   ```conf
   # Hyprland (~/.config/hypr/hyprland.conf)
@@ -148,7 +180,8 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
   bindsym $mod+m exec moe --toggle
   ```
 
-- **AI 报错**：回答卡片里会显示端点返回；确认 `[ai] base_url/model`、key 已保存、
-  端点支持所选模型（图片需要 vision 能力）。
+- **AI errors**: the answer card shows what the endpoint returned; check the `[ai]`
+  base_url/model, that the key is saved, and that the endpoint supports the chosen model
+  (images need vision).
 
-里程碑验收标准见 `docs/adr/0009-milestone-scope.md`。
+Milestone acceptance criteria live in `docs/adr/0009-milestone-scope.md`.

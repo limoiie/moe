@@ -1,6 +1,6 @@
-//! macOS 的 TextTarget 胶水：Accessibility 读写选区 + NSPasteboard/CGEvent 剪贴板降级。
+//! macOS TextTarget glue: Accessibility read/write of the selection + NSPasteboard/CGEvent clipboard fallback.
 //!
-//! 可测的策略在 [`crate::text_target`]；这里只做平台调用翻译。
+//! Testable strategy lives in [`crate::text_target`]; this file only translates platform calls.
 
 use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
@@ -33,8 +33,8 @@ unsafe extern "C" {
     fn AXValueGetValue(value: CFTypeRef, the_type: u32, value_ptr: *mut std::ffi::c_void) -> u8;
 }
 
-/// AX 范围值的类型枚举（kAXValueTypeCFRange 是编译期枚举，无链接符号）；
-/// CFRange 的成员都是 CFIndex（64 位平台上为 i64）。
+/// Type enum for AX range values (kAXValueTypeCFRange is a compile-time enum with no linked symbol);
+/// CFRange's members are all CFIndex (i64 on 64-bit platforms).
 const AX_VALUE_CF_RANGE: u32 = 4;
 
 #[repr(C)]
@@ -43,18 +43,18 @@ struct CFRange {
     length: i64,
 }
 
-/// AX 属性名。现代 SDK 里 `kAX*Attribute` 是 `CFSTR("...")` 宏而非导出符号，
-/// 直接构造同名 CFString（值为公开稳定的 API 契约）。
+/// AX attribute names. In modern SDKs, `kAX*Attribute` are `CFSTR("...")` macros rather than exported symbols,
+/// so construct a CFString with the same name directly (the values are a public, stable API contract).
 fn attribute(name: &str) -> CFString {
     CFString::new(name)
 }
 
-/// 当前系统焦点元素（copy 规则 +1，调用方负责 CFRelease）。
+/// The current system-focused element (copy rule +1; the caller owns the CFRelease).
 fn focused_element() -> Result<Option<AXUIElementRef>, PlatformError> {
     if !is_accessibility_trusted() {
         return Err(PlatformError::PermissionRequired);
     }
-    // SAFETY: 标准 AX system-wide 查询；返回的引用按 copy 规则持有，由调用方释放。
+    // SAFETY: standard AX system-wide query; the returned reference is held per the copy rule and released by the caller.
     unsafe {
         let system = AXUIElementCreateSystemWide();
         let name = attribute("AXFocusedUIElement");
@@ -75,13 +75,13 @@ impl Ax for MacAx {
         let Some(focused) = focused_element()? else {
             return Ok(None);
         };
-        // SAFETY: focused 来自 copy 规则；读到的 value 也是 copy 规则，用 create 规则接管。
+        // SAFETY: focused comes from the copy rule; the value read is also copy rule, taken over with the create rule.
         unsafe {
             let selected = attribute("AXSelectedText");
             let parent = attribute("AXParent");
             let mut element: AXUIElementRef = focused;
-            // 有些应用（浏览器/富文本编辑器）把系统焦点放在子元素上，而选区挂在祖先元素：
-            // 顺着 AXParent 往上找（最多 5 层），并逐层打日志区分「无选区」与「不支持」。
+            // Some apps (browsers/rich-text editors) put system focus on a child element while the selection lives on an ancestor:
+            // walk up AXParent (at most 5 levels), logging each level to distinguish "no selection" from "not supported".
             for depth in 0..=5 {
                 let mut value: CFTypeRef = std::ptr::null();
                 let err = AXUIElementCopyAttributeValue(
@@ -94,14 +94,14 @@ impl Ax for MacAx {
                     CFRelease(element);
                     if !text.is_empty() {
                         if depth > 0 {
-                            eprintln!("moe: AXSelectedText 命中第 {depth} 层祖先");
+                            eprintln!("moe: AXSelectedText hit at ancestor level {depth}");
                         }
                         return Ok(Some(text));
                     }
-                    eprintln!("moe: AXSelectedText 存在但为空（第 {depth} 层）");
+                    eprintln!("moe: AXSelectedText exists but is empty (level {depth})");
                     return Ok(None);
                 }
-                eprintln!("moe: AXSelectedText 第 {depth} 层失败（AXError {err}）");
+                eprintln!("moe: AXSelectedText failed at level {depth} (AXError {err})");
                 let mut up: CFTypeRef = std::ptr::null();
                 let err =
                     AXUIElementCopyAttributeValue(element, parent.as_concrete_TypeRef(), &mut up);
@@ -120,7 +120,7 @@ impl Ax for MacAx {
         let Some(focused) = focused_element()? else {
             return Err(PlatformError::Unsupported("no focused element"));
         };
-        // SAFETY: 同上；写失败时交由 HybridTextTarget 降级剪贴板。
+        // SAFETY: same as above; on write failure, HybridTextTarget falls back to the clipboard.
         unsafe {
             let name = attribute("AXSelectedText");
             let cf = CFString::new(text);
@@ -131,7 +131,7 @@ impl Ax for MacAx {
             );
             CFRelease(focused);
             if err != 0 {
-                eprintln!("moe: AXSelectedText 写入失败（AXError {err}）");
+                eprintln!("moe: AXSelectedText write failed (AXError {err})");
                 Err(PlatformError::Unsupported("AXSelectedText write rejected"))
             } else {
                 Ok(())
@@ -140,19 +140,19 @@ impl Ax for MacAx {
     }
 
     fn selected_text_range(&self) -> Option<(i64, i64)> {
-        // 尽力而为：失败/不支持都返回 None（跳过回写后选中）
+        // Best-effort: failures/unsupported both return None (skip selecting after write back)
         let focused = match focused_element() {
             Ok(Some(f)) => f,
             Ok(None) => {
-                eprintln!("moe: 读 AX 范围：无焦点元素");
+                eprintln!("moe: reading AX range: no focused element");
                 return None;
             }
             Err(err) => {
-                eprintln!("moe: 读 AX 范围：{err}");
+                eprintln!("moe: reading AX range: {err}");
                 return None;
             }
         };
-        // SAFETY: value 按 copy 规则持有；AXValue 解出 CFRange。
+        // SAFETY: value is held per the copy rule; AXValue unpacks a CFRange.
         unsafe {
             let name = attribute("AXSelectedTextRange");
             let mut value: CFTypeRef = std::ptr::null();
@@ -161,7 +161,7 @@ impl Ax for MacAx {
             CFRelease(focused);
             if err != 0 || value.is_null() {
                 eprintln!(
-                    "moe: 读 AXSelectedTextRange 失败（AXError {err}，空值 {}）",
+                    "moe: AXSelectedTextRange read failed (AXError {err}, null value {})",
                     value.is_null()
                 );
                 return None;
@@ -177,22 +177,25 @@ impl Ax for MacAx {
             );
             CFRelease(value);
             if ok == 0 {
-                eprintln!("moe: AXValueGetValue(CFRange) 解包失败");
+                eprintln!("moe: AXValueGetValue(CFRange) unpack failed");
                 return None;
             }
-            eprintln!("moe: 读 AX 范围 = ({}, {})", range.location, range.length);
+            eprintln!(
+                "moe: read AX range = ({}, {})",
+                range.location, range.length
+            );
             Some((range.location, range.length))
         }
     }
 
     fn set_selected_range(&self, location: i64, length: i64) {
-        // 部分应用异步提交编辑：立刻设范围会被其后的光标移动覆盖
+        // Some apps commit edits asynchronously: setting the range immediately gets overridden by the cursor move that follows
         std::thread::sleep(std::time::Duration::from_millis(60));
         let Ok(Some(focused)) = focused_element() else {
-            eprintln!("moe: 设 AX 范围：无焦点元素");
+            eprintln!("moe: setting AX range: no focused element");
             return;
         };
-        // SAFETY: 标准 AX 写入；失败记录但不算回写失败。
+        // SAFETY: standard AX write; failures are logged but don't count as a write-back failure.
         unsafe {
             let range = CFRange { location, length };
             let value = AXValueCreate(
@@ -200,7 +203,7 @@ impl Ax for MacAx {
                 &range as *const CFRange as *const std::ffi::c_void,
             );
             if value.is_null() {
-                eprintln!("moe: AXValueCreate(CFRange) 失败");
+                eprintln!("moe: AXValueCreate(CFRange) failed");
                 CFRelease(focused);
                 return;
             }
@@ -208,7 +211,7 @@ impl Ax for MacAx {
             let err = AXUIElementSetAttributeValue(focused, name.as_concrete_TypeRef(), value);
             CFRelease(value);
             CFRelease(focused);
-            eprintln!("moe: 设 AX 范围 = ({location}, {length}) → AXError {err}");
+            eprintln!("moe: set AX range = ({location}, {length}) → AXError {err}");
         }
     }
 }
@@ -216,8 +219,8 @@ impl Ax for MacAx {
 pub struct MacClipboard;
 
 impl Clipboard for MacClipboard {
-    /// 剪贴板内容：`(类型, 数据)` 展平列表。
-    /// 多 item 剪贴板（如 Finder 多选文件）降级为单 item——只保留每种类型的首个出现。
+    /// Clipboard content: a flattened list of `(type, data)`.
+    /// Multi-item clipboards (e.g. multi-file selection in Finder) degrade to one item — only the first occurrence of each type is kept.
     type Snapshot = Vec<(String, Retained<NSData>)>;
 
     fn snapshot(&self) -> Self::Snapshot {
@@ -246,7 +249,7 @@ impl Clipboard for MacClipboard {
     fn set_text(&self, text: &str) {
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
-        // SAFETY: extern static 的读取。
+        // SAFETY: reading an extern static.
         let ty = unsafe { NSPasteboardTypeString };
         pasteboard.setString_forType(&NSString::from_str(text), ty);
     }
@@ -279,12 +282,12 @@ impl Clipboard for MacClipboard {
                 event.post(CGEventTapLocation::HID);
             }
         }
-        // 合成事件异步投递：等目标应用把选区放进剪贴板，再让调用方读回
+        // Synthesized events are delivered asynchronously: wait for the target app to put the selection on the clipboard before the caller reads it back
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     fn restore(&self, snapshot: Self::Snapshot) {
-        // 合成事件是异步投递：给目标应用一点时间消费粘贴，再写回剪贴板
+        // Synthesized events are delivered asynchronously: give the target app a moment to consume the paste, then write the clipboard back
         std::thread::sleep(std::time::Duration::from_millis(150));
         let pasteboard = NSPasteboard::generalPasteboard();
         pasteboard.clearContents();
@@ -300,15 +303,15 @@ pub fn mac_text_target() -> MacTextTarget {
     HybridTextTarget::new(MacAx, MacClipboard)
 }
 
-/// 写文本到系统剪贴板（「复制」类动作与回写降级共用同一实现，IIE4AD-364）。
+/// Write text to the system clipboard ("copy"-style actions and the write-back fallback share this implementation, IIE4AD-364).
 pub fn copy_text(text: &str) {
     MacClipboard.set_text(text);
 }
 
-/// 读回剪贴板文本（测试与诊断用）。
+/// Read clipboard text back (for tests and diagnostics).
 pub fn clipboard_read_text() -> Option<String> {
     let pasteboard = NSPasteboard::generalPasteboard();
-    // SAFETY: extern static 的读取。
+    // SAFETY: reading an extern static.
     let ty = unsafe { NSPasteboardTypeString };
     pasteboard.stringForType(ty).map(|text| text.to_string())
 }

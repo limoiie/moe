@@ -1,5 +1,6 @@
-// 契约镜像：与 `moe-core` 的 serde camelCase 形状一一对应（ADR-0006）。
-// 命令盘（index.html）与侧栏（chat.html）共用这一份，避免两个窗口各自漂移。
+// Contract mirror: matches `moe-core`'s serde camelCase shapes one-to-one (ADR-0006).
+// The command palette (index.html) and the Side View (chat.html) share this file,
+// so the two windows never drift apart.
 
 export type ActionKind = "primary" | "secondary";
 
@@ -14,14 +15,14 @@ export interface Item {
   id: string;
   title: string;
   subtitle?: string;
-  /** 图标语义名（ADR-0012）；缺省时用来源 Command 的图标。 */
+  /** Icon semantic name (ADR-0012); falls back to the source Command's icon when absent. */
   icon?: string;
-  /** 第一个动作即 Apply 语义；⌘K 展开全部。 */
+  /** The first action is the Apply semantics; ⌘K expands all actions. */
   actions: Action[];
   payload: unknown;
-  /** 详情内容（Markdown）；两栏页面把它渲染在右侧（ADR-0018）。 */
+  /** Detail content (Markdown); the split page renders it in the right pane (ADR-0018). */
   detail?: string | null;
-  /** 仍在产出中（流式占位）：Esc 时优先请求停止生成。 */
+  /** Still producing (streaming placeholder): Esc prioritizes stopping the generation. */
   pending?: boolean;
 }
 
@@ -30,33 +31,33 @@ export interface CommandMeta {
   extensionId: string;
   title: string;
   subtitle?: string;
-  /** 图标语义名（ADR-0012）。 */
+  /** Icon semantic name (ADR-0012). */
   icon?: string;
   input: "none" | "query" | "selection";
-  /** Live 列表：进入后输入变化即重跑（如历史搜索）。 */
+  /** Live list: once entered, every input change re-runs the list (e.g. history search). */
   live: boolean;
 }
 
-/** 命令盘结果的一个分组（ADR-0020）：来源即分组，组头用扩展名。 */
+/** One group in the command palette results (ADR-0020): source = section, header = extension title. */
 export interface CommandSection {
   title: string;
   items: CommandMeta[];
 }
 
-// 外部 tagged 枚举：单位变体（silent）序列化为裸字符串；
-// openSideView/writeBack 等带载荷变体为对象（侧栏开窗由后端执行）。
+// Externally tagged enum: unit variants (silent) serialize to a bare string;
+// payload variants like openSideView/writeBack become objects (the backend opens the Side View).
 export type ActionResult =
   | string
   | { writeBack: { text: string } }
   | { list: { items: Item[]; detailFull?: boolean } }
   | { openSideView: { payload: unknown } };
 
-/** 流式增量：按 item id 就地更新。 */
+/** Streaming increment: updates the item in place by item id. */
 export interface CommandEventPayload {
   itemUpdated?: { commandId: string; item: Item };
 }
 
-// ---- AI 会话（`ai` Namespace）----
+// ---- AI conversations (`ai` Namespace) ----
 
 export interface AttachmentRef {
   name: string;
@@ -76,7 +77,7 @@ export interface Conversation {
   updatedUnix: number;
 }
 
-/** 面板 ⌘M / tray 带会话进侧栏的载荷（空 = 新对话）。 */
+/** Payload for opening the Side View with a conversation from the panel (⌘M) or the tray (empty = new conversation). */
 export interface SideOpenPayload {
   conversationId?: string | null;
 }

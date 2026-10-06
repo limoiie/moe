@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -15,7 +15,7 @@
         <input
           id="query"
           class="w-full bg-transparent text-sm text-zinc-100 placeholder-zinc-500 outline-none"
-          placeholder="搜索 Command…"
+          placeholder="Search commands…"
           autofocus
           spellcheck="false"
         />
@@ -32,7 +32,7 @@
           id="banner-action"
           class="shrink-0 rounded-md border border-amber-400/40 px-2 py-1 text-amber-100 hover:bg-amber-400/20"
         >
-          打开系统设置
+          Open System Settings
         </button>
       </div>
       <div id="attach" class="hidden">
@@ -49,7 +49,7 @@
         <span id="toast-icon"></span>
         <span id="toast-text"></span>
       </div>
-      <!-- 动作面板（⌘K / ⌘⇧P）：浮层卡片，输入 + 过滤后的动作列表，不替换主体 -->
+      <!-- Actions card (⌘K / ⌘⇧P): floating card, input + filtered action list, never replaces the body -->
       <div
         id="actions-card"
         class="moe-actions-card absolute bottom-14 right-2 z-20 hidden w-80 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 backdrop-blur-xl"
@@ -57,13 +57,13 @@
         <input
           id="action-search"
           class="w-full border-b border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
-          placeholder="筛选动作…"
+          placeholder="Filter actions…"
           spellcheck="false"
         />
         <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
       </div>
 
-      <!-- 悬浮动作条（Raycast 同款）：主操作 + 动作，同一个胶囊；距右/下边缘 8px -->
+      <!-- Floating action bar (Raycast-style): primary action + actions, one pill; 8px from the right/bottom edges -->
       <div id="action-bar" class="moe-action-bar absolute bottom-2 right-2 z-10"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>

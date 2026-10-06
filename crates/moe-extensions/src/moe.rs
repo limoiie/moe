@@ -1,7 +1,7 @@
-//! Moe 自身的元扩展：设置面入口（ADR-0009——v1 不做设置 UI）。
+//! Moe's own meta-extension: settings entry points (ADR-0009 — no settings UI in v1).
 //!
-//! - 「Moe: 打开配置文件」（常规命令）
-//! - `key <你的key>`（捕获式 fallback）：把 API key 存入本地密钥文件（0600），不回显
+//! - "Moe: Open Config File" (regular command)
+//! - `key <your-key>` (capturing fallback): stores the API key in a local key file (0600), never echoed
 
 use moe_core::contract::{
     ActionResult, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
@@ -53,8 +53,8 @@ impl Extension for Moe {
             CommandMeta {
                 id: "moe.open-config".into(),
                 extension_id: "moe".into(),
-                title: "Moe: 打开配置文件".into(),
-                subtitle: Some("呼出键、[ai] 端点等设置".into()),
+                title: "Moe: Open Config File".into(),
+                subtitle: Some("Summon hotkey, [ai] endpoint and other settings".into()),
                 icon: Some("settings-2".into()),
                 input: InputKind::None,
                 live: false,
@@ -62,8 +62,10 @@ impl Extension for Moe {
             CommandMeta {
                 id: "moe.set-ai-key".into(),
                 extension_id: "moe".into(),
-                title: "Moe: 保存 AI Key".into(),
-                subtitle: Some("输入 `key <你的key>`（不回显，存本地密钥文件）".into()),
+                title: "Moe: Save AI Key".into(),
+                subtitle: Some(
+                    "Type `key <your-key>` (never echoed, stored in a local key file)".into(),
+                ),
                 icon: Some("key-round".into()),
                 input: InputKind::Query,
                 live: false,
@@ -87,13 +89,13 @@ impl Extension for Moe {
                 let key = query.map(key_from_query).unwrap_or_default();
                 if key.is_empty() {
                     return Ok(ActionResult::detail(vec![info_item(
-                        "把 API key 直接跟在 `key` 后面，例如：`key sk-xxxx`。\n\n\
-                         Key 只存本地密钥文件（0600 权限），不回显、不写配置文件；也可设 `MOE_AI_API_KEY` 环境变量。",
+                        "Type the API key right after `key`, e.g. `key sk-xxxx`.\n\n\
+                         The key is only stored in a local key file (0600 permissions), never echoed, never written to the config file; you can also set the `MOE_AI_API_KEY` environment variable.",
                     )]));
                 }
                 keychain::set_ai_api_key(&key).map_err(MoeError::Internal)?;
                 Ok(ActionResult::detail(vec![info_item(
-                    "✅ AI API Key 已保存（0600 密钥文件，不回显）。现在可以直接提问了。",
+                    "✅ AI API Key saved (0600 key file, never echoed). You can ask questions now.",
                 )]))
             }
             _ => Err(MoeError::NotFound),
@@ -107,8 +109,8 @@ impl Extension for Moe {
         Some(CommandMeta {
             id: "moe.set-ai-key".into(),
             extension_id: "moe".into(),
-            title: "Moe: 保存 AI Key（不回显）".into(),
-            subtitle: Some("Enter 存入本地密钥文件（0600）".into()),
+            title: "Moe: Save AI Key (never echoed)".into(),
+            subtitle: Some("Enter to store in a local key file (0600)".into()),
             icon: Some("key-round".into()),
             input: InputKind::Query,
             live: false,
@@ -121,15 +123,15 @@ mod tests {
     use super::*;
     use moe_core::contract::Extension;
 
-    /// 守卫：fallback 合成的 id 必须能在 commands() 里被路由，
-    /// 否则 Apply 时会 NotFound（曾经踩过）。
+    /// Guard: the id synthesized by fallback must be routable within commands(),
+    /// otherwise Apply would hit NotFound (we've been bitten by this before).
     #[test]
     fn fallback_command_is_invocable() {
         let ext = Moe;
         let fallback = ext.fallback_command("key sk-test", None).expect("fallback");
         assert!(
             ext.commands().iter().any(|c| c.id == fallback.id),
-            "fallback id 必须在 commands() 中可路由：{}",
+            "fallback id must be routable within commands(): {}",
             fallback.id
         );
     }

@@ -1,7 +1,7 @@
-// 「正在生成」的行内指示（三点跳动，随 currentColor）。
-// 面板的 AI 回答与侧栏的流式气泡都用它，替代过去把状态写成正文文案的做法。
+// Inline "generating" indicator (three bouncing dots, follows currentColor).
+// Used by the panel's AI answers and the Side View's streaming bubble alike, replacing the old practice of writing status into the body text.
 
-export function generatingEl(label = "正在生成"): HTMLElement {
+export function generatingEl(label = "Generating"): HTMLElement {
   const wrap = document.createElement("span");
   wrap.className = "moe-generating";
   const dots = document.createElement("span");
