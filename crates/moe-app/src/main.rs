@@ -185,6 +185,7 @@ fn resize_panel(window: tauri::WebviewWindow, width: f64, height: f64) -> Result
         .map_err(|err| err.to_string())?;
     let scale = window.scale_factor().unwrap_or(1.0);
     center_at_cursor(&window, width * scale, height * scale);
+    eprintln!("moe: 面板尺寸 → {width}×{height}（逻辑像素）");
     Ok(())
 }
 
