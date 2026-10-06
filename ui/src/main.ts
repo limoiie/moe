@@ -147,34 +147,35 @@ function currentEntries(): { title: string; subtitle?: string; key?: string }[] 
 
 function render() {
   const v = view.get();
-  listEl.replaceChildren(
-    ...currentEntries().map((e, i) => {
-      const li = document.createElement("li");
-      li.className =
-        "flex items-baseline justify-between gap-4 rounded-lg px-3 py-1.5 text-sm " +
-        (i === v.focus ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300");
-      const left = document.createElement("div");
-      left.className = "min-w-0 truncate";
-      left.textContent = e.title;
-      if (e.subtitle) {
-        const sub = document.createElement("span");
-        sub.className = "ml-2 text-xs text-zinc-500";
-        sub.textContent = e.subtitle;
-        left.append(sub);
-      }
-      li.append(left);
-      if (e.key) {
-        const k = document.createElement("kbd");
-        k.className = "shrink-0 text-xs text-zinc-400";
-        k.textContent = e.key;
-        li.append(k);
-      }
-      li.addEventListener("mousedown", () => {
-        view.update((s) => ({ ...s, focus: i }));
-      });
-      return li;
-    }),
-  );
+  const rows = currentEntries().map((e, i) => {
+    const li = document.createElement("li");
+    li.className =
+      "flex items-baseline justify-between gap-4 rounded-lg px-3 py-1.5 text-sm " +
+      (i === v.focus ? "bg-zinc-700/70 text-zinc-50" : "text-zinc-300");
+    const left = document.createElement("div");
+    left.className = "min-w-0 truncate";
+    left.textContent = e.title;
+    if (e.subtitle) {
+      const sub = document.createElement("span");
+      sub.className = "ml-2 text-xs text-zinc-500";
+      sub.textContent = e.subtitle;
+      left.append(sub);
+    }
+    li.append(left);
+    if (e.key) {
+      const k = document.createElement("kbd");
+      k.className = "shrink-0 text-xs text-zinc-400";
+      k.textContent = e.key;
+      li.append(k);
+    }
+    li.addEventListener("mousedown", () => {
+      view.update((s) => ({ ...s, focus: i }));
+    });
+    return li;
+  });
+  listEl.replaceChildren(...rows);
+  // 键盘导航：焦点行始终留在视口内（长列表）
+  rows[v.focus]?.scrollIntoView({ block: "nearest" });
   renderDetail();
   // 流式占位项：显示「Esc 停止」
   const pending = v.mode === "items" && v.items[v.focus]?.pending === true;
