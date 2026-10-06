@@ -252,7 +252,7 @@ historySearchEl.addEventListener("keydown", (e) => {
     }
   } else if (
     e.key === "Escape" ||
-    (e.key === "Backspace" && historySearchEl.value === "")
+    (e.key === "Backspace" && historySearchEl.value === "" && !e.repeat)
   ) {
     e.preventDefault();
     e.stopPropagation();
@@ -621,7 +621,7 @@ attachPathEl.addEventListener("keydown", (e) => {
     void submitAttachPath();
   } else if (
     e.key === "Escape" ||
-    (e.key === "Backspace" && attachPathEl.value === "")
+    (e.key === "Backspace" && attachPathEl.value === "" && !e.repeat)
   ) {
     e.preventDefault();
     e.stopPropagation();
@@ -705,7 +705,7 @@ window.addEventListener("keydown", (e) => {
   }
   // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
   // 非空不动（正常删字）；空时逐层往回，根层收起侧栏。
-  if (e.key === "Backspace" && composerEl.value === "" && !e.isComposing) {
+  if (e.key === "Backspace" && composerEl.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back();
   }

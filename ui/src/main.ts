@@ -840,7 +840,7 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       void submitAttach();
-    } else if (e.key === "Escape" || (e.key === "Backspace" && q.value === "")) {
+    } else if (e.key === "Escape" || (e.key === "Backspace" && q.value === "" && !e.repeat)) {
       e.preventDefault();
       cancelAttach();
     }
@@ -857,7 +857,7 @@ window.addEventListener("keydown", (e) => {
   }
   // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
   // 输入非空不动它（正常删字）；空时逐层往回，根层关面板。
-  if (e.key === "Backspace" && q.value === "" && !e.isComposing) {
+  if (e.key === "Backspace" && q.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back();
     return;
@@ -913,7 +913,10 @@ actionSearchEl.addEventListener("keydown", (e) => {
     e.preventDefault();
     e.stopPropagation();
     void runActionRow(filteredActionRows()[actionsCardFocus]);
-  } else if (e.key === "Escape" || (e.key === "Backspace" && actionSearchEl.value === "")) {
+  } else if (
+    e.key === "Escape" ||
+    (e.key === "Backspace" && actionSearchEl.value === "" && !e.repeat)
+  ) {
     e.preventDefault();
     e.stopPropagation();
     closeActionsCard();
