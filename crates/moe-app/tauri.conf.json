@@ -26,7 +26,7 @@
         "maximizable": false,
         "minimizable": false,
         "closable": false,
-        "shadow": false,
+        "shadow": true,
         "acceptFirstMouse": true,
         "visibleOnAllWorkspaces": true,
         "visible": false
@@ -46,7 +46,7 @@
         "maximizable": false,
         "minimizable": false,
         "closable": false,
-        "shadow": false,
+        "shadow": true,
         "acceptFirstMouse": true,
         "visibleOnAllWorkspaces": true,
         "visible": false

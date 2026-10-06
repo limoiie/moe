@@ -5,6 +5,12 @@ body {
   background: transparent;
 }
 
+/* 悬浮窗口卡片："浮起"交给 AppKit 系统窗口阴影（窗口是真透明的，CSS 阴影会被窗口边界裁切）；
+   这里只补一层贴边的接触阴影，让卡片边缘在任何背景下都有分界（ADR-0016）。 */
+.moe-window-card {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+}
+
 /* 键位块（shadcn Kbd 同款）：每键一个方块，字符居中、行内基线对齐。
    固定正方形（18×18，不随内容撑开），长键名（Esc…）靠缩字号塞进去，
    一个语义里所有块因此同宽同高，长键位也不会把布局撞开。 */
@@ -57,8 +63,10 @@ body {
   border-radius: 999px;
   background: rgb(24 24 27 / 0.82);
   backdrop-filter: blur(14px);
+  /* 贴合卡片的浅阴影：胶囊浮在列表之上，但不留黑块 */
   box-shadow:
-    0 8px 24px rgb(0 0 0 / 0.5),
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 4px 12px rgb(0 0 0 / 0.22),
     0 1px 0 rgb(255 255 255 / 0.04) inset;
 }
 .moe-action-bar button {

@@ -263,6 +263,15 @@ fn schedule_chat_frame_save(window: &tauri::WebviewWindow) {
     });
 }
 
+/// 透明窗口的阴影由内容 alpha 生成并被缓存：显示前重算一次（ADR-0016）。
+#[cfg(target_os = "macos")]
+fn refresh_window_shadow(window: &tauri::WebviewWindow) {
+    if let Ok(ns_window) = window.ns_window() {
+        // SAFETY: 指针来自 Tauri 的窗口句柄，生命周期跟随该窗口。
+        unsafe { moe_platform::mac::refresh_window_shadow(ns_window) };
+    }
+}
+
 /// 必须在主线程调用：先抓选区，再定位并展示面板。
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -272,6 +281,8 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
         *state.last_shown.lock().expect("last_shown poisoned") = Some(std::time::Instant::now());
     }
     place_on_active_screen(window);
+    #[cfg(target_os = "macos")]
+    refresh_window_shadow(window);
     #[cfg(target_os = "macos")]
     if let Ok(panel) = window.app_handle().get_webview_panel(window.label()) {
         // NSPanel：不激活应用、不切 Space，直接成为 key window 接收输入
@@ -328,6 +339,8 @@ fn open_side_view(app: &AppHandle, payload: serde_json::Value) {
         if !restore_side_view(&window) {
             place_side_view(&window);
         }
+        #[cfg(target_os = "macos")]
+        refresh_window_shadow(&window);
 
         #[cfg(target_os = "macos")]
         let panel_shown = if let Ok(panel) = handle.get_webview_panel("chat") {

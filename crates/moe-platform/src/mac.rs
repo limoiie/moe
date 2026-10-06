@@ -61,6 +61,25 @@ pub fn is_input_monitoring_granted() -> bool {
     unsafe { CGPreflightListenEventAccess() != 0 }
 }
 
+/// 让透明窗口用 AppKit 的窗口阴影重新算一次（ADR-0016）。
+///
+/// 阴影由窗口内容的 alpha 生成并被缓存：透明窗口首次显示前 webview 可能还没画完，
+/// 阴影会按“空/矩形内容”算出来；每次 show 后调一次这个函数即可刷新为当前形状。
+/// CSS 阴影在透明窗口里会被窗口边界裁切，所以"浮起"由系统阴影负责。
+///
+/// # Safety
+/// `ns_window` 必须是有效的 `NSWindow` 指针（Tauri 的 `Window::ns_window()`）。
+pub unsafe fn refresh_window_shadow(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    let window: &objc2::runtime::AnyObject = unsafe { &*ns_window.cast() };
+    unsafe {
+        let _: () = objc2::msg_send![window, setHasShadow: true];
+        let _: () = objc2::msg_send![window, invalidateShadow];
+    }
+}
+
 /// 未授权时弹一次系统引导，并把本应用加入「输入监控」列表。
 pub fn request_input_monitoring() -> bool {
     unsafe { CGRequestListenEventAccess() != 0 }
