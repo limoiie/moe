@@ -395,6 +395,27 @@ impl AiShell {
         refs
     }
 
+    /// 拆开一条输入：正文（clean）+ 附件引用。
+    /// 纯附件（只有 `@path`、没有正文）时正文换成通用请求句——
+    /// 不把原始 mention 发给模型或存进历史（IIE4AD-391）。
+    fn split_message(message: &str) -> (String, Vec<AttachmentRef>) {
+        let (cleaned, paths) = attachment::parse_mentions(message);
+        let attachments: Vec<AttachmentRef> = paths
+            .iter()
+            .map(|path| attachment::ref_for_path(path))
+            .collect();
+        let display = if cleaned.is_empty() {
+            if attachments.is_empty() {
+                message.to_string()
+            } else {
+                "请结合这些附件回答。".to_string()
+            }
+        } else {
+            cleaned
+        };
+        (display, attachments)
+    }
+
     fn start_ask(
         &self,
         question: &str,
@@ -408,8 +429,13 @@ impl AiShell {
         let selected_files: Vec<String> = selection.map(|s| s.files.clone()).unwrap_or_default();
         let attachments = Self::attachments_with(&paths, &selected_files);
         let text = selection.and_then(|s| s.text());
+        // 纯附件（只有 @path）不把原始 mention 当问题：落到空问引导（与选中文件一致）。
         let display = if cleaned.is_empty() {
-            question.clone()
+            if paths.is_empty() {
+                question.clone()
+            } else {
+                String::new()
+            }
         } else {
             cleaned
         };
@@ -417,7 +443,7 @@ impl AiShell {
             let hint = if attachments.is_empty() {
                 "在输入框里写下问题，再按 Enter。"
             } else {
-                "在输入框里写下问题，再按 Enter（已附上选中文件）。"
+                "在输入框里写下问题，再按 Enter（已附上附件）。"
             };
             return ActionResult::detail(vec![answer_item(hint, None, false)]);
         }
@@ -663,17 +689,8 @@ impl Extension for AiShell {
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
 
-        // 附件 mention 与快捷提问同一语法（ADR-0010）。
-        let (cleaned, paths) = attachment::parse_mentions(message);
-        let display = if cleaned.is_empty() {
-            message.to_string()
-        } else {
-            cleaned
-        };
-        let attachments: Vec<AttachmentRef> = paths
-            .iter()
-            .map(|path| attachment::ref_for_path(path))
-            .collect();
+        // 附件 mention 与快捷提问同一语法（ADR-0010）；纯附件用通用请求句（IIE4AD-391）。
+        let (display, attachments) = Self::split_message(message);
 
         let conversation_id = if conversation_id.trim().is_empty() {
             db.create_conversation("ai", &title_for(&display, &attachments), SystemTime::now())
@@ -811,7 +828,39 @@ mod tests {
             panic!("expected list");
         };
         let detail = items[0].detail.as_deref().unwrap_or_default();
-        assert!(detail.contains("已附上选中文件"), "{detail}");
+        assert!(detail.contains("已附上附件"), "{detail}");
+    }
+
+    /// 纯 mention（只有 @path、无正文）不把原始路径发给模型：落到空问引导（IIE4AD-391）。
+    #[test]
+    fn mention_only_ask_guides_instead_of_sending_raw_path() {
+        let ActionResult::List { items, .. } = AiShell.start_ask("@/tmp/a.md", None, None) else {
+            panic!("expected list");
+        };
+        let detail = items[0].detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("已附上附件"), "{detail}");
+        assert!(
+            !detail.contains("/tmp/a.md"),
+            "原始路径不应出现在提示里：{detail}"
+        );
+    }
+
+    /// split_message：有正文保正文；纯附件换通用请求句，不泄露原始 mention。
+    #[test]
+    fn split_message_swaps_raw_mention_for_prompt() {
+        let (display, attachments) = AiShell::split_message("总结 @\"/tmp/a b.md\"");
+        assert_eq!(display, "总结");
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].path, "/tmp/a b.md");
+
+        let (display, attachments) = AiShell::split_message("@/tmp/a.md @/tmp/b.png");
+        assert_eq!(display, "请结合这些附件回答。");
+        assert_eq!(attachments.len(), 2);
+
+        // 无附件无正文：原样（空消息由上层拦）
+        let (display, attachments) = AiShell::split_message("   ");
+        assert_eq!(display, "   ");
+        assert!(attachments.is_empty());
     }
 
     /// 历史搜索是 Live 命令（输入变化即重跑列表）。

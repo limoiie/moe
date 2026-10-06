@@ -140,7 +140,7 @@ pub struct Selection {
 }
 
 impl Selection {
-    /// 文字选区（trim 后仍为空视作无）。
+    /// 原始文字选区（可能带前后空白；消费方自行 trim 判空）。
     pub fn text(&self) -> Option<&str> {
         self.text.as_deref()
     }
