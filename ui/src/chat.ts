@@ -7,6 +7,7 @@ import "./styles.css";
 import { appendMention, validatePath } from "./attachment";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
+import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
 
 // ---- 类型：镜像 Rust 契约（ADR-0006）----
 
@@ -92,6 +93,10 @@ historyButtonEl.replaceChildren(iconEl("history", { size: 16 }));
 newChatEl.replaceChildren(iconEl("plus", { size: 16 }));
 closeEl.replaceChildren(iconEl("close", { size: 16 }));
 attachEl.replaceChildren(iconEl("paperclip", { size: 14 }), document.createTextNode("附件"));
+// 三个通用动作的 tooltip 也取自共享键位（ADR-0014），避免与键位表漂移
+actionsButtonEl.title = `更多操作（${GENERAL_KEY_LABELS.actions}）`;
+historyButtonEl.title = `历史会话（${GENERAL_KEY_LABELS.browse}）`;
+newChatEl.title = `新对话（${GENERAL_KEY_LABELS.new}）`;
 
 // ---- 轻量 toast（菜单动作的即时反馈，如「已打开配置文件」）----
 
@@ -109,7 +114,7 @@ function toast(text: string, icon = "check") {
   }, 1600);
 }
 
-// ---- 历史会话：顶部居中的悬浮卡（点击历史按钮 / ⌘B 展开）----
+// ---- 历史会话：顶部居中的悬浮卡（点击历史按钮 / ⌘P 展开）----
 
 let historyOpen = false;
 let historyIndex = 0;
@@ -487,7 +492,7 @@ async function loadHistory() {
   if (!conversationId) {
     setTitle("新对话");
     emptyEl.textContent =
-      "这是一段新对话：在下方输入即可开始；⌘B 或右上角历史按钮查看历史会话。";
+      "这是一段新对话：在下方输入即可开始；⌘P 或右上角历史按钮查看历史会话。";
     emptyEl.classList.remove("hidden");
     composerEl.focus();
     return;
@@ -660,21 +665,30 @@ async function stopGeneration() {
 
 window.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  // ⌘B：历史会话悬浮卡（默认不占位，需要时才浮出）
-  if (mod && e.key.toLowerCase() === "b") {
+  // 通用动作（ADR-0014）：Browse ⌘P / Actions ⌘⇧P / New ⌘N。
+  // 语义与命令盘同源（./keymap），落点由本视图决定：历史卡 / 操作菜单 / 新对话。
+  const general = generalActionOf(e);
+  if (general === "actions") {
     e.preventDefault();
+    if (actionsOpen) closeActionsMenu();
+    else openActionsMenu();
+    return;
+  }
+  if (general === "browse") {
+    e.preventDefault();
+    closeActionsMenu();
     toggleHistoryCard();
+    return;
+  }
+  if (general === "new") {
+    e.preventDefault();
+    newChat();
     return;
   }
   // ⌃[ / ⌃]：按当前列表（含筛选）前后切换会话
   if (e.ctrlKey && (e.key === "[" || e.key === "]")) {
     e.preventDefault();
     void stepConversation(e.key === "]" ? 1 : -1);
-    return;
-  }
-  if (mod && e.key.toLowerCase() === "n") {
-    e.preventDefault();
-    newChat();
     return;
   }
   if (e.key === "Escape" || (mod && e.key.toLowerCase() === "w")) {

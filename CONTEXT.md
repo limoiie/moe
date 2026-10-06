@@ -84,8 +84,19 @@ _Avoid_: 用 Selection 指代 Focused Item
 _Avoid_: 快捷映射、绑定
 
 **Show All Actions（展开全部动作）**:
-⌘K 触发的层级行为：把当前 Focused Item 的全部主/副操作列为一层列表供键盘选择。
+⌘K（子应用通用键位：⌘⇧P）触发的层级行为：把当前 Focused Item 的全部主/副操作列为一层列表供键盘选择。
+一个语义两个键位：⌘K 是命令盘惯例，⌘⇧P 供子应用复用（ADR-0014）。
 _Avoid_: 命令菜单
+
+**Browse（浏览记录）**:
+平台通用动作，默认 ⌘P：打开当前 Extension 的记录列表（AI = 历史会话）。
+入口由 Extension 声明（`browse_command`）；没声明就是没有记录可浏览，平台只给一次内联提示（ADR-0014）。
+_Avoid_: 历史、列表视图（Browse 特指这个键位语义）
+
+**New（新建记录）**:
+平台通用动作，默认 ⌘N：新建一条记录（AI = 新会话）。入口同样由 Extension 声明（`new_command`）；
+与 Browse、Actions 一起构成跨 Command/子应用的三个通用动作（ADR-0014）。
+_Avoid_: 新建窗口、加号
 
 **Hints Bar（动作提示条）**:
 面板底部的常显区域，展示当前形态下可用的键位与动作，是 Show All Actions 之外的可发现性保障。

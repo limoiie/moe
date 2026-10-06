@@ -1,5 +1,5 @@
 use crate::contract::{
-    Action, ActionResult, CommandMeta, Emitter, Extension, Item, MoeError, NoopEmitter,
+    Action, ActionResult, CommandMeta, Emitter, EntryKind, Extension, Item, MoeError, NoopEmitter,
 };
 use crate::frecency::FrecencyLookup;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
@@ -94,6 +94,16 @@ impl Registry {
             .iter()
             .map(Box::as_ref)
             .find(|e| e.commands().iter().any(|c| c.id == command_id))
+    }
+
+    /// 通用入口（ADR-0014）：按当前命令所属 Extension，换出它声明的
+    /// Browse（⌘P）/ New（⌘N）入口命令。None = 该 Extension 没有这种记录。
+    pub fn entry_command(&self, from_command: &str, kind: EntryKind) -> Option<CommandMeta> {
+        let extension = self.find(from_command)?;
+        match kind {
+            EntryKind::Browse => extension.browse_command(),
+            EntryKind::New => extension.new_command(),
+        }
     }
 
     pub fn find_extension(&self, extension_id: &str) -> Option<&dyn Extension> {
@@ -518,6 +528,70 @@ mod tests {
         r.register(Box::new(Toy));
         let hits = r.search("toy", &NoFrecency);
         assert!(hits.iter().all(|c| c.id != "fb.ask"));
+    }
+
+    /// 通用入口（ADR-0014）：入口按「当前命令所属 Extension」解析，
+    /// 声明的 id 必须可路由（否则面板 invoked 会 NotFound），未声明则为 None。
+    #[test]
+    fn entry_command_resolves_per_extension_and_must_be_routable() {
+        struct EntryToy;
+        impl Extension for EntryToy {
+            fn id(&self) -> &str {
+                "entry"
+            }
+            fn title(&self) -> &str {
+                "Entry"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![entry_meta("entry.run"), entry_meta("entry.browse")]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&str>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+            fn browse_command(&self) -> Option<CommandMeta> {
+                Some(entry_meta("entry.browse"))
+            }
+        }
+
+        fn entry_meta(id: &str) -> CommandMeta {
+            CommandMeta {
+                id: id.into(),
+                extension_id: "entry".into(),
+                title: id.into(),
+                subtitle: None,
+                icon: None,
+                input: InputKind::None,
+                live: false,
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(EntryToy));
+        r.register(Box::new(Toy));
+
+        // 从本扩展的命令出发：拿到声明过的入口，且该 id 在本扩展的 commands() 里
+        // （Registry::find 只认 commands()，不在其中就 invoke 不到——与 fallback 同一守卫）
+        let browse = r
+            .entry_command("entry.run", EntryKind::Browse)
+            .expect("browse 入口");
+        assert_eq!(browse.id, "entry.browse");
+        assert!(
+            r.commands().iter().any(|c| c.id == browse.id),
+            "入口 id 必须在 commands() 中可路由：{}",
+            browse.id
+        );
+
+        // 未声明 New：None（平台给内联提示，不静默）
+        assert!(r.entry_command("entry.run", EntryKind::New).is_none());
+        // 未声明任何入口的扩展：两个键位都是 None
+        assert!(r.entry_command("toy.hello", EntryKind::Browse).is_none());
+        // 不存在的命令：None（不 panic）
+        assert!(r.entry_command("nope.nope", EntryKind::Browse).is_none());
     }
 
     #[test]

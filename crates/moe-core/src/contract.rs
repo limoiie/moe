@@ -120,6 +120,17 @@ pub struct CommandMeta {
     pub live: bool,
 }
 
+/// 平台通用入口（ADR-0014）：三个通用动作 Browse（⌘P）/ New（⌘N）
+/// 的落地方式——平台定键位与路由，入口由 Extension 声明。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EntryKind {
+    /// Browse（⌘P）：该 Extension 的记录列表（AI = 历史会话）。
+    Browse,
+    /// New（⌘N）：新建一条记录（AI = 新会话）。
+    New,
+}
+
 #[derive(Debug)]
 pub enum MoeError {
     /// 平台能力需要授权（macOS 辅助功能），调用方应展示内联引导。
@@ -189,6 +200,17 @@ pub trait Extension: Send + Sync {
 
     /// 搜索无匹配时提供的「捕获式」命令（如 AI: 提问「…」）；默认无。
     fn fallback_command(&self, _query: &str) -> Option<CommandMeta> {
+        None
+    }
+
+    /// 「记录列表」入口（Browse，⌘P）：AI = 历史会话。默认无——
+    /// 没有记录的 Extension 不声明，平台对该键位给一次内联提示（ADR-0014）。
+    fn browse_command(&self) -> Option<CommandMeta> {
+        None
+    }
+
+    /// 「新建记录」入口（New，⌘N）：AI = 新会话。默认无（同上）。
+    fn new_command(&self) -> Option<CommandMeta> {
         None
     }
 

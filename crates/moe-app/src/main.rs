@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use moe_core::contract::Emitter as CommandEmitter;
-use moe_core::contract::{Action, ActionResult, CommandEvent, CommandMeta, Item};
+use moe_core::contract::{Action, ActionResult, CommandEvent, CommandMeta, EntryKind, Item};
 use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
 use moe_core::registry::Registry;
@@ -383,6 +383,21 @@ fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandMeta
         .lock()
         .expect("registry poisoned")
         .search(&query, &*frecency)
+}
+
+/// 通用动作 Browse（⌘P）/ New（⌘N）的入口查询（ADR-0014）：
+/// 按当前命令所属 Extension 换出它声明的入口命令；None = 该扩展没有这种记录。
+#[tauri::command]
+fn entry_command(
+    state: State<'_, AppState>,
+    command_id: String,
+    kind: EntryKind,
+) -> Option<CommandMeta> {
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .entry_command(&command_id, kind)
 }
 
 #[tauri::command]
@@ -843,6 +858,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             keymap,
             search_commands,
+            entry_command,
             invoke_command,
             run_item_action,
             hide_panel,

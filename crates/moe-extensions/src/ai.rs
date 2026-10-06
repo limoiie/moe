@@ -465,6 +465,15 @@ impl Extension for AiShell {
                 input: InputKind::Query,
                 live: true,
             },
+            CommandMeta {
+                id: "ai.new-chat".into(),
+                extension_id: "ai".into(),
+                title: "AI: 新对话".into(),
+                subtitle: Some("清掉当前问答，回到干净的一轮新会话".into()),
+                icon: Some("plus".into()),
+                input: InputKind::None,
+                live: false,
+            },
         ]
     }
 
@@ -477,8 +486,26 @@ impl Extension for AiShell {
         match command_id {
             "ai.quick-ask" => Ok(self.start_ask(query.unwrap_or_default(), None)),
             "ai.search-history" => Ok(self.search_history(query.unwrap_or_default())),
+            // 通用动作 New（⌘N，ADR-0014）：面板不持有会话状态（一问一会话），
+            // 这里给一张空态卡——下一条提问自然开一段新会话。
+            "ai.new-chat" => Ok(ActionResult::detail(vec![notice_item(
+                "新对话",
+                "在输入栏写下问题即可开始；⌘M 可转进侧栏继续这段会话。",
+            )])),
             _ => Err(MoeError::NotFound),
         }
+    }
+
+    /// 通用动作 Browse（⌘P，ADR-0014）：AI 的记录列表 = 历史会话。
+    fn browse_command(&self) -> Option<CommandMeta> {
+        self.commands()
+            .into_iter()
+            .find(|c| c.id == "ai.search-history")
+    }
+
+    /// 通用动作 New（⌘N，ADR-0014）：AI 的新建 = 新会话。
+    fn new_command(&self) -> Option<CommandMeta> {
+        self.commands().into_iter().find(|c| c.id == "ai.new-chat")
     }
 
     fn invoke_streaming(
@@ -904,5 +931,37 @@ mod tests {
 
         drop(db);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// 通用入口守卫（ADR-0014）：⌘P/⌘N 换出的 id 必须可路由，
+    /// 否则面板 invoke 会 NotFound（与 fallback 同一守卫）。
+    #[test]
+    fn declared_entry_points_are_routable() {
+        let ext = AiShell;
+        let commands = ext.commands();
+        for entry in [ext.browse_command(), ext.new_command()] {
+            let entry = entry.expect("AI 声明了 Browse 与 New");
+            assert!(
+                commands.iter().any(|c| c.id == entry.id),
+                "入口 id 必须在 commands() 中可路由：{}",
+                entry.id
+            );
+        }
+        assert_eq!(ext.browse_command().unwrap().id, "ai.search-history");
+        assert_eq!(ext.new_command().unwrap().id, "ai.new-chat");
+    }
+
+    /// New（⌘N）在面板里给一张详情整屏的空态卡（不动会话状态：一问一会话）。
+    #[test]
+    fn new_chat_returns_a_detail_notice() {
+        let ActionResult::List { items, detail_full } = AiShell
+            .invoke("ai.new-chat", None, None)
+            .expect("ai.new-chat 可路由")
+        else {
+            panic!("expected list");
+        };
+        assert!(detail_full, "空态卡是详情整屏");
+        assert_eq!(items[0].id, "ai.notice");
+        assert!(items[0].actions.is_empty(), "空态卡没有可执行动作");
     }
 }

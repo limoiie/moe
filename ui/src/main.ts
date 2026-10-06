@@ -6,6 +6,7 @@ import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
+import { generalActionOf } from "./keymap";
 import { store } from "./store";
 
 // ---- 类型：镜像 moe-core 的 serde camelCase 契约（ADR-0006）----
@@ -119,6 +120,8 @@ const HINT_LABELS: Record<string, string> = {
   apply: "应用",
   secondaryCopy: "复制",
   showAllActions: "动作",
+  browse: "浏览",
+  new: "新建",
   back: "回退",
   materialize: "侧栏",
   attach: "附件",
@@ -133,6 +136,8 @@ async function initHints() {
     apply: 1,
     secondaryCopy: 1,
     showAllActions: 1,
+    browse: 1,
+    new: 1,
     materialize: 1,
     attach: 1,
     back: 2,
@@ -396,6 +401,43 @@ function applyResult(res: ActionResult, commandId: string, live = false, icon?: 
   }
 }
 
+/**
+ * 通用动作（ADR-0014）：Browse（⌘P）打开当前 Extension 的记录列表，
+ * New（⌘N）新建一条记录。平台只定键位与路由，入口由 Extension 声明；
+ * 没声明就给一次内联提示，不静默。
+ */
+async function openEntry(kind: "browse" | "new") {
+  const v = view.get();
+  // 当前 Extension：进了结果/动作层用来源 Command，还在命令层用焦点 Command
+  const from = v.sourceCommandId ?? (v.mode === "commands" ? v.commands[v.focus]?.id : undefined);
+  if (!from) return;
+  let command: CommandMeta | null;
+  try {
+    command = await invoke<CommandMeta | null>("entry_command", {
+      commandId: from,
+      kind,
+    });
+  } catch (err) {
+    showMessage(`执行失败：${String(err)}`);
+    return;
+  }
+  if (!command) {
+    toast(kind === "browse" ? "该扩展没有记录列表" : "该扩展没有新建入口");
+    return;
+  }
+  try {
+    const res = await invoke<ActionResult>("invoke_command", {
+      commandId: command.id,
+      // Live 命令以自己的视图接管输入：进入时清空输入框（同 applyFocused）
+      query: null,
+    });
+    if (command.live) q.value = "";
+    applyResult(res, command.id, command.live, command.icon);
+  } catch (err) {
+    showMessage(`执行失败：${String(err)}`);
+  }
+}
+
 async function applyFocused(alt: boolean) {
   const v = view.get();
   if (v.mode === "commands") {
@@ -649,10 +691,19 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
+  // 通用动作（ADR-0014）：Browse ⌘P / Actions ⌘⇧P / New ⌘N。
+  // 语义由共享键位模块识别，落点由本表面决定（面板 = 动作层 / Extension 声明的入口）。
+  const general = generalActionOf(e);
+  if (general) {
+    e.preventDefault();
+    if (general === "actions") openActions();
+    else void openEntry(general);
+    return;
+  }
+  if (e.key === "ArrowDown" || (e.ctrlKey && !e.metaKey && e.key === "n")) {
     e.preventDefault();
     move(1);
-  } else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
+  } else if (e.key === "ArrowUp" || (e.ctrlKey && !e.metaKey && e.key === "p")) {
     e.preventDefault();
     move(-1);
   } else if (e.key === "Enter") {
