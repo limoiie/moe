@@ -77,21 +77,42 @@ impl Ax for MacAx {
         };
         // SAFETY: focused 来自 copy 规则；读到的 value 也是 copy 规则，用 create 规则接管。
         unsafe {
-            let name = attribute("AXSelectedText");
-            let mut value: CFTypeRef = std::ptr::null();
-            let err =
-                AXUIElementCopyAttributeValue(focused, name.as_concrete_TypeRef(), &mut value);
-            CFRelease(focused);
-            if err != 0 || value.is_null() {
-                // 应用不支持 AXSelectedText 或确实没有选区：都走光标模式
-                return Ok(None);
+            let selected = attribute("AXSelectedText");
+            let parent = attribute("AXParent");
+            let mut element: AXUIElementRef = focused;
+            // 有些应用（浏览器/富文本编辑器）把系统焦点放在子元素上，而选区挂在祖先元素：
+            // 顺着 AXParent 往上找（最多 5 层），并逐层打日志区分「无选区」与「不支持」。
+            for depth in 0..=5 {
+                let mut value: CFTypeRef = std::ptr::null();
+                let err = AXUIElementCopyAttributeValue(
+                    element,
+                    selected.as_concrete_TypeRef(),
+                    &mut value,
+                );
+                if err == 0 && !value.is_null() {
+                    let text = CFString::wrap_under_create_rule(value as CFStringRef).to_string();
+                    CFRelease(element);
+                    if !text.is_empty() {
+                        if depth > 0 {
+                            eprintln!("moe: AXSelectedText 命中第 {depth} 层祖先");
+                        }
+                        return Ok(Some(text));
+                    }
+                    eprintln!("moe: AXSelectedText 存在但为空（第 {depth} 层）");
+                    return Ok(None);
+                }
+                eprintln!("moe: AXSelectedText 第 {depth} 层失败（AXError {err}）");
+                let mut up: CFTypeRef = std::ptr::null();
+                let err =
+                    AXUIElementCopyAttributeValue(element, parent.as_concrete_TypeRef(), &mut up);
+                CFRelease(element);
+                if err != 0 || up.is_null() {
+                    return Ok(None);
+                }
+                element = up as AXUIElementRef;
             }
-            let text = CFString::wrap_under_create_rule(value as CFStringRef).to_string();
-            if text.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(text))
-            }
+            CFRelease(element);
+            Ok(None)
         }
     }
 
