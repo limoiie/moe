@@ -1,0 +1,52 @@
+name: Release
+
+# 手动触发（Actions 页面）或推 v* 标签时，构建 macOS .app/.dmg 并上传工件。
+# 不做签名/公证：首次打开需右键 →「打开」（README「安装」一节）。
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - run: pnpm -C ui install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # tauri-action 负责装 tauri-cli 并执行 `cargo tauri build`（含前端产物嵌入）
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/moe-app
+          args: --bundles app,dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moe-macos-dmg-${{ github.sha }}
+          path: "**/target/release/bundle/dmg/*.dmg"
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moe-macos-app-${{ github.sha }}
+          path: "**/target/release/bundle/macos/Moe.app"
+          if-no-files-found: error

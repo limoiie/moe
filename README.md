@@ -2,23 +2,69 @@
 
 键盘优先的桌面命令盘：任意应用中双击 ⌘ 呼出居中面板，搜索 Command，
 把结果回写到 Selection 或光标处。产品语言见 `CONTEXT.md`，全部设计决策
-见 `docs/adr/0001–0009`。
+见 `docs/adr/0001–0010`。
+
+## 安装（macOS）
+
+1. 从 GitHub Actions 的 **Release** 工作流下载 `Moe_<版本>_<arch>.dmg`
+   （Actions → Release → 对应 run → Artifacts；推 `v*` 标签或手动触发）。
+2. 打开 dmg，把 **Moe.app** 拖进「应用程序」。
+3. **未签名/未公证**：首次启动请右键点 Moe.app →「打开」→ 再点「打开」
+   （之后可正常双击；这是 Gatekeeper 对未公证应用的一次性确认）。
+4. 首次运行：菜单栏出现 Moe 图标；面板内会引导授予**「输入监控」**（双击 ⌘ 的门槛）
+   与**「辅助功能」**（抓选区/回写文本的门槛）。授权后无需重启即生效。
+
+## 使用
+
+双击 ⌘ 呼出面板，输入即搜 Command；一套键位语义贯通所有 Extension：
+
+| 键位 | 语义 | 说明 |
+|---|---|---|
+| `↓` / `⌃N`、`↑` / `⌃P` | 导航 | 移动 Focused Item |
+| `⏎` | Apply | 对 Focused Item 执行主操作 |
+| `⌥⏎` | 副操作 | 默认语义：复制（如复制 AI 回答全文到剪贴板） |
+| `⌘K` | 展开全部动作 | 当前 Item 的主/副操作清单 |
+| `⌘M` | Materialize | 把当前会话转入该 Extension 的 Side View |
+| `⌘⇧A` | 附件 | 输入/粘贴文件路径，插入 `@"path"`（ADR-0010） |
+| `Esc` | 分层回退 | 预览 → 结果层 → 清空输入 → 关闭面板 |
+
+- **面板**：失焦自动收起；隐藏/重现之间保留输入与结果。菜单栏图标提供
+  显示面板 / AI 对话 / 开机自启 / 打开配置文件 / 退出。
+- **AI 问答**：直接输入问题回车（无匹配时自动出现「AI: 提问「…」」），回答流式渲染为
+  Markdown 卡片；`⌥⏎` 复制全文，`⌘M` 转入右侧栏续聊。
+- **侧栏（AI 对话）**：右侧常驻窗口（可与全屏应用共存），历史自上而下、输入框在底部，
+  `⏎` 发送 / `⇧⏎` 换行 / `Esc` 收起；📎 添加附件；`＋` 开新对话；
+  历史会话从命令「AI: 搜索历史会话」找回（输入即筛标题）。
+- **配置**：命令「Moe: 打开配置文件」或直接编辑
+  `~/Library/Application Support/moe/config.toml`：
+
+  ```toml
+  [summon]
+  key = "double-cmd"   # double-cmd | double-option | double-ctrl | 组合键如 cmd+shift+space
+  double_tap_ms = 400  # 100..=1000
+
+  [ai]
+  base_url = "https://api.deepseek.com/v1"  # 任意 OpenAI 兼容端点
+  model = "deepseek-chat"
+  ```
+
+  API key 存系统 keychain：面板输入 `key <你的key>` 回车（不回显），或设 `MOE_AI_API_KEY`。
 
 ## 结构
 
 | 路径 | 职责 |
 |---|---|
 | `crates/moe-core` | Extension / Command / Item 契约（ADR-0006）、统一键位表、Registry 与搜索 |
-| `crates/moe-platform` | `TextTarget`、呼出监听（ADR-0002/0008 的平台边界；目前为 trait + stub） |
-| `crates/moe-extensions` | 内置 Extension（Echo 契约演示、AI 壳） |
-| `crates/moe-app` | Tauri 2 壳：面板窗口与 IPC |
+| `crates/moe-platform` | 平台边界（ADR-0002/0008）：TextTarget、剪贴板、呼出监听（macOS CGEventTap / Linux X11 XRecord） |
+| `crates/moe-extensions` | 内置 Extension（Moe 设置命令、Echo 契约演示、AI 问答） |
+| `crates/moe-app` | Tauri 2 壳：面板/侧栏窗口、tray、IPC |
 | `ui/` | 原生 TS + Tailwind 薄视图层（ADR-0007） |
 
 ## 开发
 
 ```sh
 pnpm -C ui install
-cargo test                                     # 契约测试
+cargo test                                     # 契约与平台测试
 cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：自动起 Vite + 热更新）
 ```
 
@@ -27,35 +73,31 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
 
 1. `cd crates/moe-app && cargo tauri dev`（推荐）
 2. 两个终端：`pnpm -C ui dev` + `cargo run -p moe-app`
-3. 嵌入产物：`cargo tauri build`（生产构建，经 `custom-protocol` 特性嵌入 `ui/dist`）
+3. 生产构建：`cd crates/moe-app && cargo tauri build`（嵌入 `ui/dist`，产出 .app/.dmg）
 
-## 当前状态：M1 骨架与 M2/M3 能力
+图标源图：`python3 crates/moe-app/icons/gen-app-icon.py`（应用图标，再跑 `cargo tauri icon`）
+与 `gen-tray-icon.py`（菜单栏模板图）。
 
-- 呼出键：**双击 ⌘**（ADR-0008）。macOS 首次运行会请求**「输入监控」授权**
-  （listen-only 键盘 tap 的门槛；辅助功能留待 M2 回写类功能），未授权时面板内
-  常显引导。已实现于 `moe-platform::mac`（listen-only CGEventTap + 可测的双击
-  状态机）；启动日志会打印权限状态与 tap 挂载结果，方便排查。
-- 面板在 macOS 上是 **NSPanel**（tauri-nspanel）：不激活应用、不抢菜单栏、
-  可浮在全屏应用的 Space 之上；呼出时自动居中到鼠标所在显示器。
-- 菜单栏常驻：tray 菜单（显示面板 / 打开配置文件 / 退出）；macOS 无 Dock 图标、
-  不参与 ⌘-Tab；**面板失焦自动收起**。设置面是命令「Moe: 打开配置文件」（ADR-0009）。
-- 面板隐藏/重现之间**保留输入与结果**；`Esc` 分层回退（详情→结果层→清空输入→关闭）依旧可用。
-- `config.toml` 可改呼出键（macOS 为 `~/Library/Application Support/moe/config.toml`，
-  Linux 为 `~/.config/moe/config.toml`）：
+## 功能现状
 
-  ```toml
-  [summon]
-  key = "double-cmd"   # double-cmd | double-option | double-ctrl | 组合键如 cmd+shift+space
-  double_tap_ms = 400  # 100..=1000
-  ```
+- **呼出**：双击 ⌘（macOS CGEventTap，需输入监控授权；Linux/X11 用 XRecord 免授权）。
+- **文本**：呼出前抓取 Selection；`WriteBack` 经 AX 替换选区/插光标，被拒时降级
+  「剪贴板快照 → 合成 ⌘V → 恢复」（演示命令 `Echo: Shout`）。
+- **搜索**：nucleo 模糊匹配（精确前缀 > 匹配位置）+ frecency 平分决胜；空查询按 frecency 排序。
+- **AI**：OpenAI 兼容端点流式问答；会话与消息存本地 SQLite（`data_dir/moe/moe.db`，`ai` Namespace）；
+  附件（文本内联 / 图片多模态）；侧栏续聊把整段历史作为上下文。
+- **常驻**：菜单栏 tray（含开机自启，LaunchAgent）；macOS 无 Dock 图标、不参与 ⌘-Tab。
 
-- Linux：**X11 双击监听已可用**（XRecord，免授权；Linux 上 ⌘ 对应键盘的 Super/⌘ 键），
-  接入同一套双击状态机；X 服务缺 RECORD 扩展时自动降级并在日志与面板引导。
-  **Wayland 会话不能全局拦截键盘**（XRecord 只能看到 XWayland 客户端）：Moe 检测到
-  `WAYLAND_DISPLAY`/`XDG_SESSION_TYPE=wayland` 时不启动监听，面板内给出两条替代路径——
-  1）`config.toml` 改用组合键（`[summon] key = "cmd+shift+space"`，走 global-shortcut
-  插件；X11 会话可靠，Wayland 原生会话可能注册不上）；
-  2）用窗口管理器绑定 `moe --toggle`（单实例转发：已在运行则切换面板，未运行则启动并亮面板）：
+## 常见问题
+
+- **双击 ⌘ 没反应**：看面板顶部引导条——多半是「输入监控」未授权（系统设置 → 隐私与安全性）。
+  个别系统版本授权后需重启 Moe 一次。
+- **回写没生效 / 提示权限**：需要「辅助功能」授权；部分应用（如某些 Electron 应用）AX 只读，
+  会自动走剪贴板降级。
+- **首次打开提示「无法验证开发者」**：未签名应用，右键 →「打开」即可（见「安装」）。
+- **Wayland**：无法全局拦截键盘（XRecord 只能看到 XWayland 客户端）。两条替代路径：
+  1）`config.toml` 改用组合键（`[summon] key = "cmd+shift+space"`）；
+  2）窗口管理器绑定 `moe --toggle`（单实例转发：已在运行则切换面板，未运行则启动并亮面板）：
 
   ```conf
   # Hyprland (~/.config/hypr/hyprland.conf)
@@ -66,22 +108,8 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
   # i3 (~/.config/i3/config) / sway (~/.config/sway/config)
   bindsym $mod+m exec moe --toggle
   ```
-- 选区与回写（M2，IIE4AD-356）：呼出面板前抓取选区；`WriteBack` 经 AX 写入
-  （有选区替换 / 无选区插光标），AX 被目标应用拒绝时自动降级「剪贴板快照 → 合成 ⌘V → 恢复」；
-  演示命令 `Echo: Shout`。写回需要「辅助功能」授权（引导条第二档）。
-- 搜索：nucleo 模糊匹配（**精确前缀 > 匹配位置**）+ **frecency 平分决胜**；
-  命令用一次就更靠前，空查询也按 frecency 排序。使用记录在平台级 KV
-  （`data_dir/moe/frecency.json`），不占扩展的 Namespace。
-- AI 问答（M3a）：OpenAI 兼容端点**真实流式**（`[ai]` 的 base_url/model，即改即用无需重启）；
-  key 走 keychain——面板输入 `key <你的key>` 回车保存（不回显），或设 `MOE_AI_API_KEY`；
-  回答以 Markdown 详情卡片边流边渲染；无匹配时自动出现「AI: 提问「…」」捕获项。
-- AI 侧栏与历史（M3b，IIE4AD-360）：回答项的 **⌘M Materialize** 或命令
-  「AI: 搜索历史会话」（**Live 列表**：进入后输入即筛标题）→ 右侧栏窗口，
-  停在鼠标所在显示器右缘、可与全屏应用共存；侧栏内多轮续聊把整段会话作为上下文，
-  历史存本地 SQLite（`data_dir/moe/moe.db`，`ai` Namespace），流式回答经
-  `command-event`（`commandId = ai.side`）逐段渲染。
-- AI 附件（M3c，IIE4AD-358）：**⌘⇧A**（面板）或 **📎**（侧栏）输入/粘贴文件路径，
-  Enter 校验后插入 `@"path"` mention（ADR-0010）；文本 ≤512 KiB 内联、图片 ≤5 MiB
-  走多模态 base64，续聊时历史附件重新展开；超限/不可读在输入处内联提示。
+
+- **AI 报错**：回答卡片里会显示端点返回；确认 `[ai] base_url/model`、key 已保存、
+  端点支持所选模型（图片需要 vision 能力）。
 
 里程碑验收标准见 `docs/adr/0009-milestone-scope.md`。
