@@ -6,8 +6,6 @@
 //! 这里是 best-effort：读不到（非 Finder、无自动化授权、超时）都视为「没有文件」，
 //! 绝不让文件抓取拖慢或打断呼出。可测部分（输出解析）放本模块，平台调用保持薄。
 
-use std::time::Duration;
-
 /// 解析 `osascript` 的输出：一行一个 POSIX 路径。
 /// 空行丢弃；`\r` 与首尾空白由 trim 处理（Finder 文件名本身不含首尾空白/换行）。
 pub fn parse_finder_paths(output: &str) -> Vec<String> {
@@ -62,7 +60,7 @@ mod imp {
     use objc2_app_kit::NSWorkspace;
     use std::process::{Command, Stdio};
     use std::thread;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     const FINDER_BUNDLE_ID: &str = "com.apple.finder";
     /// osascript 限时：TCC「自动化」授权弹窗期间 osascript 会挂起等待用户应答，
