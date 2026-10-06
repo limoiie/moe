@@ -5,16 +5,19 @@ body {
   background: transparent;
 }
 
-/* 键位块（shadcn Kbd 同款）：每键一个方块，字符居中、行内基线对齐 */
+/* 键位块（shadcn Kbd 同款）：每键一个方块，字符居中、行内基线对齐。
+   固定正方形（18×18，不随内容撑开），长键名（Esc…）靠缩字号塞进去，
+   一个语义里所有块因此同宽同高，长键位也不会把布局撞开。 */
 .moe-keys {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  flex: none;
+  gap: 2px;
   vertical-align: middle;
 }
 .moe-keys-sep {
-  margin: 0 2px;
-  font-size: 10px;
+  margin: 0 1px;
+  font-size: 9px;
   line-height: 1;
   color: #52525b;
 }
@@ -22,44 +25,56 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  border: 1px solid rgb(82 82 91 / 0.55);
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgb(82 82 91 / 0.5);
   border-radius: 5px;
   background: rgb(39 39 42 / 0.85);
-  box-shadow: 0 1px 0 rgb(0 0 0 / 0.25);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 0.22);
   color: #d4d4d8;
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;
   line-height: 1;
+  letter-spacing: 0;
+}
+/* 具名键（Esc、Tab…）：同一个方块，只把字缩紧——不撑宽、不换行 */
+.moe-kbd[data-wide] {
+  font-size: 9px;
+  letter-spacing: -0.4px;
 }
 
-/* 底部悬浮动作条（Raycast 同款）：主操作 + 动作，浮在列表之上 */
+/* 底部悬浮胶囊（Raycast 同款）：主操作与动作同一个胶囊，按钮自身无边框 */
 .moe-action-bar {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  /* 按钮与胶囊边界之间的留白 */
+  padding: 3px;
+  border: 1px solid rgb(82 82 91 / 0.5);
+  border-radius: 999px;
+  background: rgb(24 24 27 / 0.82);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 8px 24px rgb(0 0 0 / 0.5),
+    0 1px 0 rgb(255 255 255 / 0.04) inset;
 }
 .moe-action-bar button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid rgb(82 82 91 / 0.55);
-  border-radius: 8px;
-  background: rgb(39 39 42 / 0.82);
-  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 3px 9px;
   color: #e4e4e7;
   font-size: 12px;
   line-height: 1;
-  backdrop-filter: blur(12px);
-  box-shadow:
-    0 6px 18px rgb(0 0 0 / 0.45),
-    0 1px 0 rgb(255 255 255 / 0.04) inset;
 }
-.moe-action-bar button:hover {
-  background: rgb(63 63 70 / 0.92);
+.moe-action-bar button:not(:disabled):hover {
+  background: rgb(63 63 70 / 0.95);
 }
 .moe-action-bar button:disabled {
   opacity: 0.45;

@@ -61,6 +61,8 @@ export function kbdEl(display: string, options: KbdOptions = {}): HTMLElement {
     for (const token of tokenize(part)) {
       const kbd = document.createElement("kbd");
       kbd.className = "moe-kbd";
+      // 具名键（Esc/Tab…）也是同一个方块，靠缩字塞进去（见 styles.css）
+      if (token.length > 1) kbd.dataset.wide = "true";
       kbd.textContent = token;
       wrap.append(kbd);
     }
