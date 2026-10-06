@@ -49,16 +49,32 @@ impl Frecency {
         };
         entry.count as f64 * freshness
     }
+
+    /// 最近一次使用时间（unix 秒）；没记录过为 None。「建议」按它倒序（IIE4AD-395）。
+    pub fn last_used(&self, id: &str) -> Option<u64> {
+        self.entries.get(id).map(|entry| entry.last_used_unix)
+    }
 }
 
 /// 搜索排序查询 frecency 的接缝：Registry 只依赖它，测试可注入固定值。
 pub trait FrecencyLookup {
     fn frecency(&self, command_id: &str) -> f64;
+
+    /// 最近一次使用时间（unix 秒）；没有记录为 None（默认）。
+    fn last_used(&self, _command_id: &str) -> Option<u64> {
+        None
+    }
 }
 
 impl FrecencyLookup for Frecency {
     fn frecency(&self, command_id: &str) -> f64 {
         self.score(command_id, SystemTime::now())
+    }
+
+    fn last_used(&self, command_id: &str) -> Option<u64> {
+        self.entries
+            .get(command_id)
+            .map(|entry| entry.last_used_unix)
     }
 }
 
@@ -131,5 +147,16 @@ mod tests {
         let json = serde_json::to_string(&f).unwrap();
         let back: Frecency = serde_json::from_str(&json).unwrap();
         assert_eq!(f, back);
+    }
+
+    /// 建议（IIE4AD-395）依赖 last_used：记录过才有时间，未记录为 None。
+    #[test]
+    fn last_used_is_only_set_after_recording() {
+        let mut f = Frecency::default();
+        assert_eq!(f.last_used("a"), None);
+        f.record("a", at(100));
+        assert_eq!(f.last_used("a"), Some(100));
+        f.record("a", at(200));
+        assert_eq!(f.last_used("a"), Some(200), "重复使用更新最近时间");
     }
 }

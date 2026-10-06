@@ -7,6 +7,11 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::sync::Arc;
 
+/// 「建议」section（IIE4AD-395）：空查询时列出最近使用的命令，最多 5 条、最近优先。
+const SUGGESTION_LIMIT: usize = 5;
+/// 建议组头（Raycast 同款语义；其余组头是扩展名）。
+const SUGGESTIONS_TITLE: &str = "建议";
+
 /// 把有序的命令列表按「来源」（Extension）分组，组序 = 组内最优项的先后
 /// （查询时即匹配分序；空查询时即 frecency 序）。
 /// 分组键是 extension_id（唯一），显示名是扩展的标题——两个扩展即使同名也分两个组。
@@ -60,9 +65,10 @@ impl Registry {
         self.extensions.iter().flat_map(|e| e.commands()).collect()
     }
 
-    /// 命令盘搜索：nucleo 模糊匹配打分，frecency 平分决胜；空查询按 frecency 排序。
-    /// 返回按「来源」（Extension）分组的 section（ADR-0020）：组序按组内最优项，
-    /// 组内保持得分顺序；`selection` 只在「无匹配 → fallback」这一步有意义。
+    /// 命令盘搜索：nucleo 模糊匹配打分，frecency 平分决胜。
+    /// 空查询：置顶「建议」section（最近使用的命令，IIE4AD-395）再按来源分组；
+    /// 非空查询：按来源（Extension）分组（ADR-0020），组序按组内最优项、组内保持得分顺序；
+    /// `selection` 只在「无匹配 → fallback」这一步有意义。
     pub fn search(
         &self,
         query: &str,
@@ -70,7 +76,7 @@ impl Registry {
         frecency: &dyn FrecencyLookup,
     ) -> Vec<CommandSection> {
         let q = query.trim();
-        let ordered: Vec<CommandMeta> = if q.is_empty() {
+        if q.is_empty() {
             let mut commands = self.commands();
             commands.sort_by(|a, b| {
                 frecency
@@ -78,8 +84,37 @@ impl Registry {
                     .partial_cmp(&frecency.frecency(&a.id))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            commands
-        } else {
+            // 建议（IIE4AD-395）：最近使用的命令置顶成独立 section；
+            // 其余命令照常按扩展分组，且不重复列出已进建议的命令。
+            let mut used: Vec<(u64, CommandMeta)> = commands
+                .iter()
+                .filter_map(|cmd| frecency.last_used(&cmd.id).map(|t| (t, cmd.clone())))
+                .collect();
+            used.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
+            let mut sections = Vec::new();
+            if !used.is_empty() {
+                let suggested: std::collections::HashSet<String> = used
+                    .iter()
+                    .take(SUGGESTION_LIMIT)
+                    .map(|(_, cmd)| cmd.id.clone())
+                    .collect();
+                sections.push(CommandSection {
+                    title: SUGGESTIONS_TITLE.into(),
+                    items: used
+                        .into_iter()
+                        .take(SUGGESTION_LIMIT)
+                        .map(|(_, cmd)| cmd)
+                        .collect(),
+                });
+                let rest = commands
+                    .into_iter()
+                    .filter(|cmd| !suggested.contains(&cmd.id));
+                sections.extend(group_by_extension(&self.extensions, rest));
+                return sections;
+            }
+            return group_by_extension(&self.extensions, commands.into_iter());
+        }
+        let ordered: Vec<CommandMeta> = {
             let pattern = Pattern::parse(q, CaseMatching::Smart, Normalization::Smart);
             let mut matcher = Matcher::new(Config::DEFAULT);
             let mut buf = Vec::new();
@@ -737,6 +772,138 @@ mod tests {
         assert_eq!(hits.len(), 1, "单一扩展 => 单一 section");
         assert_eq!(hits[0].title, "Toy");
         assert_eq!(hits[0].items.len(), 2);
+    }
+
+    /// 带 last_used 的 frecency 假实现（建议测试用）。
+    struct RecentFrecency(std::collections::HashMap<String, (f64, u64)>);
+
+    impl FrecencyLookup for RecentFrecency {
+        fn frecency(&self, command_id: &str) -> f64 {
+            self.0
+                .get(command_id)
+                .map(|(score, _)| *score)
+                .unwrap_or(0.0)
+        }
+
+        fn last_used(&self, command_id: &str) -> Option<u64> {
+            self.0.get(command_id).map(|(_, used)| *used)
+        }
+    }
+
+    fn recent(pairs: &[(&str, u64)]) -> RecentFrecency {
+        RecentFrecency(
+            pairs
+                .iter()
+                .map(|(id, used)| ((*id).to_string(), (0.0, *used)))
+                .collect(),
+        )
+    }
+
+    /// 建议（IIE4AD-395）：空查询置顶最近使用的命令；其余照常分组且不重复。
+    #[test]
+    fn empty_query_prepends_recent_suggestions() {
+        // Toy 有两条命令，只有 toy.list 有使用记录
+        let hits = registry().search("", None, &recent(&[("toy.list", 100)]));
+        assert_eq!(hits.len(), 2, "建议组 + 剩余按扩展分组");
+        assert_eq!(hits[0].title, "建议");
+        assert_eq!(
+            hits[0]
+                .items
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["toy.list"]
+        );
+        // 已进建议的不在剩余组里重复
+        assert_eq!(hits[1].title, "Toy");
+        assert_eq!(
+            hits[1]
+                .items
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["toy.hello"]
+        );
+        // 非空查询没有建议组（Raycast 同款：建议只在空输入时出现）
+        assert!(
+            registry()
+                .search("toy", None, &recent(&[("toy.list", 100)]))
+                .iter()
+                .all(|s| s.title != "建议")
+        );
+    }
+
+    /// 建议上限 5 条，按最近使用倒序（IIE4AD-395）。
+    #[test]
+    fn suggestions_are_capped_at_five_and_most_recent_first() {
+        struct OneCommand(&'static str);
+        impl Extension for OneCommand {
+            fn id(&self) -> &str {
+                self.0
+            }
+            fn title(&self) -> &str {
+                "One"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![CommandMeta {
+                    id: format!("{}.run", self.0),
+                    extension_id: self.0.into(),
+                    title: format!("Run {}", self.0),
+                    subtitle: None,
+                    icon: None,
+                    input: InputKind::None,
+                    live: false,
+                }]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&Selection>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+        }
+
+        let mut r = Registry::new();
+        for name in ["a", "b", "c", "d", "e", "f"] {
+            r.register(Box::new(OneCommand(name)));
+        }
+        // 使用时间刻意打乱：f 最近，a 最久
+        let used: Vec<(String, u64)> = vec![
+            ("a.run", 10),
+            ("f.run", 60),
+            ("c.run", 30),
+            ("b.run", 20),
+            ("e.run", 50),
+            ("d.run", 40),
+        ]
+        .into_iter()
+        .map(|(id, t)| (id.to_string(), t))
+        .collect();
+        let hits = r.search(
+            "",
+            None,
+            &RecentFrecency(used.into_iter().map(|(id, t)| (id, (0.0, t))).collect()),
+        );
+        assert_eq!(hits[0].title, "建议");
+        assert_eq!(
+            hits[0]
+                .items
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["f.run", "e.run", "d.run", "c.run", "b.run"],
+            "最近优先，最多 5 条"
+        );
+        // 最久的一条（a.run）留在剩余分组里
+        assert_eq!(
+            flat(&hits[1..])
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a.run"]
+        );
     }
 
     #[test]
