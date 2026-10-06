@@ -705,6 +705,10 @@ mod tests {
     use moe_core::contract::Extension;
     use std::time::Instant;
 
+    /// `stop_all_streams` 作用于**全局**注册表：并行跑的两个流测试会互相取消对方的流
+    /// （一个测试的 stop 会把另一个测试刚登记的取消位一并标记），导致偶发失败。串行化。
+    static STREAM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// 同款守卫：fallback 合成的 id 必须可路由；标题剥离附件 mention（IIE4AD-358）。
     #[test]
     fn fallback_command_is_invocable_and_strips_mentions() {
@@ -815,6 +819,7 @@ mod tests {
     /// 停止生成：登记后请求停止应命中取消位（IIE4AD-365）。
     #[test]
     fn stop_all_streams_marks_active_flags() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
         let flag = begin_stream(Some("test-stop-conv")).expect("登记取消位");
         assert!(!flag.load(Ordering::Relaxed));
         assert!(stop_all_streams() >= 1, "应至少命中刚登记的取消位");
@@ -827,6 +832,7 @@ mod tests {
     /// 端到端：慢速 SSE 流中途 `stop_generation` → 及时收尾，末帧 pending=false 且标记已停止。
     #[test]
     fn stop_generation_stops_running_stream() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
         use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::sync::Mutex;
