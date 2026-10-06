@@ -694,8 +694,10 @@ async function rerunLive(query: string) {
   }
 }
 
-// Esc / 空输入 Backspace 的分层回退：停止生成 → 动作面板 → 预览/详情 → 结果层 → 清空输入 → 关面板
-async function back() {
+// Esc / 空输入 Backspace 的分层回退：停止生成 → 动作面板 → 预览/详情 → 结果层 → 清空输入 →（可关面板）
+// 空 Backspace 传 quit:false：根层停在原地，不关面板（关面板只归 Esc）
+async function back(options: { quit?: boolean } = {}) {
+  const { quit = true } = options;
   const v = view.get();
   // 流式生成中：Esc 的第一优先级是停止（IIE4AD-365）
   if (v.mode === "items" && v.items[v.focus]?.pending) {
@@ -719,6 +721,7 @@ async function back() {
     await refresh("");
     return;
   }
+  if (!quit) return; // 根层：空 Backspace 到此为止
   await invoke("hide_panel");
 }
 
@@ -856,10 +859,10 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
-  // 输入非空不动它（正常删字）；空时逐层往回，根层关面板。
+  // 输入非空不动它（正常删字）；空时逐层往回，但根层不关面板（quit:false）。
   if (e.key === "Backspace" && q.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
-    void back();
+    void back({ quit: false });
     return;
   }
   if (e.key === "ArrowDown" || (e.ctrlKey && !e.metaKey && e.key === "n")) {

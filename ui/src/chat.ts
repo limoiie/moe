@@ -704,15 +704,19 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   // 空输入时的 Backspace = Back（分层回退，ADR-0017）：
-  // 非空不动（正常删字）；空时逐层往回，根层收起侧栏。
+  // 非空不动（正常删字）；空时逐层往回，但根层不收起侧栏（quit:false）。
   if (e.key === "Backspace" && composerEl.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
-    void back();
+    void back({ quit: false });
   }
 });
 
-/** Esc / 空输入 Backspace 的分层回退：历史卡 → 操作菜单 → 停止生成 → 收起窗口。 */
-async function back() {
+/**
+ * Esc / 空输入 Backspace 的分层回退：历史卡 → 操作菜单 → 停止生成 →（可收窗口）。
+ * 空 Backspace 传 quit:false：没有可退的层时就停在原地，不收起窗口。
+ */
+async function back(options: { quit?: boolean } = {}) {
+  const { quit = true } = options;
   if (historyOpen) {
     closeHistoryCard();
     return;
@@ -725,6 +729,7 @@ async function back() {
     await stopGeneration();
     return;
   }
+  if (!quit) return; // 根层：空 Backspace 到此为止
   await getCurrentWindow().hide();
 }
 
