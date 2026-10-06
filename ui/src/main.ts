@@ -311,11 +311,11 @@ function updatePlaceholder() {
 // ---- 详情卡片：焦点预览（列表共存）/ 全屏消息（错误等）----
 
 // 结果层多条：列表在左、详情在右（Raycast 同款左右分栏，IIE4AD 反馈 #1）
-// 底部留出悬浮动作条的高度（pb-14），最后一屏内容不被按钮遮住
+// 底部留出悬浮动作条的高度（距下边 8px + 胶囊约 32px），最后一屏内容不被按钮遮住
 const DETAIL_MESSAGE_CLASS =
-  "md min-h-0 flex-1 overflow-y-auto px-4 pb-14 pt-3 text-sm text-zinc-200";
+  "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-zinc-200";
 const DETAIL_PREVIEW_CLASS =
-  "md w-[58%] shrink-0 overflow-y-auto border-l border-zinc-800 px-4 pb-14 pt-3 text-sm text-zinc-200";
+  "md w-[58%] shrink-0 overflow-y-auto border-l border-zinc-800 px-4 pb-12 pt-3 text-sm text-zinc-200";
 
 function paintDetail(markdown: string, itemId: string | null, pending: boolean) {
   const nearBottom =
