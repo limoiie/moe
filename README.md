@@ -94,6 +94,8 @@ cd crates/moe-app && cargo tauri dev           # 面板开发运行（推荐：�
 - **AI**：OpenAI 兼容端点流式问答；会话与消息存本地 SQLite（`data_dir/moe/moe.db`，`ai` Namespace）；
   附件（文本内联 / 图片多模态）；侧栏续聊把整段历史作为上下文。
 - **常驻**：菜单栏 tray（含开机自启，LaunchAgent）；macOS 无 Dock 图标、不参与 ⌘-Tab。
+- **界面**：一套键位语义（`↓`/`⌃N`、`↑`/`⌃P`、`⏎`、`⌥⏎`、`⌘K`、`⌘M`、`Esc`）贯通所有 Command；
+  结果层两种形态由 Command 声明（详情整屏 / 左列表右详情，ADR-0013）；图标为 Lucide（ADR-0012）。
 
 ## 常见问题
 
