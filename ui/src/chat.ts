@@ -246,6 +246,9 @@ function ensureStreamingBubble(): HTMLElement {
 async function loadHistory() {
   messagesEl.replaceChildren();
   streaming = null;
+  // 切会话/新对话后，之前的生成状态不再属于当前视图
+  generating = false;
+  updateSendUi();
   if (!conversationId) {
     setTitle("新对话");
     emptyEl.textContent =
