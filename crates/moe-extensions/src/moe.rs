@@ -1,7 +1,7 @@
 //! Moe 自身的元扩展：设置面入口（ADR-0009——v1 不做设置 UI）。
 //!
 //! - 「Moe: 打开配置文件」（常规命令）
-//! - `key <你的key>`（捕获式 fallback）：把 API key 存入 keychain，不回显
+//! - `key <你的key>`（捕获式 fallback）：把 API key 存入本地密钥文件（0600），不回显
 
 use moe_core::contract::{ActionResult, CommandMeta, Extension, InputKind, Item, MoeError};
 use moe_platform::keychain;
@@ -61,7 +61,7 @@ impl Extension for Moe {
                 id: "moe.set-ai-key".into(),
                 extension_id: "moe".into(),
                 title: "Moe: 保存 AI Key".into(),
-                subtitle: Some("输入 `key <你的key>`（不回显，存 keychain）".into()),
+                subtitle: Some("输入 `key <你的key>`（不回显，存本地密钥文件）".into()),
                 icon: Some("key-round".into()),
                 input: InputKind::Query,
                 live: false,
@@ -86,19 +86,19 @@ impl Extension for Moe {
                 if key.is_empty() {
                     return Ok(ActionResult::detail(vec![info_item(
                         "把 API key 直接跟在 `key` 后面，例如：`key sk-xxxx`。\n\n\
-                         Key 只进系统 keychain，不回显、不写配置文件；也可设 `MOE_AI_API_KEY` 环境变量。",
+                         Key 只存本地密钥文件（0600 权限），不回显、不写配置文件；也可设 `MOE_AI_API_KEY` 环境变量。",
                     )]));
                 }
                 keychain::set_ai_api_key(&key).map_err(MoeError::Internal)?;
                 Ok(ActionResult::detail(vec![info_item(
-                    "✅ AI API Key 已保存到 keychain（不回显）。现在可以直接提问了。",
+                    "✅ AI API Key 已保存（0600 密钥文件，不回显）。现在可以直接提问了。",
                 )]))
             }
             _ => Err(MoeError::NotFound),
         }
     }
 
-    fn fallback_command(&self, query: &str) -> Option<CommandMeta> {
+    fn fallback_command(&self, query: &str, _selection: Option<&str>) -> Option<CommandMeta> {
         if !is_key_capture(query) {
             return None;
         }
@@ -106,7 +106,7 @@ impl Extension for Moe {
             id: "moe.set-ai-key".into(),
             extension_id: "moe".into(),
             title: "Moe: 保存 AI Key（不回显）".into(),
-            subtitle: Some("Enter 存入 keychain".into()),
+            subtitle: Some("Enter 存入本地密钥文件（0600）".into()),
             icon: Some("key-round".into()),
             input: InputKind::Query,
             live: false,
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn fallback_command_is_invocable() {
         let ext = Moe;
-        let fallback = ext.fallback_command("key sk-test").expect("fallback");
+        let fallback = ext.fallback_command("key sk-test", None).expect("fallback");
         assert!(
             ext.commands().iter().any(|c| c.id == fallback.id),
             "fallback id 必须在 commands() 中可路由：{}",

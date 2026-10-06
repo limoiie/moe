@@ -410,13 +410,15 @@ fn keymap() -> Vec<(&'static str, SystemKey)> {
 
 #[tauri::command]
 fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandMeta> {
+    // 选区只在「无匹配 → fallback」时有意义（如 AI 提示选中文字将作为上下文）；拿到即释放。
+    let selection = state.selection.lock().expect("selection poisoned").clone();
     // 锁顺序：先 frecency 后 registry（invoke 路径不嵌套持锁）
     let frecency = state.frecency.lock().expect("frecency poisoned");
-    state
-        .registry
-        .lock()
-        .expect("registry poisoned")
-        .search(&query, &*frecency)
+    state.registry.lock().expect("registry poisoned").search(
+        &query,
+        selection.as_deref(),
+        &*frecency,
+    )
 }
 
 /// 通用动作 Browse（⌘P）/ New（⌘N）的入口查询（ADR-0014）：

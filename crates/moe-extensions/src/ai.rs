@@ -331,14 +331,41 @@ const SETUP_MD: &str = "## 还没有配置 AI 端点\n\n\
 base_url = \"https://api.deepseek.com/v1\"\n\
 model = \"deepseek-chat\"\n\
 ```\n\n\
-2. 存 API key：输入 `key <你的key>` 回车（只进 keychain，不回显；也可设 `MOE_AI_API_KEY` 环境变量）。\n\n\
+2. 存 API key：输入 `key <你的key>` 回车（只存本地密钥文件，不回显；也可设 `MOE_AI_API_KEY` 环境变量）。\n\n\
 支持任意 OpenAI 兼容端点（DeepSeek / OpenRouter / 本地 llama.cpp 等）。";
 
 const KEY_MISSING_MD: &str = "## 端点已配置，但还缺 API key\n\n\
-输入 `key <你的key>` 回车即可存入 keychain（不回显）；也可设 `MOE_AI_API_KEY` 环境变量。";
+输入 `key <你的key>` 回车即可存入本地密钥文件（0600，不回显）；也可设 `MOE_AI_API_KEY` 环境变量。";
+
+/// 选中文字作为上下文时的长度上限（字符）。
+const SELECTION_LIMIT: usize = 4000;
+
+/// 把选中文字拼进问题（ADR-0019 增补：呼出面板前抓到的 Selection 自动作为提问上下文）。
+/// 问题里已经包含这段文字时不再重复；超长截断并注明。
+fn question_with_selection(question: &str, selection: Option<&str>) -> String {
+    let Some(selection) = selection.map(str::trim).filter(|s| !s.is_empty()) else {
+        return question.to_string();
+    };
+    if question.contains(selection) {
+        return question.to_string();
+    }
+    let truncated = selection.chars().count() > SELECTION_LIMIT;
+    let excerpt: String = selection.chars().take(SELECTION_LIMIT).collect();
+    let suffix = if truncated {
+        "\n…（选中文字过长，已截断）"
+    } else {
+        ""
+    };
+    format!("{question}\n\n以下是用户选中的文字，作为回答的上下文：\n```\n{excerpt}{suffix}\n```")
+}
 
 impl AiShell {
-    fn start_ask(&self, question: &str, emitter: Option<Arc<dyn Emitter>>) -> ActionResult {
+    fn start_ask(
+        &self,
+        question: &str,
+        selection: Option<&str>,
+        emitter: Option<Arc<dyn Emitter>>,
+    ) -> ActionResult {
         let question = question.trim().to_string();
         // 附件以 `@path` mention 表达（ADR-0010）：内容现读，引用随消息落库。
         let (cleaned, paths) = attachment::parse_mentions(&question);
@@ -368,6 +395,7 @@ impl AiShell {
         };
 
         // 提问即建会话；随后 ⌘M 可带同一会话进侧栏续聊。
+        // 历史只存问题本身（标题干净）；发给模型的内容带选中文字上下文。
         let conversation_id = persist_question(&display, &attachments);
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
@@ -376,7 +404,7 @@ impl AiShell {
         if let Some(emitter) = emitter {
             let message = Message {
                 role: Role::User,
-                content: display.clone(),
+                content: question_with_selection(&display, selection),
                 attachments,
             };
             let body = chat_body_from_messages(&model, vec![attachment::expand_message(&message)]);
@@ -481,10 +509,10 @@ impl Extension for AiShell {
         &self,
         command_id: &str,
         query: Option<&str>,
-        _selection: Option<&str>,
+        selection: Option<&str>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
-            "ai.quick-ask" => Ok(self.start_ask(query.unwrap_or_default(), None)),
+            "ai.quick-ask" => Ok(self.start_ask(query.unwrap_or_default(), selection, None)),
             "ai.search-history" => Ok(self.search_history(query.unwrap_or_default())),
             // 通用动作 New（⌘N，ADR-0014）：面板不持有会话状态（一问一会话），
             // 这里给一张空态卡——下一条提问自然开一段新会话。
@@ -512,16 +540,20 @@ impl Extension for AiShell {
         &self,
         command_id: &str,
         query: Option<&str>,
-        _selection: Option<&str>,
+        selection: Option<&str>,
         emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
-            "ai.quick-ask" => Ok(self.start_ask(query.unwrap_or_default(), Some(emitter))),
+            "ai.quick-ask" => {
+                Ok(self.start_ask(query.unwrap_or_default(), selection, Some(emitter)))
+            }
             _ => self.invoke(command_id, query, None),
         }
     }
 
-    fn fallback_command(&self, query: &str) -> Option<CommandMeta> {
+    /// 搜索无匹配时的「捕获式」命令（如 AI: 提问「…」）；
+    /// 有 Selection 时副标题注明「选中文字将作为上下文」。
+    fn fallback_command(&self, query: &str, selection: Option<&str>) -> Option<CommandMeta> {
         // 标题剥离 mention（ADR-0010）：路径不当作提问内容展示。
         let (cleaned, paths) = attachment::parse_mentions(query);
         let title = match (cleaned.is_empty(), paths.is_empty()) {
@@ -530,7 +562,10 @@ impl Extension for AiShell {
             (true, true) => format!("AI: 提问「{query}」"),
         };
         let subtitle = if paths.is_empty() {
-            "Enter 发送；回答可回写（⌥⏎ 复制 · ⌘M 侧栏）".to_string()
+            match selection.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(_) => "已附上选中文字作为上下文；Enter 发送".to_string(),
+                None => "Enter 发送；回答可回写（⌥⏎ 复制 · ⌘M 侧栏）".to_string(),
+            }
         } else {
             format!("{} 个附件；Enter 发送", paths.len())
         };
@@ -667,7 +702,7 @@ mod tests {
     #[test]
     fn fallback_command_is_invocable_and_strips_mentions() {
         let ext = AiShell;
-        let fallback = ext.fallback_command("hello").expect("fallback");
+        let fallback = ext.fallback_command("hello", None).expect("fallback");
         assert!(
             ext.commands().iter().any(|c| c.id == fallback.id),
             "fallback id 必须在 commands() 中可路由：{}",
@@ -675,7 +710,7 @@ mod tests {
         );
 
         let with_attachments = ext
-            .fallback_command("总结 @\"/tmp/a b.md\"")
+            .fallback_command("总结 @\"/tmp/a b.md\"", None)
             .expect("fallback");
         assert_eq!(with_attachments.title, "AI: 提问「总结」");
         assert_eq!(
@@ -683,7 +718,7 @@ mod tests {
             Some("1 个附件；Enter 发送")
         );
 
-        let attachment_only = ext.fallback_command("@/tmp/a.md").expect("fallback");
+        let attachment_only = ext.fallback_command("@/tmp/a.md", None).expect("fallback");
         assert_eq!(attachment_only.title, "AI: 带附件的提问");
     }
 
@@ -895,7 +930,7 @@ mod tests {
     /// 回答/引导是详情整屏（ADR-0013）：面板里它就是正文，不该跟列表分栏。
     #[test]
     fn ask_placeholder_declares_detail_layout() {
-        let ActionResult::List { items, detail_full } = AiShell.start_ask("   ", None) else {
+        let ActionResult::List { items, detail_full } = AiShell.start_ask("   ", None, None) else {
             panic!("expected list");
         };
         assert!(detail_full, "回答是详情整屏");
@@ -951,6 +986,32 @@ mod tests {
         }
         assert_eq!(ext.browse_command().unwrap().id, "ai.search-history");
         assert_eq!(ext.new_command().unwrap().id, "ai.new-chat");
+    }
+
+    /// 选中文字自动成为提问上下文（ADR-0002 增补）：拼接格式稳定，重复/空白/超长有边界。
+    #[test]
+    fn selection_becomes_question_context() {
+        let prompt = question_with_selection("翻译", Some("  hello world  "));
+        assert!(prompt.starts_with("翻译"), "问题在前：{prompt}");
+        assert!(prompt.contains("hello world"), "选区应拼进提示：{prompt}");
+
+        // 问题里已含这段文字：不重复拼接
+        assert_eq!(
+            question_with_selection("解释 hello world", Some("hello world")),
+            "解释 hello world"
+        );
+        // 空白/无选区：原样返回
+        assert_eq!(question_with_selection("翻译", Some("   ")), "翻译");
+        assert_eq!(question_with_selection("翻译", None), "翻译");
+
+        // 超长截断并注明，不无限占用上下文
+        let long: String = "x".repeat(5_000);
+        let capped = question_with_selection("翻译", Some(&long));
+        assert!(capped.contains("已截断"), "超长选区要注明截断：{capped}");
+        assert!(
+            capped.matches('x').count() <= SELECTION_LIMIT,
+            "截断后不超过上限"
+        );
     }
 
     /// New（⌘N）在面板里给一张详情整屏的空态卡（不动会话状态：一问一会话）。

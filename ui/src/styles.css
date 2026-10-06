@@ -102,6 +102,12 @@ body {
   font-size: 12px;
   color: #a1a1aa;
 }
+/* 关键：Tailwind 的 .hidden 在 utilities 层，而未分层样式永远压过层内样式——
+   光 toggle .hidden 不生效（display:inline-flex 会把 display:none 顶掉）。
+   用属性选择器显式压回去。 */
+.moe-generating[hidden] {
+  display: none;
+}
 .moe-dots {
   display: inline-flex;
   align-items: center;

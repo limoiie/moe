@@ -199,7 +199,8 @@ pub trait Extension: Send + Sync {
     }
 
     /// 搜索无匹配时提供的「捕获式」命令（如 AI: 提问「…」）；默认无。
-    fn fallback_command(&self, _query: &str) -> Option<CommandMeta> {
+    /// `selection` 是呼出面板前抓到的选区，供扩展在副标题里提示「已附上下文」等。
+    fn fallback_command(&self, _query: &str, _selection: Option<&str>) -> Option<CommandMeta> {
         None
     }
 

@@ -30,7 +30,13 @@ impl Registry {
     }
 
     /// 命令盘搜索：nucleo 模糊匹配打分，frecency 平分决胜；空查询按 frecency 排序。
-    pub fn search(&self, query: &str, frecency: &dyn FrecencyLookup) -> Vec<CommandMeta> {
+    /// `selection` 只在「无匹配 → fallback」这一步有意义（如 AI 提示选中文字将作为上下文）。
+    pub fn search(
+        &self,
+        query: &str,
+        selection: Option<&str>,
+        frecency: &dyn FrecencyLookup,
+    ) -> Vec<CommandMeta> {
         let q = query.trim();
         if q.is_empty() {
             let mut commands = self.commands();
@@ -83,7 +89,7 @@ impl Registry {
             return self
                 .extensions
                 .iter()
-                .filter_map(|ext| ext.fallback_command(q))
+                .filter_map(|ext| ext.fallback_command(q, selection))
                 .collect();
         }
         scored.into_iter().map(|(_, _, cmd)| cmd).collect()
@@ -503,7 +509,11 @@ mod tests {
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
-            fn fallback_command(&self, query: &str) -> Option<CommandMeta> {
+            fn fallback_command(
+                &self,
+                query: &str,
+                _selection: Option<&str>,
+            ) -> Option<CommandMeta> {
                 Some(CommandMeta {
                     id: "fb.ask".into(),
                     extension_id: "fb".into(),
@@ -518,7 +528,7 @@ mod tests {
 
         let mut r = Registry::new();
         r.register(Box::new(FallbackToy));
-        let hits = r.search("hello", &NoFrecency);
+        let hits = r.search("hello", None, &NoFrecency);
         assert_eq!(hits.len(), 1);
         assert!(hits[0].title.contains("hello"));
 
@@ -526,7 +536,7 @@ mod tests {
         let mut r = Registry::new();
         r.register(Box::new(FallbackToy));
         r.register(Box::new(Toy));
-        let hits = r.search("toy", &NoFrecency);
+        let hits = r.search("toy", None, &NoFrecency);
         assert!(hits.iter().all(|c| c.id != "fb.ask"));
     }
 
@@ -596,12 +606,12 @@ mod tests {
 
     #[test]
     fn empty_query_lists_everything() {
-        assert_eq!(registry().search("", &NoFrecency).len(), 2);
+        assert_eq!(registry().search("", None, &NoFrecency).len(), 2);
     }
 
     #[test]
     fn empty_query_orders_by_frecency() {
-        let hits = registry().search("", &fixed(&[("toy.hello", 9.0)]));
+        let hits = registry().search("", None, &fixed(&[("toy.hello", 9.0)]));
         assert_eq!(
             hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             ["toy.hello", "toy.list"]
@@ -610,14 +620,14 @@ mod tests {
 
     #[test]
     fn search_matches_title_and_extension() {
-        let hits = registry().search("list", &NoFrecency);
+        let hits = registry().search("list", None, &NoFrecency);
         assert_eq!(
             hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             ["toy.list"]
         );
-        assert_eq!(registry().search("toy", &NoFrecency).len(), 2);
+        assert_eq!(registry().search("toy", None, &NoFrecency).len(), 2);
         // 副标题也进索引（"backspace demo" 只存在于 toy.hello 的 subtitle）
-        let hits = registry().search("pace", &NoFrecency);
+        let hits = registry().search("pace", None, &NoFrecency);
         assert_eq!(
             hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             ["toy.hello"]
@@ -627,14 +637,14 @@ mod tests {
     #[test]
     fn fuzzy_subsequence_matches_and_prefix_wins() {
         // "tl"："Toy: List" 的子序列；"Hello Toy" 里 l 在 t 之前，不匹配
-        let hits = registry().search("tl", &NoFrecency);
+        let hits = registry().search("tl", None, &NoFrecency);
         assert_eq!(
             hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             ["toy.list"]
         );
-        assert!(registry().search("zzz", &NoFrecency).is_empty());
+        assert!(registry().search("zzz", None, &NoFrecency).is_empty());
         // 前缀匹配优先于子串匹配
-        let hits = registry().search("toy", &NoFrecency);
+        let hits = registry().search("toy", None, &NoFrecency);
         assert_eq!(hits.first().map(|c| c.id.as_str()), Some("toy.list"));
     }
 
@@ -673,7 +683,7 @@ mod tests {
         let mut r = Registry::new();
         r.register(Box::new(Twin("a")));
         r.register(Box::new(Twin("b")));
-        let hits = r.search("deploy", &fixed(&[("b.deploy", 9.0)]));
+        let hits = r.search("deploy", None, &fixed(&[("b.deploy", 9.0)]));
         assert_eq!(
             hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             ["b.deploy", "a.deploy"]
