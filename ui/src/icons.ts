@@ -4,6 +4,7 @@
 import {
   Check,
   Circle,
+  Command,
   Copy,
   CornerDownLeft,
   History,
@@ -45,6 +46,7 @@ const ICONS: Record<string, IconNode> = {
   quote: Quote,
   // 固定用途（界面自己用，不由扩展指定）
   search: Search,
+  command: Command,
   copy: Copy,
   "corner-down-left": CornerDownLeft,
   "panel-right": PanelRight,
