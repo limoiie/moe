@@ -21,8 +21,8 @@ export const PANEL_WIDTH = 768;
 // bottom bar (avatar chip + action pill) overlays the last row's band exactly — same height as
 // one row, the chip's avatar centered on the item icons' x. ----
 
-/** One command row's height (px): `py-1.5` + `text-sm` line height = 6 + 20 + 6. */
-export const ROW_HEIGHT = 32;
+/** One command row's height (px): `py-2.5` + `text-sm` line height = 10 + 20 + 10. */
+export const ROW_HEIGHT = 40;
 
 /** Rows visible by default: the panel shows exactly this many (Raycast-style ten-slot list). */
 export const VISIBLE_ROWS = 10;
@@ -48,8 +48,8 @@ export function panelHeightFor(inputBarHeight: number): number {
   );
 }
 
-/** First-frame fallback height (window logical px): 48px input bar + 10×32 rows + 8 + 24 margins. */
-export const PANEL_HEIGHT = 400;
+/** First-frame fallback height (window logical px): 48px input bar + 10×40 rows + 8 + 24 margins. */
+export const PANEL_HEIGHT = 480;
 
 // Layout classes for the three shapes: applied only in render; nowhere else may compose widths.
 

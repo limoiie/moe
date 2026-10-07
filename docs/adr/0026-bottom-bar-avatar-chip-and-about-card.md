@@ -8,11 +8,11 @@ into a pill. This ADR adopts that layout and turns the left chip into the About 
 ## Decision
 
 - **Exactly ten rows by default.** The panel height is *measured* at runtime — input bar height +
-  10 × row height (32px) + 8px bottom padding + the 24px window margins — and applied through the
+  10 × row height (40px) + 8px bottom padding + the 24px window margins — and applied through the
   existing `resize_panel` IPC on startup and on shape switches. Constants live in
   `ui/src/layout.ts` (`ROW_HEIGHT`, `VISIBLE_ROWS`, `BOTTOM_PADDING`, `panelHeightFor`);
-  `tauri.conf.json`'s 400px is only the first-frame fallback and must match.
-  With the default input bar this yields **768×400** (supersedes ADR-0018's fixed 768×540).
+  `tauri.conf.json`'s 480px is only the first-frame fallback and must match.
+  With the default input bar this yields **768×480** (supersedes ADR-0018's fixed 768×540).
 - **The bottom bar overlays the last row's band exactly.** `#bottom-bar` is positioned 8px above
   the card's bottom edge with a height of one row, so its band equals the list's last visible row
   (the list has no bottom padding of its own anymore; the detail pane keeps its padding since it

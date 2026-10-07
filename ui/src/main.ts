@@ -15,6 +15,7 @@ import {
   PANEL_WIDTH,
   pageShapeOf,
   panelHeightFor,
+  ROW_HEIGHT,
   type PageShape,
 } from "./layout";
 import { store } from "./store";
@@ -148,7 +149,7 @@ function renderChip() {
   if (v.mode === "items" && extensionMeta) {
     chipEl.append(
       extensionMeta.icon
-        ? iconEl(extensionMeta.icon, { size: 16, className: "text-zinc-300" })
+        ? iconEl(extensionMeta.icon, { size: 18, className: "text-zinc-300" })
         : appAvatarEl(),
       chipLabel(extensionMeta.title),
     );
@@ -336,7 +337,7 @@ function sectionHeaderEl(title: string): HTMLLIElement {
 function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "group flex cursor-default items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm " +
+    "group flex cursor-default items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm " +
     (focused
       ? "bg-zinc-700/70 text-zinc-50"
       : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
@@ -1487,6 +1488,8 @@ window.addEventListener("focus", () => {
 });
 
 await initActionBar();
+// One source for the row height (ADR-0026): the bottom bar, chip and pill follow ROW_HEIGHT.
+document.documentElement.style.setProperty("--moe-row-h", `${ROW_HEIGHT}px`);
 renderInputIcon();
 await refresh("");
 await refreshBanner();

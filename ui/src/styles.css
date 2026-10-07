@@ -5,6 +5,12 @@ body {
   background: transparent;
 }
 
+/* One row's height (ADR-0026): the single source is ROW_HEIGHT in layout.ts; main.ts writes it
+   into this variable so the bottom bar and the chip/pill stay exactly one row tall. */
+:root {
+  --moe-row-h: 40px;
+}
+
 /* Floating window card: the "lift" comes from the AppKit system window shadow (the window is truly
    transparent; CSS shadows would be clipped by the window bounds); here we only add a contact shadow
    hugging the edges, so the card edges read against any background (ADR-0016). */
@@ -18,7 +24,7 @@ body {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
 }
 
-/* Avatar chip (ADR-0026): one row tall (32px, matching ROW_HEIGHT in layout.ts).
+/* Avatar chip (ADR-0026): one row tall (matching ROW_HEIGHT in layout.ts, via --moe-row-h).
    Collapsed = a circle around the app avatar; inside an Extension = its icon + name;
    while a toast shows = expanded with the toast content. Clicking opens the About card. */
 .moe-avatar-chip {
@@ -26,8 +32,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  min-width: 32px;
+  height: var(--moe-row-h);
+  min-width: var(--moe-row-h);
   padding: 0 7px;
   border: 1px solid rgb(82 82 91 / 0.5);
   border-radius: 999px;
@@ -47,11 +53,11 @@ body {
 .moe-avatar-chip:focus-visible {
   outline: none;
 }
-/* The avatar itself: 18px, centered exactly on the item icons' x (28px from the card edge) */
+/* The avatar itself: centered exactly on the item icons' x (28px from the card edge) */
 .moe-avatar-img {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
 }
 .moe-avatar-label {
@@ -103,14 +109,19 @@ body {
   letter-spacing: -0.4px;
 }
 
+/* The bottom bar band: exactly one row tall (ADR-0026), overlaying the list's last visible row */
+.moe-bottom-bar {
+  height: var(--moe-row-h);
+}
+
 /* Bottom floating pill (Raycast-style): primary action and actions in the same pill; buttons themselves have no border.
-   Height = one row (32px): the pill overlays the list's last visible row band exactly (ADR-0026). */
+   Height = one row: the pill overlays the list's last visible row band exactly (ADR-0026). */
 .moe-action-bar {
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 32px;
+  height: var(--moe-row-h);
   /* Padding between the buttons and the pill edge */
   padding: 3px;
   border: 1px solid rgb(82 82 91 / 0.5);
