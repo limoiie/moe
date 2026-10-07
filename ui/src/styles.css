@@ -14,9 +14,9 @@ body {
   --moe-text-secondary: 13px;
   /* Top input row text size (every panel page shares this one input row). */
   --moe-text-input: 16px;
-  /* Input row leading glyph: bigger and bolder than the item-row icons, centered in their column. */
+  /* Input row leading glyph: bigger than the item-row icons, centered in their column. */
   --moe-input-icon-size: 20px;
-  --moe-input-icon-stroke: 2.5;
+  --moe-input-icon-stroke: 2;
 }
 
 /* Floating window card: the "lift" comes from the AppKit system window shadow (the window is truly

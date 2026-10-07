@@ -37,7 +37,7 @@ glyph, matching the slot's other states (back arrow, paperclip) in shape languag
 bitmap that had to fight the 16px column. And the glyph read too small for the panel's anchor, so
 it renders **bigger and bolder than the item-row icons**.
 
-Both numbers are tokens: `--moe-input-icon-size: 20px` and `--moe-input-icon-stroke: 2.5`. The slot
+Both numbers are tokens: `--moe-input-icon-size: 20px` and `--moe-input-icon-stroke: 2` (the initial `2.5` read too bold at 20px). The slot
 element stays a 16px-wide flex box, so the glyph overflows its column symmetrically and the grid
 invariant above is untouched — icon center and label x still line up with the item rows. CSS drives
 size and stroke (presentation attributes lose to CSS), so tuning stays in `styles.css`.
