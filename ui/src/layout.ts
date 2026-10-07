@@ -43,6 +43,10 @@ export const BOTTOM_PADDING = 8;
 /** `#root` is inset by `m-3` (12px) on every side for the window shadow (ADR-0016). */
 export const WINDOW_MARGIN = 12;
 
+/** `#root`'s 1px border on top and bottom: box-sizing eats it from the content box, so the
+ *  grid must budget it or the last row is clipped and drifts out of the bar's band. */
+export const CARD_BORDER = 1;
+
 /**
  * Panel height for a measured input-bar height: exactly VISIBLE_ROWS rows fit under the input
  * bar (plus one section header), plus the bottom padding and the window margins. Measured at
@@ -55,12 +59,13 @@ export function panelHeightFor(inputBarHeight: number): number {
     ROW_HEIGHT * VISIBLE_ROWS +
     SECTION_HEADER_HEIGHT * HEADER_ROWS +
     BOTTOM_PADDING +
+    CARD_BORDER * 2 +
     WINDOW_MARGIN * 2
   );
 }
 
-/** First-frame fallback height (window logical px): 48 + 10×40 + 1×30 + 8 + 24 margins. */
-export const PANEL_HEIGHT = 510;
+/** First-frame fallback height (window logical px): 48 + 10×40 + 1×30 + 8 + 2 borders + 24 margins. */
+export const PANEL_HEIGHT = 512;
 
 // Layout classes for the three shapes: applied only in render; nowhere else may compose widths.
 

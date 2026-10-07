@@ -66,7 +66,7 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   right) / **full-screen detail** — laid out and window-sized by the platform (ADR-0018). An
   extension gets the split page for free by providing `item.detail` (left list fixed at 280px,
   detail fills the rest with the item's icon/title/time on top); the panel shows exactly ten rows
-  plus one section header (ADR-0026) and is measured to fit them (768×510 for the default input bar).
+  plus one section header (ADR-0026) and is measured to fit them (768×512 for the default input bar).
 - **Panel**: auto-dismisses on losing focus; input and results are kept across hide/show. The
   tray icon offers Show Panel / AI Chat / Launch at Login / Open Config File / Quit. The results
   layer has two shapes declared by the command (ADR-0013): full-screen detail (AI answers,

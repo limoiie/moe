@@ -9,14 +9,14 @@ into a pill. This ADR adopts that layout and turns the left chip into the About 
 
 - **Ten rows plus one section header.** The panel height is *measured* at runtime — input bar
   height + 10 × row height (40px) + one section header (30px, fixed so it can be budgeted) +
-  8px bottom padding + the 24px window margins — and applied through the existing `resize_panel`
-  IPC on startup and on shape switches. Constants live in `ui/src/layout.ts` (`ROW_HEIGHT`,
-  `VISIBLE_ROWS`, `SECTION_HEADER_HEIGHT`, `HEADER_ROWS`, `BOTTOM_PADDING`, `panelHeightFor`);
-  `tauri.conf.json`'s 510px is only the first-frame fallback and must match.
-  With the default input bar this yields **768×510** (supersedes ADR-0018's fixed 768×540).
-  Every list shows at least one group label (Suggestions on the root page), so one header is
-  reserved on top of the ten rows; pages showing more headers at once fit fewer rows, which is
-  inherent to grouping.
+  8px bottom padding + the card's 2px borders + the 24px window margins — and applied through the
+  existing `resize_panel` IPC on startup and on shape switches. Constants live in
+  `ui/src/layout.ts` (`ROW_HEIGHT`, `VISIBLE_ROWS`, `SECTION_HEADER_HEIGHT`, `HEADER_ROWS`,
+  `BOTTOM_PADDING`, `CARD_BORDER`, `panelHeightFor`); `tauri.conf.json`'s 512px is only the
+  first-frame fallback and must match. With the default input bar this yields **768×512**
+  (supersedes ADR-0018's fixed 768×540). Every list shows at least one group label (Suggestions
+  on the root page), so one header is reserved on top of the ten rows; pages showing more headers
+  at once fit fewer rows, which is inherent to grouping.
 - **The bottom bar overlays the last row's band exactly.** `#bottom-bar` is positioned 8px above
   the card's bottom edge with a height of one row, so its band equals the list's last visible row
   (the list has no bottom padding of its own anymore; the detail pane keeps its padding since it
