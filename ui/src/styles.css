@@ -109,6 +109,14 @@ body {
   letter-spacing: -0.4px;
 }
 
+/* Section header band (ADR-0020/0026): fixed height (set from SECTION_HEADER_HEIGHT in
+   layout.ts), label sits on the baseline near the rows below. */
+.moe-section-header {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 4px;
+}
+
 /* The bottom bar band: exactly one row tall (ADR-0026), overlaying the list's last visible row */
 .moe-bottom-bar {
   height: var(--moe-row-h);

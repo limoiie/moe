@@ -27,6 +27,16 @@ export const ROW_HEIGHT = 40;
 /** Rows visible by default: the panel shows exactly this many (Raycast-style ten-slot list). */
 export const VISIBLE_ROWS = 10;
 
+/** One section header's height (px): the source-group label above the rows (ADR-0020). */
+export const SECTION_HEADER_HEIGHT = 30;
+
+/**
+ * Headers accounted for in the grid: every list has at least one (the first group's label —
+ * e.g. Suggestions on the root page), so it is reserved on top of the ten rows. Pages showing
+ * more than one header at once fit fewer rows, which is inherent to grouping.
+ */
+export const HEADER_ROWS = 1;
+
 /** Padding below the list (px): the bottom bar band is the list's own last row + this padding. */
 export const BOTTOM_PADDING = 8;
 
@@ -35,21 +45,22 @@ export const WINDOW_MARGIN = 12;
 
 /**
  * Panel height for a measured input-bar height: exactly VISIBLE_ROWS rows fit under the input
- * bar, plus the bottom padding and the window margins. Measured at runtime so the grid is exact
- * regardless of font metrics; the constant below is only the first-frame fallback and must match
- * `tauri.conf.json` (ADR-0026).
+ * bar (plus one section header), plus the bottom padding and the window margins. Measured at
+ * runtime so the grid is exact regardless of font metrics; the constant below is only the
+ * first-frame fallback and must match `tauri.conf.json` (ADR-0026).
  */
 export function panelHeightFor(inputBarHeight: number): number {
   return (
     Math.round(inputBarHeight) +
     ROW_HEIGHT * VISIBLE_ROWS +
+    SECTION_HEADER_HEIGHT * HEADER_ROWS +
     BOTTOM_PADDING +
     WINDOW_MARGIN * 2
   );
 }
 
-/** First-frame fallback height (window logical px): 48px input bar + 10×40 rows + 8 + 24 margins. */
-export const PANEL_HEIGHT = 480;
+/** First-frame fallback height (window logical px): 48 + 10×40 + 1×30 + 8 + 24 margins. */
+export const PANEL_HEIGHT = 510;
 
 // Layout classes for the three shapes: applied only in render; nowhere else may compose widths.
 

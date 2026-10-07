@@ -16,6 +16,7 @@ import {
   pageShapeOf,
   panelHeightFor,
   ROW_HEIGHT,
+  SECTION_HEADER_HEIGHT,
   type PageShape,
 } from "./layout";
 import { store } from "./store";
@@ -324,11 +325,12 @@ function currentEntries(): Row[] {
   });
 }
 
-/** Section header (ADR-0020): source is the group; headers are not focusable, do not participate in navigation, and do not respond to hover. */
+/** Section header (ADR-0020): source is the group; headers are not focusable, do not participate in navigation, and do not respond to hover. Fixed height so the ten-row grid can reserve it (ADR-0026). */
 function sectionHeaderEl(title: string): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "select-none px-3 pt-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
+    "moe-section-header select-none px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
+  li.style.height = `${SECTION_HEADER_HEIGHT}px`;
   li.textContent = title;
   return li;
 }
