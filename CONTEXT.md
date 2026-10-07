@@ -165,12 +165,20 @@ section they mean forget-one / forget-all instead (ADR-0025).
 _Avoid_: clear, delete key
 
 **Action Bar**:
-The two floating buttons at the panel's bottom right: **primary action** (the Focused Item's main
-action; becomes "Stop Generation" while generating) and **actions** (`⌘K` / `⌘⇧P`, Show All
-Actions). They float above the Result List (with shadow and blur), replacing the old Hints Bar:
-keybindings and actions are gathered into this one spot instead of a persistent hint row
-(ADR-0015).
+The floating bottom bar region over the list's last visible row band (one row tall, ADR-0026):
+the **avatar chip** on the left and the **action pill** (primary action + actions) on the right.
 _Avoid_: hints bar (the old name)
+
+**Avatar Chip**:
+The bottom-left chip (ADR-0026): Moe's app avatar on the command layer, the current extension's
+icon + name once inside a command. It doubles as the **toast host** (toasts expand it in place)
+and opens the **About card** on click.
+_Avoid_: extension badge, logo
+
+**About Card**:
+The card opened from the avatar chip: the app's meta actions (Open Config File / Save AI Key /
+Send Feedback) with a search input at the bottom; same UX as the actions card (ADR-0026).
+_Avoid_: settings page, preferences window
 
 **Write Back**:
 How a command's result is delivered back into the user's text context: replace the Selection when

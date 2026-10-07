@@ -12,9 +12,9 @@ import {
   DETAIL_PANE_CLASS,
   LIST_FULL_CLASS,
   LIST_NARROW_CLASS,
-  PANEL_HEIGHT,
   PANEL_WIDTH,
   pageShapeOf,
+  panelHeightFor,
   type PageShape,
 } from "./layout";
 import { store } from "./store";
@@ -58,15 +58,17 @@ interface View {
 }
 
 const q = document.querySelector<HTMLInputElement>("#query")!;
+const queryRowEl = document.querySelector<HTMLDivElement>("#query-row")!;
 const listEl = document.querySelector<HTMLUListElement>("#list")!;
 const detailEl = document.querySelector<HTMLDivElement>("#detail")!;
 const actionBarEl = document.querySelector<HTMLDivElement>("#action-bar")!;
 const actionsCardEl = document.querySelector<HTMLDivElement>("#actions-card")!;
 const actionSearchEl = document.querySelector<HTMLInputElement>("#action-search")!;
 const actionListEl = document.querySelector<HTMLUListElement>("#action-list")!;
-const toastEl = document.querySelector<HTMLDivElement>("#toast")!;
-const toastIconEl = document.querySelector<HTMLSpanElement>("#toast-icon")!;
-const toastTextEl = document.querySelector<HTMLSpanElement>("#toast-text")!;
+const chipEl = document.querySelector<HTMLButtonElement>("#avatar-chip")!;
+const aboutCardEl = document.querySelector<HTMLDivElement>("#about-card")!;
+const aboutSearchEl = document.querySelector<HTMLInputElement>("#about-search")!;
+const aboutListEl = document.querySelector<HTMLUListElement>("#about-list")!;
 const inputIconEl = document.querySelector<HTMLSpanElement>("#input-icon")!;
 const bannerIconEl = document.querySelector<HTMLSpanElement>("#banner-icon")!;
 
@@ -92,21 +94,100 @@ let actionsCardRows: ActionRow[] = [];
 let actionsCardFocus = 0;
 let actionsCardOpen = false;
 
-// ---- Lightweight feedback (for actions with no UI result, e.g. ⌥⏎ copy) ----
+// ---- Avatar chip (ADR-0026): the bottom-left card ----
 
+/** Extension identity (mirror of the Rust `ExtensionMeta`): avatar = its representative icon. */
+interface ExtensionMeta {
+  id: string;
+  title: string;
+  icon?: string | null;
+}
+
+/** Cache by command id: entering a command fetches its extension's identity once. */
+const extensionMetaCache = new Map<string, ExtensionMeta>();
+/** Identity of the extension the current results layer belongs to (null = command layer / unknown). */
+let extensionMeta: ExtensionMeta | null = null;
+
+/** While a toast is showing the chip expands with it; null = resting state (avatar/extension). */
+let toastState: { text: string; icon: string } | null = null;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+function appAvatarEl(): HTMLImageElement {
+  const img = document.createElement("img");
+  img.src = "./moe.png";
+  img.alt = "Moe";
+  img.className = "moe-avatar-img";
+  return img;
+}
+
+/** The chip's label: the extension's name while inside a command, otherwise none. */
+function chipLabel(text: string): HTMLSpanElement {
+  const label = document.createElement("span");
+  label.className = "moe-avatar-label";
+  label.textContent = text;
+  return label;
+}
+
+/**
+ * Render the avatar chip (ADR-0026): toast > extension (inside a command) > Moe's own avatar.
+ * The chip is one row tall and its avatar sits centered on the item icons' x.
+ */
+function renderChip() {
+  chipEl.replaceChildren();
+  if (toastState) {
+    chipEl.append(
+      iconEl(toastState.icon, {
+        size: 14,
+        className: toastState.icon === "check" ? "text-emerald-400" : "text-amber-400",
+      }),
+      chipLabel(toastState.text),
+    );
+    return;
+  }
+  const v = view.get();
+  if (v.mode === "items" && extensionMeta) {
+    chipEl.append(
+      extensionMeta.icon
+        ? iconEl(extensionMeta.icon, { size: 16, className: "text-zinc-300" })
+        : appAvatarEl(),
+      chipLabel(extensionMeta.title),
+    );
+    chipEl.title = `About ${extensionMeta.title}`;
+    return;
+  }
+  chipEl.append(appAvatarEl());
+  chipEl.title = "About Moe";
+}
+
+/** Fetch (and cache) the extension identity owning `commandId`, then refresh the chip. */
+async function refreshExtensionMeta(commandId: string) {
+  const cached = extensionMetaCache.get(commandId);
+  if (cached) {
+    extensionMeta = cached;
+    renderChip();
+    return;
+  }
+  try {
+    const meta = await invoke<ExtensionMeta | null>("extension_meta", { commandId });
+    if (meta) extensionMetaCache.set(commandId, meta);
+    extensionMeta = meta ?? null;
+  } catch {
+    extensionMeta = null;
+  }
+  renderChip();
+}
+
+// ---- Lightweight feedback (for actions with no UI result, e.g. ⌥⏎ copy) ----
+// Toast style (ADR-0026, Raycast-style): the bottom-left chip expands to show the message.
+
 function toast(text: string, icon = "check") {
-  toastTextEl.textContent = text;
-  toastIconEl.replaceChildren(
-    iconEl(icon, { size: 14, className: icon === "check" ? "text-emerald-400" : "text-amber-400" }),
-  );
-  toastEl.classList.remove("hidden");
-  toastEl.classList.add("flex");
+  toastState = { text, icon };
+  renderChip();
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
-    toastEl.classList.add("hidden");
-    toastEl.classList.remove("flex");
-  }, 1200);
+    toastState = null;
+    renderChip();
+  }, 1400);
 }
 
 // ---- Floating action bar (Raycast-style): primary action + actions, keybindings still from the unified Rust keymap ----
@@ -198,6 +279,7 @@ let currentShape: PageShape | null = null;
 
 /**
  * Resize the panel window by page shape (ADR-0018): the size is constant and stays the same across shape switches.
+ * Height is measured so the row grid is exact (ADR-0026): input bar + exactly VISIBLE_ROWS rows + bottom padding.
  * The window is untouched while the shape is unchanged; failure does not affect rendering (window size is only polish).
  */
 function applyPanelSize(shape: PageShape) {
@@ -205,10 +287,16 @@ function applyPanelSize(shape: PageShape) {
   currentShape = shape;
   void invoke("resize_panel", {
     width: PANEL_WIDTH,
-    height: PANEL_HEIGHT,
+    height: measuredPanelHeight(),
   }).catch(() => {
     // Ignore: without a window handle, leave it alone
   });
+}
+
+/** Panel height measured from the real input bar: exactly VISIBLE_ROWS rows fit below it (ADR-0026). */
+function measuredPanelHeight(): number {
+  const inputHeight = queryRowEl.getBoundingClientRect().height || 48;
+  return panelHeightFor(inputHeight);
 }
 
 interface Row {
@@ -326,6 +414,7 @@ function render() {
   focusedLi?.scrollIntoView({ block: "nearest" });
   renderDetail();
   renderActionBar();
+  renderChip();
   updatePlaceholder();
 }
 
@@ -521,6 +610,8 @@ function applyResult(
       sourceTitle: title,
       detailFull: res.list.detailFull === true,
     }));
+    // The avatar chip follows the extension now entered (ADR-0026)
+    void refreshExtensionMeta(commandId);
   }
 }
 
@@ -763,6 +854,178 @@ async function materialize() {
   }
 }
 
+// ---- About card (ADR-0026): the avatar chip's menu, same UX as the actions card ----
+
+/** Feedback lands in the repository's issue tracker. */
+const FEEDBACK_URL = "https://github.com/limoiie/moe/issues";
+
+interface AboutRow {
+  id: string;
+  title: string;
+  icon: string;
+  run: () => void;
+}
+
+let aboutFocus = 0;
+let aboutCardOpen = false;
+
+/** The About menu: the app's own meta actions (ADR-0026). */
+function aboutRows(): AboutRow[] {
+  return [
+    {
+      id: "about.config",
+      title: "Open Config File",
+      icon: "settings-2",
+      run: () => void runAboutConfig(),
+    },
+    {
+      id: "about.key",
+      title: "Save AI Key",
+      icon: "key-round",
+      run: () => void runAboutKey(),
+    },
+    {
+      id: "about.feedback",
+      title: "Send Feedback",
+      icon: "megaphone",
+      run: () => void runAboutFeedback(),
+    },
+  ];
+}
+
+async function runAboutConfig() {
+  closeAboutCard();
+  try {
+    await invoke("invoke_command", {
+      commandId: "moe.open-config",
+      query: null,
+      record: false,
+    });
+    toast("Opened config file");
+  } catch (err) {
+    showMessage(`Failed to run: ${String(err)}`);
+  }
+}
+
+/** Save AI Key runs the same command as the list: its guidance card lands in the results layer. */
+async function runAboutKey() {
+  closeAboutCard();
+  try {
+    const res = await invoke<ActionResult>("invoke_command", {
+      commandId: "moe.set-ai-key",
+      query: null,
+      record: false,
+    });
+    applyResult(res, "moe.set-ai-key", false, "key-round", "Moe: Save AI Key");
+  } catch (err) {
+    showMessage(`Failed to run: ${String(err)}`);
+  }
+}
+
+async function runAboutFeedback() {
+  closeAboutCard();
+  try {
+    await invoke("open_external", { url: FEEDBACK_URL });
+    toast("Opened the feedback page");
+  } catch (err) {
+    toast(`Failed to open: ${String(err)}`, "alert");
+  }
+}
+
+function filteredAboutRows(): AboutRow[] {
+  const needle = aboutSearchEl.value.trim().toLowerCase();
+  if (!needle) return aboutRows();
+  return aboutRows().filter((row) => row.title.toLowerCase().includes(needle));
+}
+
+function renderAboutCard() {
+  const rows = filteredAboutRows();
+  aboutFocus = rows.length === 0 ? 0 : Math.min(aboutFocus, rows.length - 1);
+  if (rows.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "px-2 py-3 text-xs text-zinc-600";
+    empty.textContent = "No matching actions";
+    aboutListEl.replaceChildren(empty);
+    return;
+  }
+  aboutListEl.replaceChildren(
+    ...rows.map((row, index) => {
+      const focused = index === aboutFocus;
+      const li = document.createElement("li");
+      li.className =
+        "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
+        (focused
+          ? "bg-zinc-700/70 text-zinc-50"
+          : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
+      li.append(
+        iconEl(row.icon, { size: 15, className: focused ? "text-zinc-200" : "text-zinc-500" }),
+      );
+      const title = document.createElement("span");
+      title.className = "min-w-0 flex-1 truncate";
+      title.textContent = row.title;
+      li.append(title);
+      li.addEventListener("click", () => row.run());
+      return li;
+    }),
+  );
+  aboutListEl.children[aboutFocus]?.scrollIntoView({ block: "nearest" });
+}
+
+function moveAboutFocus(delta: number) {
+  const rows = filteredAboutRows();
+  if (rows.length === 0) return;
+  aboutFocus = (aboutFocus + delta + rows.length) % rows.length;
+  renderAboutCard();
+}
+
+function openAboutCard() {
+  closeActionsCard();
+  aboutCardOpen = true;
+  aboutSearchEl.value = "";
+  aboutFocus = 0;
+  aboutCardEl.classList.remove("hidden");
+  renderAboutCard();
+  aboutSearchEl.focus();
+}
+
+function closeAboutCard() {
+  if (!aboutCardOpen) return;
+  aboutCardOpen = false;
+  aboutCardEl.classList.add("hidden");
+  q.focus();
+}
+
+function toggleAboutCard() {
+  if (aboutCardOpen) closeAboutCard();
+  else openAboutCard();
+}
+
+chipEl.addEventListener("mousedown", (e) => e.preventDefault());
+chipEl.addEventListener("click", () => toggleAboutCard());
+aboutSearchEl.addEventListener("input", () => {
+  aboutFocus = 0;
+  renderAboutCard();
+});
+// The about card owns its keys while its input is focused (same UX as the actions card)
+aboutSearchEl.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    e.stopPropagation();
+    moveAboutFocus(e.key === "ArrowDown" ? 1 : -1);
+  } else if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    e.stopPropagation();
+    filteredAboutRows()[aboutFocus]?.run();
+  } else if (
+    e.key === "Escape" ||
+    (e.key === "Backspace" && aboutSearchEl.value === "" && !e.repeat)
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeAboutCard();
+  }
+});
+
 /** Live commands: re-run the list with the new query as input changes (e.g. "AI: Search Chat History"). */
 async function rerunLive(query: string) {
   const v = view.get();
@@ -848,6 +1111,11 @@ async function back(options: { quit?: boolean } = {}) {
   // The actions card is an overlay: close it first, then back out further (Raycast-style)
   if (actionsCardOpen) {
     closeActionsCard();
+    return;
+  }
+  // Same for the about card (ADR-0026)
+  if (aboutCardOpen) {
+    closeAboutCard();
     return;
   }
   if (dismissDetail()) {
@@ -1000,6 +1268,13 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
+  // The about card is an overlay owned by the chip (ADR-0026); its input handles its own keys,
+  // but Esc must still close it when the focus sits elsewhere (e.g. right after click-running a row).
+  if (aboutCardOpen && e.key === "Escape") {
+    e.preventDefault();
+    closeAboutCard();
+    return;
+  }
   // Generic actions (ADR-0014/0022): Browse ⌘P / Actions ⌘⇧P / New ⌘N /
   // Delete ⌃X / DeleteAll ⌃⇧X. Semantics are recognized by the shared keymap module; the landing spot is decided by this surface.
   const general = generalActionOf(e);
@@ -1072,10 +1347,14 @@ actionSearchEl.addEventListener("input", () => {
 
 // Click outside the card/pill to close (the pill is excluded, otherwise it would cancel the "Actions" button's click)
 document.addEventListener("mousedown", (e) => {
-  if (!actionsCardOpen) return;
   const target = e.target as Node;
-  if (actionsCardEl.contains(target) || actionBarEl.contains(target)) return;
-  closeActionsCard();
+  if (actionsCardOpen && !actionsCardEl.contains(target) && !actionBarEl.contains(target)) {
+    closeActionsCard();
+  }
+  // The about card closes when clicking outside it or the chip it belongs to (ADR-0026)
+  if (aboutCardOpen && !aboutCardEl.contains(target) && !chipEl.contains(target)) {
+    closeAboutCard();
+  }
 });
 
 actionSearchEl.addEventListener("keydown", (e) => {
@@ -1212,3 +1491,6 @@ renderInputIcon();
 await refresh("");
 await refreshBanner();
 render();
+// Size the panel to exactly VISIBLE_ROWS rows (ADR-0026): measured from the real input bar,
+// so the bottom bar lines up with the last row band regardless of font metrics.
+void invoke("resize_panel", { width: PANEL_WIDTH, height: measuredPanelHeight() }).catch(() => {});

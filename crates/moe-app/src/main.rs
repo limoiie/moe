@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use moe_core::contract::Emitter as CommandEmitter;
 use moe_core::contract::{
-    Action, ActionResult, CommandEvent, CommandMeta, CommandSection, EntryKind, Item, Selection,
+    Action, ActionResult, CommandEvent, CommandMeta, CommandSection, EntryKind, ExtensionMeta,
+    Item, Selection,
 };
 use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
@@ -540,6 +541,22 @@ fn delete_all(state: State<'_, AppState>, command_id: String) -> Result<usize, S
         .map_err(|e| e.to_string())
 }
 
+/// Extension identity for the UI's avatar chip (ADR-0026): id + title + a representative icon.
+#[tauri::command]
+fn extension_meta(state: State<'_, AppState>, command_id: String) -> Option<ExtensionMeta> {
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .extension_meta(&command_id)
+}
+
+/// Open an external URL in the default browser (About card → Send Feedback, ADR-0026).
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    moe_platform::open::open_url(&url)
+}
+
 /// Forget one recently used command (⌃X on a suggestion, ADR-0025).
 /// Returns whether the command had recorded usage.
 #[tauri::command]
@@ -977,6 +994,8 @@ fn main() {
             delete_all,
             delete_suggestion,
             clear_suggestions,
+            extension_meta,
+            open_external,
             hide_panel,
             stop_generation,
             resolve_attachment,

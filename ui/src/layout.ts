@@ -17,18 +17,49 @@ export type PageShape = "list" | "split" | "detail";
 /** Panel width (logical pixels): identical across shapes (Raycast-style: constant size). */
 export const PANEL_WIDTH = 768;
 
-/** Panel height (logical pixels): identical across shapes. */
-export const PANEL_HEIGHT = 540;
+// ---- The row grid (ADR-0026): the panel is sized to show exactly VISIBLE_ROWS rows, and the
+// bottom bar (avatar chip + action pill) overlays the last row's band exactly — same height as
+// one row, the chip's avatar centered on the item icons' x. ----
+
+/** One command row's height (px): `py-1.5` + `text-sm` line height = 6 + 20 + 6. */
+export const ROW_HEIGHT = 32;
+
+/** Rows visible by default: the panel shows exactly this many (Raycast-style ten-slot list). */
+export const VISIBLE_ROWS = 10;
+
+/** Padding below the list (px): the bottom bar band is the list's own last row + this padding. */
+export const BOTTOM_PADDING = 8;
+
+/** `#root` is inset by `m-3` (12px) on every side for the window shadow (ADR-0016). */
+export const WINDOW_MARGIN = 12;
+
+/**
+ * Panel height for a measured input-bar height: exactly VISIBLE_ROWS rows fit under the input
+ * bar, plus the bottom padding and the window margins. Measured at runtime so the grid is exact
+ * regardless of font metrics; the constant below is only the first-frame fallback and must match
+ * `tauri.conf.json` (ADR-0026).
+ */
+export function panelHeightFor(inputBarHeight: number): number {
+  return (
+    Math.round(inputBarHeight) +
+    ROW_HEIGHT * VISIBLE_ROWS +
+    BOTTOM_PADDING +
+    WINDOW_MARGIN * 2
+  );
+}
+
+/** First-frame fallback height (window logical px): 48px input bar + 10×32 rows + 8 + 24 margins. */
+export const PANEL_HEIGHT = 400;
 
 // Layout classes for the three shapes: applied only in render; nowhere else may compose widths.
 
 /** Single-column list (list): takes the full width. */
 export const LIST_FULL_CLASS =
-  "min-h-0 flex-1 overflow-y-auto px-2 pb-12";
+  "min-h-0 flex-1 overflow-y-auto px-2";
 
 /** Left list of the split page: **narrow column** (enough for a conversation title + time); detail takes the remaining width. */
 export const LIST_NARROW_CLASS =
-  "min-h-0 w-[280px] shrink-0 overflow-y-auto border-r border-zinc-800 px-2 pb-12";
+  "min-h-0 w-[280px] shrink-0 overflow-y-auto border-r border-zinc-800 px-2";
 
 /** Right detail of the split page (also the container for full-detail): takes the remaining width. */
 export const DETAIL_PANE_CLASS =

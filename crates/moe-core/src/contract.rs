@@ -130,6 +130,16 @@ pub struct CommandSection {
     pub items: Vec<CommandMeta>,
 }
 
+/// Extension identity for the UI's avatar chip (ADR-0026): id + display name, plus a
+/// representative icon (the extension's first command icon) used as its avatar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionMeta {
+    pub id: String,
+    pub title: String,
+    pub icon: Option<String>,
+}
+
 /// The "selection" context captured before summoning the panel (ADR-0021): a text selection and
 /// files selected (in Finder) can coexist; files are absolute paths (POSIX). The semantics passed
 /// to fallback / invoke match the selection of ADR-0002/0019.

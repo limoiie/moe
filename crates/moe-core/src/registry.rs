@@ -1,6 +1,6 @@
 use crate::contract::{
-    Action, ActionResult, CommandMeta, CommandSection, Emitter, EntryKind, Extension, Item,
-    MoeError, NoopEmitter, Selection,
+    Action, ActionResult, CommandMeta, CommandSection, Emitter, EntryKind, Extension,
+    ExtensionMeta, Item, MoeError, NoopEmitter, Selection,
 };
 use crate::frecency::FrecencyLookup;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
@@ -200,6 +200,17 @@ impl Registry {
             .iter()
             .map(Box::as_ref)
             .find(|e| e.id() == extension_id)
+    }
+
+    /// Extension identity for the avatar chip (ADR-0026): the Extension owning `command_id`,
+    /// with a representative icon (its first command's icon, when any).
+    pub fn extension_meta(&self, command_id: &str) -> Option<ExtensionMeta> {
+        let extension = self.find(command_id)?;
+        Some(ExtensionMeta {
+            id: extension.id().to_string(),
+            title: extension.title().to_string(),
+            icon: extension.commands().first().and_then(|c| c.icon.clone()),
+        })
     }
 
     /// Side View continuation: routed by extension id (ADR-0004).
@@ -687,6 +698,58 @@ mod tests {
         assert!(r.entry_command("toy.hello", EntryKind::Browse).is_none());
         // Nonexistent command: None (no panic)
         assert!(r.entry_command("nope.nope", EntryKind::Browse).is_none());
+    }
+
+    /// Avatar chip identity (ADR-0026): the owning Extension's id/title plus a representative icon.
+    #[test]
+    fn extension_meta_resolves_the_owner_and_its_avatar() {
+        struct Branded;
+        impl Extension for Branded {
+            fn id(&self) -> &str {
+                "branded"
+            }
+            fn title(&self) -> &str {
+                "Branded"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![CommandMeta {
+                    id: "branded.run".into(),
+                    extension_id: "branded".into(),
+                    title: "Run".into(),
+                    subtitle: None,
+                    icon: Some("wand-2".into()),
+                    input: InputKind::None,
+                    live: false,
+                }]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&Selection>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(Branded));
+        let meta = r.extension_meta("branded.run").expect("owner resolves");
+        assert_eq!(meta.id, "branded");
+        assert_eq!(meta.title, "Branded");
+        assert_eq!(
+            meta.icon.as_deref(),
+            Some("wand-2"),
+            "avatar = the first command's icon"
+        );
+        // Toy commands carry no icon: the avatar falls back to None (UI renders its own fallback)
+        let toy = registry()
+            .extension_meta("toy.hello")
+            .expect("owner resolves");
+        assert_eq!(toy.title, "Toy");
+        assert_eq!(toy.icon, None);
+        // Unknown command: None (no panic)
+        assert!(registry().extension_meta("nope.nope").is_none());
     }
 
     /// Delete slots (ADR-0022): routed by the command's owning Extension; unimplemented extensions are NotFound, no panic.

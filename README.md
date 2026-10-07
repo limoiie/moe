@@ -2,7 +2,7 @@
 
 A keyboard-first desktop command palette: double-tap ⌘ in any app to summon a centered panel,
 search commands, and write results back to the selection or cursor. Product language lives in
-`CONTEXT.md`; every design decision lives in `docs/adr/0001–0025`.
+`CONTEXT.md`; every design decision lives in `docs/adr/0001–0026`.
 
 ## Install (macOS)
 
@@ -44,17 +44,29 @@ in their own sections.
 | `Esc` | Layered back | While generating → stop; otherwise actions card → (full-screen) detail → root → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
 | `⌫` | Layered back | Non-empty input = normal delete; **empty input steps back one layer** (like `Esc`, but the root layer never closes the panel, ADR-0017) |
 
-Two **floating buttons** sit at the panel's bottom right (Raycast-style): **primary action**
-(the focused item's main action; becomes "Stop Generation" while generating) and **actions**
-(`⌘K` / `⌘⇧P`). `⌘K` pops up the **actions card**: a floating overlay whose top input filters
-actions and whose list below shows the item's actions (plus the `⌘P`/`⌘N` entries the extension
-declared), without replacing the main body; `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss
-(ADR-0015). Every shortcut is rendered as Kbd blocks, one key per block.
+A **bottom bar** floats over the list, exactly one row tall (ADR-0026) — the left chip and the
+right pill line up with the last visible row band, and the chip's avatar is centered on the item
+icons:
+
+- **Avatar chip (bottom-left)**: Moe's own avatar on the root page; once you are inside a command
+  it shows that extension's icon and name. It doubles as the **toast host**: toasts expand the
+  chip into a pill (Raycast-style) instead of popping up anywhere else.
+- **Action pill (bottom-right)**: **primary action** (the focused item's main action; becomes
+  "Stop Generation" while generating) and **actions** (`⌘K` / `⌘⇧P`). `⌘K` pops up the **actions
+  card**: a floating overlay whose top input filters actions and whose list below shows the item's
+  actions (plus the `⌘P`/`⌘N` entries the extension declared), without replacing the main body;
+  `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015).
+- **About card**: clicking the avatar chip opens the app's About menu — a card with the same UX
+  as the actions card but its search input at the bottom: **Open Config File** / **Save AI Key** /
+  **Send Feedback**. `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss, clicking outside closes it.
+
+Every shortcut is rendered as Kbd blocks, one key per block.
 
 - **Page shapes**: exactly three — **list** / **split** (narrow list on the left + detail on the
   right) / **full-screen detail** — laid out and window-sized by the platform (ADR-0018). An
   extension gets the split page for free by providing `item.detail` (left list fixed at 280px,
-  detail fills the rest with the item's icon/title/time on top); the panel is fixed at 768×540.
+  detail fills the rest with the item's icon/title/time on top); the panel shows exactly ten rows
+  (ADR-0026) and is measured to fit them (768×400 for the default input bar).
 - **Panel**: auto-dismisses on losing focus; input and results are kept across hide/show. The
   tray icon offers Show Panel / AI Chat / Launch at Login / Open Config File / Quit. The results
   layer has two shapes declared by the command (ADR-0013): full-screen detail (AI answers,

@@ -12,9 +12,54 @@ body {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
 }
 
-/* Actions card (⌘K / ⌘⇧P): floating card above the results (shadow stays within the 8px padding, unclipped by the window) */
-.moe-actions-card {
+/* Actions card (⌘K / ⌘⇧P) and About card: floating cards above the results (shadow stays within the 8px padding, unclipped by the window) */
+.moe-actions-card,
+.moe-about-card {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+}
+
+/* Avatar chip (ADR-0026): one row tall (32px, matching ROW_HEIGHT in layout.ts).
+   Collapsed = a circle around the app avatar; inside an Extension = its icon + name;
+   while a toast shows = expanded with the toast content. Clicking opens the About card. */
+.moe-avatar-chip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 7px;
+  border: 1px solid rgb(82 82 91 / 0.5);
+  border-radius: 999px;
+  background: rgb(24 24 27 / 0.82);
+  backdrop-filter: blur(14px);
+  color: #e4e4e7;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 4px 12px rgb(0 0 0 / 0.22),
+    0 1px 0 rgb(255 255 255 / 0.04) inset;
+}
+.moe-avatar-chip:hover {
+  background: rgb(39 39 42 / 0.95);
+}
+.moe-avatar-chip:focus-visible {
+  outline: none;
+}
+/* The avatar itself: 18px, centered exactly on the item icons' x (28px from the card edge) */
+.moe-avatar-img {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+}
+.moe-avatar-label {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #d4d4d8;
 }
 
 /* Key blocks (shadcn Kbd style): one square per key, centered characters, inline baseline alignment.
@@ -58,11 +103,14 @@ body {
   letter-spacing: -0.4px;
 }
 
-/* Bottom floating pill (Raycast-style): primary action and actions in the same pill; buttons themselves have no border */
+/* Bottom floating pill (Raycast-style): primary action and actions in the same pill; buttons themselves have no border.
+   Height = one row (32px): the pill overlays the list's last visible row band exactly (ADR-0026). */
 .moe-action-bar {
+  pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  height: 32px;
   /* Padding between the buttons and the pill edge */
   padding: 3px;
   border: 1px solid rgb(82 82 91 / 0.5);
@@ -79,6 +127,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  height: 100%;
   border: 0;
   border-radius: 999px;
   background: transparent;
