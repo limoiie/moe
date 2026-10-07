@@ -55,15 +55,25 @@ mod chat_panel {
 #[cfg(target_os = "macos")]
 use chat_panel::MoeChatPanel;
 
-/// Center the panel on the monitor under the mouse (including the virtual screen a full-screen app occupies).
-fn centered_on(
+/// Top-left corner for the panel on a monitor, in tauri's top-left-origin physical space
+/// (Linux/Windows path; macOS places through AppKit — ADR-0032): horizontally centered, its top
+/// near the visible top. A too-wide window stays in bounds (the horizontal offset saturates).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn panel_origin_on(
     monitor_pos: (i32, i32),
     monitor_size: (u32, u32),
-    window_size: (u32, u32),
+    window_width: u32,
 ) -> (i32, i32) {
-    let x = monitor_pos.0 + (monitor_size.0.saturating_sub(window_size.0) / 2) as i32;
-    let y = monitor_pos.1 + (monitor_size.1.saturating_sub(window_size.1) / 2) as i32;
-    (x, y)
+    let anchor = moe_platform::screen::panel_anchor(
+        monitor_pos.0 as f64,
+        monitor_size.0 as f64,
+        monitor_size.1 as f64,
+        window_width as f64,
+    );
+    (
+        anchor.left.round() as i32,
+        monitor_pos.1 + anchor.top_drop.round() as i32,
+    )
 }
 
 /// Right-docked: flush to the monitor's right edge, top-aligned (used by the side view window).
@@ -161,21 +171,74 @@ struct SummonStatusPayload {
     accessibility: bool,
 }
 
-/// Move the panel to the monitor under the mouse (including full-screen virtual screens) and center it.
+/// Move the panel to the screen under the mouse cursor (including full-screen virtual screens)
+/// and place it: horizontally centered, top anchored near the visible top (ADR-0032).
 fn place_on_active_screen(window: &tauri::WebviewWindow) {
+    let scale = window.scale_factor().unwrap_or(1.0);
     let Ok(size) = window.outer_size() else {
         return;
     };
-    center_at_cursor(window, size.width as f64, size.height as f64);
+    place_panel(window, size.width as f64 / scale, PlacementScreen::Mouse);
 }
 
-/// Center the window on the monitor under the mouse (physical-pixel size, provided by the caller).
-fn center_at_cursor(window: &tauri::WebviewWindow, width: f64, height: f64) {
-    let Ok(cursor) = window.cursor_position() else {
+/// Which screen a placement call anchors to (ADR-0032).
+#[derive(Clone, Copy)]
+enum PlacementScreen {
+    /// Summon time: the screen the user just summoned from (the pointer's screen).
+    Mouse,
+    /// Resize time: the screen the panel already sits on (the pointer may be elsewhere).
+    Current,
+}
+
+/// Place the panel on a screen (logical width in points, ADR-0032): macOS goes through AppKit
+/// directly (tao's `cursor_position()` mixes logical and physical units, so the active screen was
+/// mis-detected and the panel always landed on the primary screen); the tauri-monitor path serves
+/// Linux/Windows.
+fn place_panel(window: &tauri::WebviewWindow, logical_width: f64, screen: PlacementScreen) {
+    #[cfg(target_os = "macos")]
+    place_panel_mac(window, logical_width, screen);
+    #[cfg(not(target_os = "macos"))]
+    place_panel_tauri(window, logical_width, screen);
+}
+
+#[cfg(target_os = "macos")]
+fn place_panel_mac(window: &tauri::WebviewWindow, logical_width: f64, screen: PlacementScreen) {
+    let Ok(ns_window) = window.ns_window() else {
         return;
     };
+    // SAFETY: the pointer comes from Tauri's window handle (valid for the window's lifetime) and
+    // this runs on the main thread (command handlers and show closures do).
+    unsafe {
+        match screen {
+            PlacementScreen::Mouse => {
+                moe_platform::mac::place_window_near_top(ns_window, logical_width)
+            }
+            PlacementScreen::Current => {
+                moe_platform::mac::place_window_near_top_keeping_screen(ns_window, logical_width)
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn place_panel_tauri(window: &tauri::WebviewWindow, logical_width: f64, screen: PlacementScreen) {
+    let point = match screen {
+        PlacementScreen::Mouse => match window.cursor_position() {
+            Ok(cursor) => (cursor.x, cursor.y),
+            Err(_) => return,
+        },
+        PlacementScreen::Current => {
+            let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+                return;
+            };
+            (
+                pos.x as f64 + size.width as f64 / 2.0,
+                pos.y as f64 + size.height as f64 / 2.0,
+            )
+        }
+    };
     let monitor = window
-        .monitor_from_point(cursor.x, cursor.y)
+        .monitor_from_point(point.0, point.1)
         .ok()
         .flatten()
         .or_else(|| window.primary_monitor().ok().flatten());
@@ -184,50 +247,42 @@ fn center_at_cursor(window: &tauri::WebviewWindow, width: f64, height: f64) {
     };
     let pos = monitor.position();
     let msize = monitor.size();
-    let (x, y) = centered_on(
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let (x, y) = panel_origin_on(
         (pos.x, pos.y),
         (msize.width, msize.height),
-        (width as u32, height as u32),
+        (logical_width * scale).round() as u32,
     );
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 /// Resize the panel by page shape (logical pixels, ADR-0018): split pages are wider and taller.
-/// The UI computes the size from the shape table in `ui/src/layout.ts`; this only resizes and re-centers the window.
+/// The UI computes the size from the shape table in `ui/src/layout.ts`; this only resizes and
+/// re-anchors the window.
 #[tauri::command]
 fn resize_panel(window: tauri::WebviewWindow, width: f64, height: f64) -> Result<(), String> {
     window
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|err| err.to_string())?;
-    let scale = window.scale_factor().unwrap_or(1.0);
-    center_at_cursor(&window, width * scale, height * scale);
+    place_panel(&window, width, PlacementScreen::Current);
     eprintln!("moe: panel size → {width}×{height} (logical pixels)");
     Ok(())
 }
 
-/// The height the menu bar occupies at the top of the screen (physical pixels).
-/// NSScreen requires the main thread; call sites are already inside main-thread closures.
-#[cfg(target_os = "macos")]
-fn top_inset_physical(scale: f64) -> u32 {
-    use tauri_nspanel::objc2::MainThreadMarker;
-    use tauri_nspanel::objc2_app_kit::NSScreen;
-    let Some(mtm) = MainThreadMarker::new() else {
-        return 0;
-    };
-    let Some(screen) = NSScreen::mainScreen(mtm) else {
-        return 0;
-    };
-    let frame = screen.frame();
-    let visible = screen.visibleFrame();
-    let inset_points =
-        (frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height);
-    (inset_points.max(0.0) * scale).round() as u32
-}
-
-/// Default side view placement: the right side of the monitor under the mouse (including full-screen
-/// virtual screens), full height. Used only when there is no remembered frame or the remembered
-/// frame is no longer on any monitor (IIE4AD-369).
+/// Default side view placement: the right side of the screen under the mouse cursor (including
+/// full-screen virtual screens), full visible height. Used only when there is no remembered frame
+/// or the remembered frame is no longer on any monitor (IIE4AD-369).
 fn place_side_view(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    if let (Ok(ns_window), Ok(size)) = (window.ns_window(), window.outer_size()) {
+        let scale = window.scale_factor().unwrap_or(1.0);
+        // SAFETY: the pointer comes from Tauri's window handle and this runs on the main thread
+        // (open_side_view's closure).
+        unsafe {
+            moe_platform::mac::place_window_right_docked(ns_window, size.width as f64 / scale)
+        };
+        return;
+    }
     let Ok(cursor) = window.cursor_position() else {
         return;
     };
@@ -241,15 +296,9 @@ fn place_side_view(window: &tauri::WebviewWindow) {
     };
     let pos = monitor.position();
     let msize = monitor.size();
-    // Height minus the menu bar: macOS constrains the window's top edge to the visible area;
-    // otherwise the extra height pushes the bottom edge (the input bar) off-screen.
-    #[cfg(target_os = "macos")]
-    let inset = top_inset_physical(monitor.scale_factor());
-    #[cfg(not(target_os = "macos"))]
-    let inset = 0;
-    let height = msize.height.saturating_sub(inset);
+    let height = msize.height;
     let (x, y) = right_docked_on(
-        (pos.x, pos.y + inset as i32),
+        (pos.x, pos.y),
         (msize.width, height),
         (size.width, size.height),
     );
@@ -1051,15 +1100,14 @@ mod tests {
     }
 
     #[test]
-    fn centers_window_in_monitor() {
-        assert_eq!(centered_on((0, 0), (1920, 1080), (680, 420)), (620, 330));
+    fn anchors_window_near_the_top_of_the_monitor() {
+        assert_eq!(panel_origin_on((0, 0), (1920, 1080), 768), (576, 216));
         // A second monitor (macOS allows placing it left of the main screen, with negative coordinates) must also be correct
-        assert_eq!(
-            centered_on((-1920, 0), (1920, 1080), (680, 420)),
-            (-1300, 330)
-        );
-        // A window larger than the screen stays in bounds (saturating zeroes the offset)
-        assert_eq!(centered_on((0, 0), (600, 400), (680, 420)), (0, 0));
+        assert_eq!(panel_origin_on((-1920, 0), (1920, 1080), 768), (-1344, 216));
+        // A window wider than the screen stays in bounds (the horizontal offset saturates)
+        assert_eq!(panel_origin_on((0, 0), (600, 400), 768), (0, 80));
+        // Short screens keep the 48-point floor below the top edge
+        assert_eq!(panel_origin_on((0, 0), (1920, 200), 768), (576, 48));
     }
 
     #[test]

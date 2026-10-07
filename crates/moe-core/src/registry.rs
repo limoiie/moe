@@ -14,6 +14,8 @@ const SUGGESTION_LIMIT: usize = 5;
 const SUGGESTIONS_TITLE: &str = "Suggestions";
 /// "Favorites" section header (ADR-0027): user-curated commands, pinned above Suggestions.
 const FAVORITES_TITLE: &str = "Favorites";
+/// "Results" section header (ADR-0033): a searching page is ONE scored section, not per-source groups.
+const RESULTS_TITLE: &str = "Results";
 
 /// Group an ordered command list by "source" (Extension); group order = order of each group's best item
 /// (matching score order on a query; frecency order on an empty query).
@@ -86,9 +88,10 @@ impl Registry {
 
     /// Command palette search: nucleo fuzzy matching scores, frecency breaks ties.
     /// Empty query: a "Favorites" section is pinned on top (user-curated, ADR-0027), then a "Suggestions"
-    /// section (recently used commands, IIE4AD-395), then grouped by source; non-empty query: grouped by
-    /// source (Extension) (ADR-0020), groups ordered by their best item and items keeping score order within
-    /// a group; `selection` matters only in the "no match → fallback" step.
+    /// section (recently used commands, IIE4AD-395), then grouped by source; a non-empty query is ONE
+    /// "Results" section in score order (ADR-0033 — supersedes ADR-0020's per-source grouping while
+    /// searching; each row still labels its owner, ADR-0030); `selection` matters only in the
+    /// "no match → fallback" step.
     pub fn search(
         &self,
         query: &str,
@@ -186,10 +189,12 @@ impl Registry {
             });
             if scored.is_empty() {
                 // No match: give extensions a chance to "capture" the input (e.g. AI quick ask).
-                // Registration order is kept (earlier extensions win, e.g. `key …` hits Moe's save item).
-                return group_by_extension(
-                    &self.extensions,
-                    self.extensions.iter().flat_map(|extension| {
+                // Registration order is kept (earlier extensions win, e.g. `key …` hits Moe's save item),
+                // and captures land in the same single Results section (ADR-0033).
+                let fallback: Vec<CommandMeta> = self
+                    .extensions
+                    .iter()
+                    .flat_map(|extension| {
                         let title = extension.title().to_string();
                         let kind = extension.command_kind();
                         extension
@@ -200,12 +205,24 @@ impl Registry {
                                 kind: cmd.kind.or_else(|| kind.clone()),
                                 ..cmd
                             })
-                    }),
-                );
+                    })
+                    .collect();
+                return if fallback.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![CommandSection {
+                        title: RESULTS_TITLE.into(),
+                        items: fallback,
+                    }]
+                };
             }
             scored.into_iter().map(|(_, _, cmd)| cmd).collect()
         };
-        group_by_extension(&self.extensions, ordered.into_iter())
+        // ADR-0033: one flat scored list — the searching page no longer splits into per-source groups.
+        vec![CommandSection {
+            title: RESULTS_TITLE.into(),
+            items: ordered,
+        }]
     }
 
     fn find(&self, command_id: &str) -> Option<&dyn Extension> {
@@ -681,7 +698,10 @@ mod tests {
         r.register(Box::new(FallbackToy));
         let hits = r.search("hello", None, &NoFrecency, &Favorites::default());
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].title, "Fallback");
+        assert_eq!(
+            hits[0].title, "Results",
+            "captures land in the same single section (ADR-0033)"
+        );
         assert!(hits[0].items[0].title.contains("hello"));
 
         // No fallback when there is a normal match
@@ -901,6 +921,60 @@ mod tests {
         assert_eq!(hits.len(), 1, "single extension => single section");
         assert_eq!(hits[0].title, "Toy");
         assert_eq!(hits[0].items.len(), 2);
+    }
+
+    /// ADR-0033: a searching page is ONE "Results" section in score order, even when the matches
+    /// span multiple extensions (each row still labels its owner, ADR-0030).
+    #[test]
+    fn search_results_are_one_scored_section_across_extensions() {
+        struct OtherToy;
+        impl Extension for OtherToy {
+            fn id(&self) -> &str {
+                "other"
+            }
+            fn title(&self) -> &str {
+                "Other"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![CommandMeta {
+                    id: "other.toy".into(),
+                    extension_id: "other".into(),
+                    title: "Another Toy".into(),
+                    subtitle: None,
+                    icon: None,
+                    input: InputKind::None,
+                    live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
+                }]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&Selection>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(Toy));
+        r.register(Box::new(OtherToy));
+        let hits = r.search("toy", None, &NoFrecency, &Favorites::default());
+        assert_eq!(
+            hits.len(),
+            1,
+            "matches from both extensions merge into one section"
+        );
+        assert_eq!(hits[0].title, "Results");
+        let ids: Vec<&str> = hits[0].items.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"toy.list"));
+        assert!(ids.contains(&"toy.hello"));
+        assert!(ids.contains(&"other.toy"));
+        // Score order (not source order): "Toy: List" earns the prefix bonus for "toy"
+        assert_eq!(ids[0], "toy.list");
     }
 
     /// Fake frecency with last_used (for suggestions tests).
@@ -1300,13 +1374,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["b.deploy", "a.deploy"]
         );
-        // Two extensions, two sources => two sections, ordered by each group's best item (b's frecency is higher)
-        assert_eq!(
-            hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
-            ["Twin", "Twin"]
-        );
+        // ADR-0033: both twins land in the single "Results" section; frecency still breaks the score tie
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Results");
         assert_eq!(hits[0].items[0].id, "b.deploy");
-        assert_eq!(hits[1].items[0].id, "a.deploy");
+        assert_eq!(hits[0].items[1].id, "a.deploy");
     }
 
     #[test]

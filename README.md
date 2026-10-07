@@ -17,13 +17,16 @@ search commands, and write results back to the selection or cursor. Product lang
 
 ## Usage
 
-Double-tap ⌘ to summon the panel; typing searches commands. One set of keybinding semantics
+Double-tap ⌘ to summon the panel (it appears on the screen under the mouse cursor, horizontally
+centered near the top, ADR-0032); typing searches commands. One set of keybinding semantics
 spans every extension:
 
-Root results are **grouped by source** (ADR-0020): one section per extension, headed by the
-extension name (headers are not focusable); section order follows each group's best item
-(match score when searching, frecency on an empty query), and items keep their score order
-within a group. Each row reads (ADR-0030): **command name** (never prefixed with the extension
+On an empty query, root results are **grouped by source** (ADR-0020): one section per extension,
+headed by the extension name (headers are not focusable); section order follows frecency, and
+items keep their score order within a group.
+**Typing a query merges everything into one "Results" section in match-score order**
+(ADR-0033 — the row still names its extension, ADR-0030). Each row reads (ADR-0030): **command
+name** (never prefixed with the extension
 name) · **extension name** · the command's declared shortcut as a Kbd (e.g. Open Config File's
 `⌘,`, revealed while the row is focused or hovered, ADR-0031) · a trailing **kind badge**
 ("Command" / "AI Command"). On an empty query two pinned

@@ -19,6 +19,9 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType,
 };
+use objc2::MainThreadMarker;
+use objc2_app_kit::{NSEvent, NSScreen, NSWindow};
+use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::cell::RefCell;
 
 use crate::summon::{
@@ -83,6 +86,126 @@ pub unsafe fn refresh_window_shadow(ns_window: *mut std::ffi::c_void) {
 /// Show the system prompt once when unauthorized, and add this app to the "Input Monitoring" list.
 pub fn request_input_monitoring() -> bool {
     unsafe { CGRequestListenEventAccess() != 0 }
+}
+
+/// Place a window top-anchored and horizontally centered on the screen under the mouse cursor
+/// (ADR-0032, summon time: the user just summoned from that screen). macOS-native by necessity:
+/// tao's `cursor_position()` mixes logical and physical units, so `monitor_from_point` misses on
+/// multi-display setups and the panel used to fall back to the primary screen.
+///
+/// # Safety
+/// `ns_window` must be a valid `NSWindow` pointer (Tauri's `Window::ns_window()`); call on the
+/// main thread.
+pub unsafe fn place_window_near_top(ns_window: *mut std::ffi::c_void, width_points: f64) {
+    if ns_window.is_null() {
+        return;
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(screen) = screen_containing(mtm, NSEvent::mouseLocation()) else {
+        return;
+    };
+    // SAFETY: the caller guarantees a valid NSWindow pointer (see # Safety).
+    let window: &NSWindow = unsafe { &*ns_window.cast() };
+    anchor_near_top(window, &screen, width_points);
+}
+
+/// Re-anchor a window top-centered on the screen it currently sits on (ADR-0032, resize time: the
+/// pointer may have wandered to another display while the user is typing, so it must not drag the
+/// panel along).
+///
+/// # Safety
+/// Same as [`place_window_near_top`].
+pub unsafe fn place_window_near_top_keeping_screen(
+    ns_window: *mut std::ffi::c_void,
+    width_points: f64,
+) {
+    if ns_window.is_null() {
+        return;
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    // SAFETY: the caller guarantees a valid NSWindow pointer (see # Safety).
+    let window: &NSWindow = unsafe { &*ns_window.cast() };
+    let frame = window.frame();
+    let center = NSPoint::new(
+        frame.origin.x + frame.size.width / 2.0,
+        frame.origin.y + frame.size.height / 2.0,
+    );
+    let Some(screen) = screen_containing(mtm, center) else {
+        return;
+    };
+    anchor_near_top(window, &screen, width_points);
+}
+
+/// Top-center a window on one screen: the shared body of the two placements above.
+fn anchor_near_top(window: &NSWindow, screen: &NSScreen, width_points: f64) {
+    let visible = screen.visibleFrame();
+    let anchor = crate::screen::panel_anchor(
+        visible.origin.x,
+        visible.size.width,
+        visible.size.height,
+        width_points,
+    );
+    let top_left = NSPoint::new(
+        anchor.left,
+        visible.origin.y + visible.size.height - anchor.top_drop,
+    );
+    let frame = screen.frame();
+    eprintln!(
+        "moe: panel anchored on screen ({:.0},{:.0} {:.0}x{:.0}) at ({:.0}, {:.0})",
+        frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, top_left.x, top_left.y,
+    );
+    window.setFrameTopLeftPoint(top_left);
+}
+
+/// Right-dock a window on the screen under the mouse cursor: flush to the right edge, full visible
+/// height and width `width_points` (the Side View's default frame, ADR-0032).
+///
+/// # Safety
+/// Same as [`place_window_near_top`].
+pub unsafe fn place_window_right_docked(ns_window: *mut std::ffi::c_void, width_points: f64) {
+    if ns_window.is_null() {
+        return;
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(screen) = screen_containing(mtm, NSEvent::mouseLocation()) else {
+        return;
+    };
+    let visible = screen.visibleFrame();
+    let frame = NSRect::new(
+        NSPoint::new(
+            visible.origin.x + visible.size.width - width_points,
+            visible.origin.y,
+        ),
+        NSSize::new(width_points, visible.size.height),
+    );
+    // SAFETY: the caller guarantees a valid NSWindow pointer (see # Safety).
+    let window: &NSWindow = unsafe { &*ns_window.cast() };
+    window.setFrame_display(frame, true);
+}
+
+/// The screen containing `point`, falling back to the main screen (the point sits outside every
+/// screen only in exotic arrangements or races).
+fn screen_containing(
+    mtm: MainThreadMarker,
+    point: NSPoint,
+) -> Option<objc2::rc::Retained<NSScreen>> {
+    for screen in NSScreen::screens(mtm).iter() {
+        let frame = screen.frame();
+        let inside = point.x >= frame.origin.x
+            && point.x < frame.origin.x + frame.size.width
+            && point.y >= frame.origin.y
+            && point.y < frame.origin.y + frame.size.height;
+        if inside {
+            return Some(screen);
+        }
+    }
+    NSScreen::mainScreen(mtm)
 }
 
 pub struct MacSummonListener {

@@ -12,6 +12,7 @@ pub mod mac;
 #[cfg(target_os = "macos")]
 pub mod mac_text;
 pub mod open;
+pub mod screen;
 pub mod store;
 pub mod summon;
 pub mod text_target;
