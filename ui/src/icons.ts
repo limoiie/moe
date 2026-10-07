@@ -35,6 +35,7 @@ import {
   Sparkles,
   SpellCheck,
   Square,
+  SquareM,
   Star,
   Terminal,
   Trash2,
@@ -75,6 +76,7 @@ const ICONS: Record<string, IconNode> = {
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
   "arrow-left": ArrowLeft,
+  "square-m": SquareM,
   "trash-2": Trash2,
   command: Command,
   copy: Copy,

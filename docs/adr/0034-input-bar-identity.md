@@ -30,3 +30,14 @@ one full step with the list rows. Two problems surfaced with use:
   says "this is Moe's palette", the chip's is a menu.
 - The token is text-size only; the bar's row height still comes from the font's line box, which is
   why the measured-height path (ADR-0026) must stay in place.
+## Amendment: the mark is a square-m glyph, bigger and bolder
+
+The root state's leading slot used the `moe.png` avatar; it is now **`square-m`** (Lucide) — a
+glyph, matching the slot's other states (back arrow, paperclip) in shape language rather than a
+bitmap that had to fight the 16px column. And the glyph read too small for the panel's anchor, so
+it renders **bigger and bolder than the item-row icons**.
+
+Both numbers are tokens: `--moe-input-icon-size: 20px` and `--moe-input-icon-stroke: 2.5`. The slot
+element stays a 16px-wide flex box, so the glyph overflows its column symmetrically and the grid
+invariant above is untouched — icon center and label x still line up with the item rows. CSS drives
+size and stroke (presentation attributes lose to CSS), so tuning stays in `styles.css`.

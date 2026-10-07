@@ -1393,9 +1393,10 @@ let attachBarToken = 0;
 let inputIconKind: "attach" | "back" | "logo" | null = null;
 
 /**
- * The Input Bar's leading slot: the Moe logo on the root page, a back arrow on nested pages
- * (click = Back; the keyboard paths stay Esc / empty ⌫), a paperclip while attaching. Always 16px
- * so its column stays aligned with the item rows' icons (the Input Bar and the list share one grid).
+ * The Input Bar's leading slot: the square-m mark on the root page, a back arrow on nested pages
+ * (click = Back; the keyboard paths stay Esc / empty ⌫), a paperclip while attaching. The glyph
+ * is one column with the item rows' icons — 16px wide, centered — while its size and stroke come
+ * from the --moe-input-icon-* tokens, so it reads bigger and bolder without breaking the grid.
  */
 function renderInputIcon() {
   const kind: "attach" | "back" | "logo" = attaching
@@ -1406,14 +1407,10 @@ function renderInputIcon() {
   if (kind === inputIconKind) return;
   inputIconKind = kind;
   inputIconEl.classList.toggle("moe-input-icon-back", kind === "back");
-  if (kind === "logo") {
-    const logo = appAvatarEl();
-    logo.className = "moe-input-logo";
-    inputIconEl.replaceChildren(logo);
-    return;
-  }
   inputIconEl.replaceChildren(
-    iconEl(kind === "attach" ? "paperclip" : "arrow-left", { size: 16, className: "text-zinc-400" }),
+    iconEl(kind === "attach" ? "paperclip" : kind === "back" ? "arrow-left" : "square-m", {
+      className: "moe-input-glyph text-zinc-400",
+    }),
   );
 }
 
