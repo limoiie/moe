@@ -36,8 +36,8 @@ import type {
 interface ActionRow {
   action: Action;
   platform?: EntryAction;
-  /** Command-level rows: the favorite toggle works; the other two are disabled placeholders. */
-  root?: "favorite" | "openCommand" | "configureExtension";
+  /** Command-level rows: the favorite and suggestion rows work; Configure Extension is a placeholder. */
+  root?: "favorite" | "openCommand" | "removeSuggestion" | "configureExtension";
   /** The command a root row acts on (root card = focused command; inside a command = the source command). */
   commandId?: string;
   disabled?: boolean;
@@ -50,7 +50,9 @@ interface View {
   commands: CommandMeta[];
   /** Source grouping of the command layer (ADR-0020): used to render section headers; commands is its flattening, focus/navigation is based on the flat list. */
   sections: CommandSection[];
-  /** How many leading flat entries belong to the Suggestions section (0 = none, ADR-0025). */
+  /** The Suggestions section's flat-list range (ADR-0025): start = -1 when the section is absent. */
+  suggestionsStart: number;
+  /** The Suggestions section's item count (0 = none, ADR-0025). */
   suggestionsCount: number;
   items: Item[];
   /** Source command of items mode. */
@@ -85,6 +87,7 @@ const view = store<View>({
   focus: 0,
   commands: [],
   sections: [],
+  suggestionsStart: -1,
   suggestionsCount: 0,
   items: [],
 });
@@ -154,7 +157,9 @@ function chipLabel(text: string): HTMLSpanElement {
  */
 function renderChip() {
   chipEl.replaceChildren();
+  delete chipEl.dataset.labeled;
   if (toastState) {
+    chipEl.dataset.labeled = "true";
     chipEl.append(
       iconEl(toastState.icon, {
         size: 14,
@@ -166,6 +171,7 @@ function renderChip() {
   }
   const v = view.get();
   if (v.mode === "items" && extensionMeta) {
+    chipEl.dataset.labeled = "true";
     chipEl.append(
       extensionMeta.icon
         ? iconEl(extensionMeta.icon, { size: 18, className: "text-zinc-300" })
@@ -424,6 +430,8 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
 
 function render() {
   const v = view.get();
+  // The Input Bar's leading slot follows the page layer (Moe logo → back arrow, ADR-0034)
+  renderInputIcon();
   // Page shape decides window size (ADR-0018): split pages are wider and taller, others use the default size.
   // Only call IPC when the shape changes, so the window isn't touched on every render.
   const shape = pageShapeOf(
@@ -781,7 +789,10 @@ async function openActionsCard() {
   if (v.mode === "commands") {
     const cmd = v.commands[v.focus];
     if (!cmd) return;
-    const commandRows = await commandActionRows(cmd.id, { openable: true });
+    const commandRows = await commandActionRows(cmd.id, {
+      openable: true,
+      suggestion: isSuggestionFocus(v),
+    });
     if (commandRows.length > 0) sections.push({ title: "Command", rows: commandRows });
     actionsCard.open(sections);
     return;
@@ -859,11 +870,12 @@ async function toggleFavorite(commandId: string | undefined) {
  * The command-level rows (ADR-0029): **Open Command comes first** — on the root layer it is the
  * same Apply path as Enter (live), so the row shows ⏎ and runs the focused command. Inside a
  * command the row is omitted ("opening" the view you are in would reset it). Then Add to
- * Favorites (⌘⇧F, works) and Configure Extension (a disabled placeholder until it exists).
+ * Favorites (⌘⇧F, works), Remove from Suggestions on a Suggestions row (⌃X, ADR-0025), and
+ * Configure Extension (a disabled placeholder until it exists).
  */
 async function commandActionRows(
   commandId: string,
-  options: { openable: boolean },
+  options: { openable: boolean; suggestion?: boolean },
 ): Promise<CardRow[]> {
   let favorited = false;
   try {
@@ -871,26 +883,33 @@ async function commandActionRows(
   } catch {
     // Ignore: the toggle still works, the label just may be stale
   }
-  const rootRow = (root: NonNullable<ActionRow["root"]>, title: string, disabled = false): ActionRow => ({
+  const rootRow = (
+    root: NonNullable<ActionRow["root"]>,
+    title: string,
+    keybinding: string | null,
+    disabled = false,
+  ): ActionRow => ({
     root,
     commandId,
     disabled,
-    action: {
-      id: `moe.${root}`,
-      title,
-      kind: "secondary",
-      keybinding:
-        root === "favorite"
-          ? GENERAL_KEY_LABELS.favorite
-          : root === "openCommand"
-            ? (keyDisplay.get("apply") ?? "⏎")
-            : null,
-    },
+    action: { id: `moe.${root}`, title, kind: "secondary", keybinding },
   });
   const rows: ActionRow[] = [];
-  if (options.openable) rows.push(rootRow("openCommand", "Open Command"));
-  rows.push(rootRow("favorite", favorited ? "Remove from Favorites" : "Add to Favorites"));
-  rows.push(rootRow("configureExtension", "Configure Extension", true));
+  if (options.openable) {
+    rows.push(rootRow("openCommand", "Open Command", keyDisplay.get("apply") ?? "⏎"));
+  }
+  rows.push(
+    rootRow(
+      "favorite",
+      favorited ? "Remove from Favorites" : "Add to Favorites",
+      GENERAL_KEY_LABELS.favorite,
+    ),
+  );
+  // A Suggestions row is a record (ADR-0025): the row that forgets it carries the delete slot's ⌃X
+  if (options.suggestion) {
+    rows.push(rootRow("removeSuggestion", "Remove from Suggestions", GENERAL_KEY_LABELS.delete));
+  }
+  rows.push(rootRow("configureExtension", "Configure Extension", null, true));
   return rows.map(actionCardRow);
 }
 
@@ -902,6 +921,7 @@ function closeActionsCard() {
 function iconOfActionRow(row: ActionRow): string {
   if (row.root === "favorite") return "star";
   if (row.root === "openCommand") return "corner-down-left";
+  if (row.root === "removeSuggestion") return "trash-2";
   if (row.root === "configureExtension") return "settings-2";
   if (row.platform) return row.platform === "browse" ? "history" : "plus";
   return row.action.kind === "primary" ? "corner-down-left" : "copy";
@@ -931,6 +951,11 @@ async function runActionRow(row: ActionRow | undefined) {
   if (row.root === "favorite") {
     // The same path as the ⌘⇧F binding (ADR-0029)
     await toggleFavorite(row.commandId);
+    return;
+  }
+  if (row.root === "removeSuggestion") {
+    // The same path as the ⌃X delete slot on the Suggestions section (ADR-0025)
+    await deleteSuggestion(row.commandId);
     return;
   }
   if (row.root === "openCommand") {
@@ -1250,6 +1275,16 @@ async function deleteFocused(all: boolean) {
   }
 }
 
+/** Whether the focused root row sits in the Suggestions section (ADR-0025): the delete slot's scope. */
+function isSuggestionFocus(v: View): boolean {
+  return (
+    v.mode === "commands" &&
+    v.suggestionsStart >= 0 &&
+    v.focus >= v.suggestionsStart &&
+    v.focus < v.suggestionsStart + v.suggestionsCount
+  );
+}
+
 /** Forget one recently used command (⌃X on a suggestion, ADR-0025). */
 async function deleteSuggestion(commandId: string | undefined) {
   if (!commandId) return;
@@ -1313,15 +1348,20 @@ async function refresh(query: string) {
   clearDetail();
   previewDismissed = false;
   const sections = await invoke<CommandSection[]>("search_commands", { query });
+  // The Suggestions section's real place in the flat list (ADR-0025): it sits under Favorites
+  // when those exist, so the delete slot and the actions card need its range, not just a count.
+  const suggestionsIndex = sections.findIndex((s) => s.title === "Suggestions");
   view.update((v) => ({
     ...v,
     mode: "commands",
     sections,
     // Focus/navigation is based on the flat list; sections only render headers.
     commands: sections.flatMap((s) => s.items),
-    // The Suggestions section only appears on the empty query and always comes first (ADR-0023).
-    suggestionsCount:
-      sections[0]?.title === "Suggestions" ? sections[0].items.length : 0,
+    suggestionsStart:
+      suggestionsIndex === -1
+        ? -1
+        : sections.slice(0, suggestionsIndex).reduce((flat, s) => flat + s.items.length, 0),
+    suggestionsCount: suggestionsIndex === -1 ? 0 : sections[suggestionsIndex].items.length,
     focus: 0,
   }));
 }
@@ -1349,12 +1389,38 @@ let savedQuery = "";
 let attachBarToken = 0;
 
 /** Input Bar leading icon: search normally, paperclip in attachment mode (ADR-0012). */
+/** Last rendered leading-icon kind: mode changes rebuild it, keystrokes don't. */
+let inputIconKind: "attach" | "back" | "logo" | null = null;
+
+/**
+ * The Input Bar's leading slot: the Moe logo on the root page, a back arrow on nested pages
+ * (click = Back; the keyboard paths stay Esc / empty ⌫), a paperclip while attaching. Always 16px
+ * so its column stays aligned with the item rows' icons (the Input Bar and the list share one grid).
+ */
 function renderInputIcon() {
-  // Same column as list rows: aligned size/color (ADR: Input Bar and Result List share one grid)
+  const kind: "attach" | "back" | "logo" = attaching
+    ? "attach"
+    : view.get().mode === "items"
+      ? "back"
+      : "logo";
+  if (kind === inputIconKind) return;
+  inputIconKind = kind;
+  inputIconEl.classList.toggle("moe-input-icon-back", kind === "back");
+  if (kind === "logo") {
+    const logo = appAvatarEl();
+    logo.className = "moe-input-logo";
+    inputIconEl.replaceChildren(logo);
+    return;
+  }
   inputIconEl.replaceChildren(
-    iconEl(attaching ? "paperclip" : "search", { size: 16, className: "text-zinc-400" }),
+    iconEl(kind === "attach" ? "paperclip" : "arrow-left", { size: 16, className: "text-zinc-400" }),
   );
 }
+
+// The leading slot doubles as Back on nested pages (click; the keyboard paths are Esc / empty ⌫)
+inputIconEl.addEventListener("click", () => {
+  if (!attaching && view.get().mode === "items") void back({ quit: false });
+});
 
 function setAttachBar(kind: "hint" | "error", text: string) {
   attachTextEl.textContent = text;
@@ -1478,7 +1544,7 @@ window.addEventListener("keydown", (e) => {
       // …and on the Suggestions section (ADR-0025): ⌃X forgets the focused command,
       // ⌃⇧X clears all recent usage. Elsewhere the input's native cut stays.
       if (v.mode === "commands" && v.suggestionsCount > 0) {
-        if (general === "deleteAll" || v.focus < v.suggestionsCount) {
+        if (general === "deleteAll" || isSuggestionFocus(v)) {
           e.preventDefault();
           if (general === "deleteAll") void clearSuggestions();
           else void deleteSuggestion(v.commands[v.focus]?.id);

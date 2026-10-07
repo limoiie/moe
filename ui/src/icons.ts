@@ -2,6 +2,7 @@
 // Unknown names fall back to Circle, so no Extension can break the layout with an icon name.
 
 import {
+  ArrowLeft,
   ArrowRight,
   Briefcase,
   Check,
@@ -36,6 +37,7 @@ import {
   Square,
   Star,
   Terminal,
+  Trash2,
   TriangleAlert,
   Wand2,
   X,
@@ -72,6 +74,8 @@ const ICONS: Record<string, IconNode> = {
   star: Star,
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
+  "arrow-left": ArrowLeft,
+  "trash-2": Trash2,
   command: Command,
   copy: Copy,
   "corner-down-left": CornerDownLeft,

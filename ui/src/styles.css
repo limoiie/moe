@@ -12,6 +12,8 @@ body {
   /* Row secondary text size: the per-item type label (kind badge) and any future secondary row
      text read this token, so the row typography tunes in one place. */
   --moe-text-secondary: 13px;
+  /* Top input row text size (every panel page shares this one input row). */
+  --moe-text-input: 16px;
 }
 
 /* Floating window card: the "lift" comes from the AppKit system window shadow (the window is truly
@@ -142,6 +144,37 @@ body {
 /* Hover brightens the badge (the rows' standing hover rule; focus never changes it) */
 .group:hover .moe-kind-badge {
   color: #a1a1aa;
+}
+
+/* Top input row (all panel pages): text from the shared token; the input sits in the same grid
+   column as the list rows (px-5 == list px-2 + row px-3; gap-2.5 matches the rows' gap), so icon
+   and label x stay aligned with the item rows whatever the size. */
+.moe-query-input {
+  font-size: var(--moe-text-input);
+}
+
+/* The input row's leading slot (one grid column with the item-row icons): the Moe logo on the
+   root page, a clickable back arrow on nested pages. */
+.moe-input-logo {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+}
+.moe-input-icon-back {
+  cursor: pointer;
+}
+/* The svg carries its own color utility, so the hover targets the svg (unlayered rules win) */
+.moe-input-icon-back:hover svg {
+  color: #d4d4d8;
+}
+
+/* Avatar chip expanded with a label (inside an extension / a toast): the content inset matches
+   the action pill's content inset visually — pill border 1 + pill padding 3 + button padding 9
+   = 13px to the text — so the two floating strips read as one system. The collapsed chip stays
+   governed by its 40px min-width (a circle around the avatar). */
+.moe-avatar-chip[data-labeled] {
+  padding: 0 12px;
 }
 
 /* Section header band (ADR-0020/0026): fixed height (set from SECTION_HEADER_HEIGHT in

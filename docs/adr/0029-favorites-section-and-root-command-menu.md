@@ -46,3 +46,21 @@ section above Suggestions (Raycast's Favorites slot).
   moving anything.
 - Favorites and Suggestions both pin commands out of their groups; a heavily favorited set can
   push source groups far down the root page — acceptable, that is the point of pinning.
+## Amendment: the Suggestions row carries its own menu entry
+
+The root menu showed only the three command-level rows, so a command sitting in the Suggestions
+section offered no way to forget it from the menu — even though the ⌃X delete slot already
+forgot it from the keyboard. The ⌘K card on a Suggestions row now renders
+**Remove from Suggestions** (icon: trash, Kbd: `⌃X`, the delete slot's own display string) between
+the favorite toggle and the Configure Extension placeholder, and running it takes the delete
+slot's path (`delete_suggestion` + refresh).
+
+Two things fell out of this:
+
+- The UI tracked the Suggestions section as "leading entries" (`sections[0]`), but Favorites is
+  pushed **before** Suggestions whenever the user has favorites — so the ⌃X slot silently did
+  nothing under that condition. The view layer now records the section's real flat range
+  (`suggestionsStart` + `suggestionsCount`) and both the slot and the card row ask
+  `isSuggestionFocus`.
+- The card row only appears on the root layer (Suggestions exist only on the empty query), so the
+  in-command Command section keeps its existing three rows.
