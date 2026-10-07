@@ -152,8 +152,8 @@ function chipLabel(text: string): HTMLSpanElement {
 }
 
 /**
- * Render the avatar chip (ADR-0026): toast > extension (inside a command) > Moe's own avatar.
- * The chip is one row tall and its avatar sits centered on the item icons' x.
+ * Render the avatar chip (ADR-0026): toast > extension (inside a command) > the About button's
+ * own icon. The chip is one row tall; its glyph/avatar sits centered on the item icons' x.
  */
 function renderChip() {
   chipEl.replaceChildren();
@@ -181,7 +181,8 @@ function renderChip() {
     chipEl.title = aboutTitle(`About ${extensionMeta.title}`);
     return;
   }
-  chipEl.append(appAvatarEl());
+  // Root: the About button's own icon (ADR-0026 amendment) — the chip is a button, not the brand
+  chipEl.append(iconEl("message-circle-warning", { size: 18, className: "text-zinc-300" }));
   chipEl.title = aboutTitle("About Moe");
 }
 
@@ -1045,7 +1046,7 @@ function aboutSections(): AboutSection[] {
         {
           id: "about.feedback",
           title: "Send Feedback",
-          icon: "message-circle-warning",
+          icon: "megaphone",
           run: () => void runAboutFeedback(),
         },
       ],

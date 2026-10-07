@@ -33,8 +33,10 @@ body {
 }
 
 /* Avatar chip (ADR-0026): one row tall (matching ROW_HEIGHT in layout.ts, via --moe-row-h).
-   Collapsed = a circle around the app avatar; inside an Extension = its icon + name;
-   while a toast shows = expanded with the toast content. Clicking opens the About card. */
+   Collapsed = a circle around the About button's own icon, centered on the item icons' x;
+   inside an Extension = its icon + name (the app avatar is the fallback when the extension
+   declares no icon); while a toast shows = expanded with the toast content. Clicking opens the
+   About card. */
 .moe-avatar-chip {
   pointer-events: auto;
   display: inline-flex;
@@ -64,7 +66,7 @@ body {
 .moe-avatar-chip:focus-visible {
   outline: none;
 }
-/* The avatar itself: centered exactly on the item icons' x (28px from the card edge) */
+/* The app avatar (20px, circular): the nested fallback when an extension declares no icon. */
 .moe-avatar-img {
   display: block;
   width: 20px;

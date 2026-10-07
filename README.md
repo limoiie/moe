@@ -59,8 +59,9 @@ A **bottom bar** floats over the list, exactly one row tall (ADR-0026) — the l
 right pill line up with the last visible row band, and the chip's avatar is centered on the item
 icons:
 
-- **Avatar chip (bottom-left)**: Moe's own avatar on the root page; once you are inside a command
-  it shows that extension's icon and name. It doubles as the **toast host**: toasts expand the
+- **Avatar chip (bottom-left)**: the About button's own icon
+  (`message-circle-warning`) on the root page; once you are inside a command it shows that
+  extension's icon and name. It doubles as the **toast host**: toasts expand the
   chip into a pill (Raycast-style) instead of popping up anywhere else.
 - **Action pill (bottom-right)**: **primary action** (the focused item's main action; becomes
   "Stop Generation" while generating) and **actions** (`⌘K` / `⌘⇧P`). `⌘K` pops up the **actions

@@ -73,3 +73,14 @@ input edge as the two deliberate differences):
   the flat row order, so headers never interrupt navigation.
 - **The `Action` contract is unchanged**: sections are the card's own grouping (the item's
   actions vs the platform's general entries), not extension-provided metadata.
+## Amendment: the collapsed chip carries the About button's own icon
+
+The chip was described as "a circle around the app avatar" on the root page. It is a *button*
+first — clicking it opens the About card — so its resting face is now the button's own icon,
+`message-circle-warning` (Lucide, 18px, the same glyph slot as the extension icon), not the app
+avatar. Inside a command it still shows the extension's icon and name; an extension without a
+declared icon still falls back to the app avatar, and a toast still takes the chip over while it
+shows.
+
+This retires ADR-0034's "Moe's mark shows twice" cost note: the chip no longer carries the mark —
+the app mark lives in the Input Bar's leading slot.
