@@ -51,6 +51,9 @@ fn group_by_extension(
 #[derive(Default)]
 pub struct Registry {
     extensions: Vec<Box<dyn Extension>>,
+    /// Declared display order of the root page's source groups (ADR-0020 amendment): extension
+    /// ids, most prominent first. Empty = first-encounter order, the pre-amendment behavior.
+    source_order: Vec<String>,
 }
 
 impl Registry {
@@ -60,6 +63,22 @@ impl Registry {
 
     pub fn register(&mut self, extension: Box<dyn Extension>) {
         self.extensions.push(extension);
+    }
+
+    /// Declare the root page's source-group order (ADR-0020 amendment). Display order is decided
+    /// here, separately from registration order — which keeps deciding fallback capture
+    /// precedence (e.g. `key …` must reach Moe's save item before AI's generic ask).
+    pub fn set_source_order(&mut self, ids: &[&str]) {
+        self.source_order = ids.iter().map(|id| (*id).to_string()).collect();
+    }
+
+    /// The display rank of a source (ADR-0020 amendment): the declared position when listed;
+    /// unlisted sources rank last and keep their relative order (stable sort).
+    fn source_rank(&self, extension_id: &str) -> usize {
+        self.source_order
+            .iter()
+            .position(|id| id == extension_id)
+            .unwrap_or(usize::MAX)
     }
 
     pub fn extensions(&self) -> &[Box<dyn Extension>] {
@@ -149,7 +168,12 @@ impl Registry {
                 });
             }
             let rest = commands.into_iter().filter(|cmd| !pinned.contains(&cmd.id));
-            sections.extend(group_by_extension(&self.extensions, rest));
+            // Source groups follow the declared display order (ADR-0020 amendment): the stream is
+            // frecency-sorted, so first-encounter grouping made whole groups swap places as usage
+            // changed. Items inside a group keep frecency order.
+            let mut groups = group_by_extension(&self.extensions, rest);
+            groups.sort_by_key(|section| self.source_rank(&section.items[0].extension_id));
+            sections.extend(groups);
             return sections;
         }
         let ordered: Vec<CommandMeta> = {
@@ -923,42 +947,76 @@ mod tests {
         assert_eq!(hits[0].items.len(), 2);
     }
 
+    /// A second one-command source (id "other", title "Other"), shared by the section-order tests.
+    struct OtherToy;
+    impl Extension for OtherToy {
+        fn id(&self) -> &str {
+            "other"
+        }
+        fn title(&self) -> &str {
+            "Other"
+        }
+        fn commands(&self) -> Vec<CommandMeta> {
+            vec![CommandMeta {
+                id: "other.toy".into(),
+                extension_id: "other".into(),
+                title: "Another Toy".into(),
+                subtitle: None,
+                icon: None,
+                input: InputKind::None,
+                live: false,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
+            }]
+        }
+        fn invoke(
+            &self,
+            _command_id: &str,
+            _query: Option<&str>,
+            _selection: Option<&Selection>,
+        ) -> Result<ActionResult, MoeError> {
+            Err(MoeError::NotFound)
+        }
+    }
+
+    /// ADR-0020 amendment: the root page's source groups follow `set_source_order` (ids first, in
+    /// that order) instead of first-encounter order; unlisted sources rank last, keeping their
+    /// relative order.
+    #[test]
+    fn empty_query_groups_follow_the_declared_source_order() {
+        let mut r = Registry::new();
+        r.register(Box::new(Toy));
+        r.register(Box::new(OtherToy));
+
+        r.set_source_order(&["other", "toy"]);
+        let hits = r.search("", None, &NoFrecency, &Favorites::default());
+        assert_eq!(
+            hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
+            ["Other", "Toy"]
+        );
+
+        r.set_source_order(&["toy"]);
+        let hits = r.search("", None, &NoFrecency, &Favorites::default());
+        assert_eq!(
+            hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
+            ["Toy", "Other"],
+            "an unlisted source ranks after the declared ones"
+        );
+
+        // No declaration = the pre-amendment first-encounter order (registration here)
+        r.set_source_order(&[]);
+        let hits = r.search("", None, &NoFrecency, &Favorites::default());
+        assert_eq!(
+            hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
+            ["Toy", "Other"]
+        );
+    }
+
     /// ADR-0033: a searching page is ONE "Results" section in score order, even when the matches
     /// span multiple extensions (each row still labels its owner, ADR-0030).
     #[test]
     fn search_results_are_one_scored_section_across_extensions() {
-        struct OtherToy;
-        impl Extension for OtherToy {
-            fn id(&self) -> &str {
-                "other"
-            }
-            fn title(&self) -> &str {
-                "Other"
-            }
-            fn commands(&self) -> Vec<CommandMeta> {
-                vec![CommandMeta {
-                    id: "other.toy".into(),
-                    extension_id: "other".into(),
-                    title: "Another Toy".into(),
-                    subtitle: None,
-                    icon: None,
-                    input: InputKind::None,
-                    live: false,
-                    keybinding: None,
-                    extension_title: None,
-                    kind: None,
-                }]
-            }
-            fn invoke(
-                &self,
-                _command_id: &str,
-                _query: Option<&str>,
-                _selection: Option<&Selection>,
-            ) -> Result<ActionResult, MoeError> {
-                Err(MoeError::NotFound)
-            }
-        }
-
         let mut r = Registry::new();
         r.register(Box::new(Toy));
         r.register(Box::new(OtherToy));

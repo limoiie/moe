@@ -22,8 +22,9 @@ centered near the top, ADR-0032); typing searches commands. One set of keybindin
 spans every extension:
 
 On an empty query, root results are **grouped by source** (ADR-0020): one section per extension,
-headed by the extension name (headers are not focusable); section order follows frecency, and
-items keep their score order within a group.
+headed by the extension name (headers are not focusable); the section order is **declared**
+(`set_source_order` in `install()`: AI Commands → AI → Moe → Echo, ADR-0020 amendment — not
+usage-derived), and items keep their frecency order within a group.
 **Typing a query merges everything into one "Results" section in match-score order**
 (ADR-0033 — the row still names its extension, ADR-0030). Each row reads (ADR-0030): **command
 name** (never prefixed with the extension

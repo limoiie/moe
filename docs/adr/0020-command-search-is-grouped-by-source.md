@@ -24,3 +24,17 @@ Command 变多以后（Moe 设置命令、AI 问答、Echo 演示……），用
 - 单一扩展时也会显示组头（Raycast 亦如此），视觉上多一行；换来的是所有页面分组行为一致。
 - UI 同时维护 `sections`（渲染）与 `commands`（导航）两份数据；将来若组头要可折叠或可聚焦，
   焦点模型需要升级（目前组头与焦点完全解耦，改动点是 `render()` 的拍平循环）。
+
+## Amendment: the source order is declared, not derived
+
+The empty query grouped sources by **first encounter in the frecency-sorted stream**, so a heavily
+used command could reorder whole groups between sessions — the page's shape drifted with usage,
+while the pinned Favorites/Suggestions sections already cover "most used on top". The order is now
+**declared**: `Registry::set_source_order` takes extension ids, most prominent first, and
+`install()` states the app's order — today **AI Commands → AI → Moe → Echo**. Unlisted sources rank
+after the declared ones, keeping their relative order (stable sort); items inside a group keep
+frecency order, and the searching page stays one scored "Results" section (ADR-0033).
+
+Registration order is untouched and keeps its own job: **fallback capture precedence** (`key …`
+must reach Moe's save item before AI's generic ask). Display order and capture precedence are now
+separate decisions that happen to coincide today.
