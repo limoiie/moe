@@ -1,14 +1,15 @@
-// UI-side mirror of platform generic actions (ADR-0014/0022). Bindings are set by `moe-core::keymap`:
+// UI-side mirror of platform generic actions (ADR-0014/0022/0029). Bindings are set by `moe-core::keymap`:
 //   Browse ⌘P (record list) · Actions ⌘⇧P (action list) · New ⌘N (new record)
 //   Delete ⌃X (delete current record) · DeleteAll ⌃⇧X (delete all records)
+//   Favorite ⌘⇧F (add/remove the current command from Favorites)
 // Each surface (command panel / Side View / future sub-apps) only does two things:
 //   1. Recognize keyboard events into semantics with `generalActionOf(event)`;
 //   2. Decide where that semantic lands on this surface (panel: the entry/delete hooks an Extension declares; Side View: local views).
 
-export type GeneralAction = "browse" | "actions" | "new" | "delete" | "deleteAll";
+export type GeneralAction = "browse" | "actions" | "new" | "delete" | "deleteAll" | "favorite";
 
-/** The three generic actions that require an Extension-declared entry (one-to-one with Rust `EntryKind`). */
-export type EntryAction = Exclude<GeneralAction, "actions" | "delete" | "deleteAll">;
+/** The generic actions that require an Extension-declared entry (one-to-one with Rust `EntryKind`). */
+export type EntryAction = Exclude<GeneralAction, "actions" | "delete" | "deleteAll" | "favorite">;
 
 /** Display strings (for tooltips/hints), matching the Rust keymap table. */
 export const GENERAL_KEY_LABELS: Record<GeneralAction, string> = {
@@ -17,11 +18,12 @@ export const GENERAL_KEY_LABELS: Record<GeneralAction, string> = {
   new: "⌘N",
   delete: "⌃X",
   deleteAll: "⌃⇧X",
+  favorite: "⌘⇧F",
 };
 
 /**
  * Recognize a generic action; returns null for any other keys.
- * The delete slot only accepts ⌃ (not ⌘); Browse/New only accept ⌘ (⌃P/⌃N are Navigation).
+ * The delete slot only accepts ⌃ (not ⌘); Browse/New/Favorite only accept ⌘ (⌃P/⌃N are Navigation).
  */
 export function generalActionOf(e: KeyboardEvent): GeneralAction | null {
   const key = e.key.toLowerCase();
@@ -32,5 +34,7 @@ export function generalActionOf(e: KeyboardEvent): GeneralAction | null {
   if (!e.metaKey || e.ctrlKey) return null;
   if (key === "p") return e.shiftKey ? "actions" : "browse";
   if (key === "n" && !e.shiftKey) return "new";
+  // Favorite (ADR-0029): ⌘⇧F toggles the current command in/out of Favorites
+  if (key === "f" && e.shiftKey) return "favorite";
   return null;
 }

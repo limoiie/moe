@@ -799,6 +799,35 @@ async function openActionsCard() {
  * The command-level rows (ADR-0029): Add to Favorites toggles immediately; Open Command and
  * Configure Extension stay as disabled placeholders until those features exist.
  */
+/** The command a command-level action acts on: the focused one at the root, the source command inside a command. */
+function currentCommandId(): string | undefined {
+  const v = view.get();
+  if (v.mode === "commands") return v.commands[v.focus]?.id;
+  return v.sourceCommandId;
+}
+
+/**
+ * Toggle a command's favorite state (ADR-0029): shared by the card row and the ⌘⇧F binding.
+ * On the root layer the list re-runs so the Favorites section updates immediately.
+ */
+async function toggleFavorite(commandId: string | undefined) {
+  if (!commandId) return;
+  const v = view.get();
+  closeActionsCard(); // its favorite label is stale now; reopening re-reads it
+  try {
+    const now = await invoke<boolean>("toggle_favorite", { commandId });
+    toast(now ? "Added to Favorites" : "Removed from Favorites");
+    if (v.mode === "commands") await refresh(q.value);
+  } catch (err) {
+    toast(`Failed: ${String(err)}`, "alert");
+  }
+}
+
+/**
+ * The command-level rows (ADR-0029): **Open Command comes first** (the menu shape is fixed even
+ * while the feature is a placeholder), then Add to Favorites (⌘⇧F, works), then Configure
+ * Extension; both placeholders stay disabled until those features exist.
+ */
 async function commandActionRows(commandId: string): Promise<CardRow[]> {
   let favorited = false;
   try {
@@ -814,12 +843,12 @@ async function commandActionRows(commandId: string): Promise<CardRow[]> {
       id: `moe.${root}`,
       title,
       kind: "secondary",
-      keybinding: null,
+      keybinding: root === "favorite" ? GENERAL_KEY_LABELS.favorite : null,
     },
   });
   return [
-    actionCardRow(rootRow("favorite", favorited ? "Remove from Favorites" : "Add to Favorites")),
     actionCardRow(rootRow("openCommand", "Open Command", true)),
+    actionCardRow(rootRow("favorite", favorited ? "Remove from Favorites" : "Add to Favorites")),
     actionCardRow(rootRow("configureExtension", "Configure Extension", true)),
   ];
 }
@@ -859,17 +888,8 @@ async function runActionRow(row: ActionRow | undefined) {
     return;
   }
   if (row.root === "favorite") {
-    // Toggle the command's favorite state (ADR-0029); on the root layer re-run the list so the
-    // Favorites section updates immediately.
-    if (!row.commandId) return;
-    const v = view.get();
-    try {
-      const now = await invoke<boolean>("toggle_favorite", { commandId: row.commandId });
-      toast(now ? "Added to Favorites" : "Removed from Favorites");
-      if (v.mode === "commands") await refresh(q.value);
-    } catch (err) {
-      toast(`Failed: ${String(err)}`, "alert");
-    }
+    // The same path as the ⌘⇧F binding (ADR-0029)
+    await toggleFavorite(row.commandId);
     return;
   }
   if (row.root) return; // disabled placeholders never reach here (the card skips them)
@@ -1363,10 +1383,16 @@ window.addEventListener("keydown", (e) => {
     closeAboutCard();
     return;
   }
-  // Generic actions (ADR-0014/0022): Browse ⌘P / Actions ⌘⇧P / New ⌘N /
-  // Delete ⌃X / DeleteAll ⌃⇧X. Semantics are recognized by the shared keymap module; the landing spot is decided by this surface.
+  // Generic actions (ADR-0014/0022/0029): Browse ⌘P / Actions ⌘⇧P / New ⌘N /
+  // Delete ⌃X / DeleteAll ⌃⇧X / Favorite ⌘⇧F. Semantics are recognized by the shared keymap module; the landing spot is decided by this surface.
   const general = generalActionOf(e);
   if (general) {
+    if (general === "favorite") {
+      // ⌘⇧F toggles the current command's favorite state (ADR-0029), wherever it is on screen
+      e.preventDefault();
+      void toggleFavorite(currentCommandId());
+      return;
+    }
     if (general === "delete" || general === "deleteAll") {
       const v = view.get();
       // The delete slot works on the results layer (ADR-0022)…

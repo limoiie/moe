@@ -1,8 +1,9 @@
 //! Platform-level unified keymap (Keymap). Extensions must not override it; they can only attach shortcuts to their own actions.
 //!
-//! General actions share one set of keybinding semantics across all Commands / sub-apps (ADR-0014/0022):
+//! General actions share one set of keybinding semantics across all Commands / sub-apps (ADR-0014/0022/0029):
 //! Browse (⌘P, record list), Actions (⌘⇧P, action list), New (⌘N, new record),
-//! Delete (⌃X, delete current record), DeleteAll (⌃⇧X, delete all records).
+//! Delete (⌃X, delete current record), DeleteAll (⌃⇧X, delete all records),
+//! Favorite (⌘⇧F, add/remove the current command from Favorites).
 //! The platform only fixes keybindings and routing; concrete entries are declared by Extensions.
 
 use serde::Serialize;
@@ -28,6 +29,8 @@ pub enum SystemKey {
     DeleteAll,
     /// About: open the app's About card (the avatar chip's meta actions: Open Config File / Save AI Key / Send Feedback). Default ⌘⇧K.
     About,
+    /// Favorite: add/remove the current command from Favorites (ADR-0029). General action, default ⌘⇧F.
+    Favorite,
     /// Esc: layered back (with input → clear; on a result layer → back up one layer; otherwise close the panel).
     Back,
     /// Materialize: turn into the Extension's Side View.
@@ -51,6 +54,7 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("⌃X", K::Delete),
         ("⌃⇧X", K::DeleteAll),
         ("⌘⇧K", K::About),
+        ("⌘⇧F", K::Favorite),
         ("Esc", K::Back),
         ("⌘M", K::Materialize),
         ("⌘⇧A", K::Attach),
@@ -76,7 +80,7 @@ mod tests {
         }
         assert_eq!(
             seen.len(),
-            13,
+            14,
             "keep the Hints Bar grouping in sync when adding semantics"
         );
     }
@@ -108,5 +112,16 @@ mod tests {
             .find(|(_, k)| *k == SystemKey::About)
             .map(|(d, _)| *d);
         assert_eq!(display, Some("⌘⇧K"));
+    }
+
+    /// Favorite is a platform semantic too: ⌘⇧F toggles the current command's favorite state (ADR-0029).
+    #[test]
+    fn favorite_keeps_its_default_binding() {
+        let table = default_keymap();
+        let display = table
+            .iter()
+            .find(|(_, k)| *k == SystemKey::Favorite)
+            .map(|(d, _)| *d);
+        assert_eq!(display, Some("⌘⇧F"));
     }
 }

@@ -18,11 +18,14 @@ section above Suggestions (Raycast's Favorites slot).
   same dedup applies to Suggestions versus groups (ADR-0023 kept). Non-empty queries are
   unchanged — favorites are a root-page affordance.
 - **The root actions card** (⌘K / ⌘⇧P on the command layer) shows one **Command** section with
-  three rows:
-  - **Add to Favorites** / **Remove from Favorites** — works; toggling re-runs the root list so
-    the section updates and toasts the new state;
-  - **Open Command** and **Configure Extension** — **disabled placeholders** (dimmed, skipped by
-    ↑↓, never runnable): those features do not exist yet, but the menu shape is final.
+  three rows, in this order:
+  - **Open Command** — **disabled placeholder**, always first (the menu shape is fixed; skipped by
+    ↑↓, never runnable);
+  - **Add to Favorites** / **Remove from Favorites** (`⌘⇧F`) — works; toggling re-runs the root
+    list so the section updates and toasts the new state. The binding is a platform semantic
+    (`SystemKey::Favorite`, default ⌘⇧F) recognized on every surface: at the root it acts on the
+    focused command, inside a command on the source command;
+  - **Configure Extension** — **disabled placeholder** (dimmed, skipped by ↑↓, never runnable).
   The card itself is the shared `createCard` component (ADR-0028), which learns one new concept:
   `CardRow.disabled`.
 - **Inside a command** the same **Command** section is appended after the item's **Actions** and

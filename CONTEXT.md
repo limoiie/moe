@@ -70,10 +70,11 @@ _Avoid_: recents, favorites (favorites are a separate, user-curated section — 
 
 **Favorites**:
 The user-curated section pinned **above Suggestions** on the root page (ADR-0029): commands
-toggled via the root actions card's **Add to Favorites** (remove with the same row). Stored
-platform-level in `favorites.json`, insertion-ordered; a favorited command is not repeated in
-Suggestions or in its source group. The root actions card's **Command** section also holds
-**Open Command** / **Configure Extension** as disabled placeholders.
+toggled via the root actions card's **Add to Favorites** (or `⌘⇧F`; remove with the same row).
+Stored platform-level in `favorites.json`, insertion-ordered; a favorited command is not repeated
+in Suggestions or in its source group. The root actions card's **Command** section starts with
+**Open Command** (disabled placeholder), then the favorite toggle, then **Configure Extension**
+(also a placeholder).
 _Avoid_: bookmarks, pinned, starred (the star is the icon, not the term)
 
 **Page Shape**:
