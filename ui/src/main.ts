@@ -409,10 +409,10 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
     li.append(keys);
   }
   if (e.badge) {
-    // Trailing type badge (ADR-0030): what kind of row this is (Command / AI Command / File…)
+    // Trailing type badge (ADR-0030): what kind of row this is (Command / AI Command / File…);
+    // its text size comes from the shared secondary-text token (styles.css, `.moe-kind-badge`)
     const badge = document.createElement("span");
-    badge.className =
-      "shrink-0 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[10px] leading-none text-zinc-500 group-hover:text-zinc-400";
+    badge.className = "moe-kind-badge";
     badge.textContent = e.badge;
     li.append(badge);
   }
