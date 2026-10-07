@@ -932,6 +932,8 @@ interface AboutRow {
   id: string;
   title: string;
   icon: string;
+  /** Kbd display string (e.g. "⌘,"); rows without a platform binding show none. */
+  keys?: string;
   run: () => void;
 }
 
@@ -954,6 +956,7 @@ function aboutSections(): AboutSection[] {
           id: "about.config",
           title: "Open Config File",
           icon: "settings-2",
+          keys: GENERAL_KEY_LABELS.openConfig,
           run: () => void runAboutConfig(),
         },
         {
@@ -980,6 +983,11 @@ function aboutSections(): AboutSection[] {
 
 async function runAboutConfig() {
   closeAboutCard();
+  await openConfigFile();
+}
+
+/** Open the config file (the `moe.open-config` command); shared by the About row and the ⌘, binding. */
+async function openConfigFile() {
   try {
     await invoke("invoke_command", {
       commandId: "moe.open-config",
@@ -1046,6 +1054,11 @@ function aboutRowEl(row: AboutRow, focused: boolean): HTMLLIElement {
   title.className = "min-w-0 flex-1 truncate";
   title.textContent = row.title;
   li.append(title);
+  if (row.keys) {
+    const keys = kbdEl(row.keys, { firstOnly: true });
+    keys.classList.add("shrink-0");
+    li.append(keys);
+  }
   li.addEventListener("click", () => row.run());
   return li;
 }
@@ -1391,6 +1404,13 @@ window.addEventListener("keydown", (e) => {
       // ⌘⇧F toggles the current command's favorite state (ADR-0029), wherever it is on screen
       e.preventDefault();
       void toggleFavorite(currentCommandId());
+      return;
+    }
+    if (general === "openConfig") {
+      // ⌘, opens the config file (the macOS Preferences convention, ADR-0027 amendment)
+      e.preventDefault();
+      closeAboutCard();
+      void openConfigFile();
       return;
     }
     if (general === "delete" || general === "deleteAll") {

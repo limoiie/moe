@@ -31,6 +31,8 @@ pub enum SystemKey {
     About,
     /// Favorite: add/remove the current command from Favorites (ADR-0029). General action, default ⌘⇧F.
     Favorite,
+    /// OpenConfig: open the config file (`moe.open-config`'s semantic). Default ⌘, — the macOS Preferences convention.
+    OpenConfig,
     /// Esc: layered back (with input → clear; on a result layer → back up one layer; otherwise close the panel).
     Back,
     /// Materialize: turn into the Extension's Side View.
@@ -55,6 +57,7 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("⌃⇧X", K::DeleteAll),
         ("⌘⇧K", K::About),
         ("⌘⇧F", K::Favorite),
+        ("⌘,", K::OpenConfig),
         ("Esc", K::Back),
         ("⌘M", K::Materialize),
         ("⌘⇧A", K::Attach),
@@ -80,7 +83,7 @@ mod tests {
         }
         assert_eq!(
             seen.len(),
-            14,
+            15,
             "keep the Hints Bar grouping in sync when adding semantics"
         );
     }
@@ -123,5 +126,16 @@ mod tests {
             .find(|(_, k)| *k == SystemKey::Favorite)
             .map(|(d, _)| *d);
         assert_eq!(display, Some("⌘⇧F"));
+    }
+
+    /// OpenConfig follows the macOS Preferences convention: ⌘, (ADR-0027 amendment).
+    #[test]
+    fn open_config_keeps_the_preferences_convention() {
+        let table = default_keymap();
+        let display = table
+            .iter()
+            .find(|(_, k)| *k == SystemKey::OpenConfig)
+            .map(|(d, _)| *d);
+        assert_eq!(display, Some("⌘,"));
     }
 }

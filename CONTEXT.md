@@ -187,7 +187,8 @@ _Avoid_: extension badge, logo
 **About Card**:
 The card opened from the avatar chip or ⌘⇧K (ADR-0027): the app's meta actions (Open Config File /
 Save AI Key / Send Feedback) with the search input at the bottom and rows grouped into App /
-Support sections; same UX as the actions card (ADR-0026).
+Support sections; same UX as the actions card (ADR-0026). Rows show their Kbd when the action has
+one (Open Config File = ⌘,); unbound rows show none.
 _Avoid_: settings page, preferences window
 
 **Write Back**:

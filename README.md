@@ -44,6 +44,7 @@ themselves stay listed in their own sections.
 | `⌘⇧A` | Attach | Type/paste a file path, inserted as `@"path"` (ADR-0010) |
 | `⌘⇧K` | About | Open the About card (Open Config File / Save AI Key / Send Feedback; the avatar chip's menu, ADR-0027) |
 | `⌘⇧F` | Favorite | Add/remove the current command from Favorites (root: the focused command; inside a command: the source command, ADR-0029) |
+| `⌘,` | OpenConfig | Open the config file (the macOS Preferences convention; also the About card's first row, ADR-0027) |
 | `Esc` | Layered back | While generating → stop; otherwise actions card → (full-screen) detail → root → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
 | `⌫` | Layered back | Non-empty input = normal delete; **empty input steps back one layer** (like `Esc`, but the root layer never closes the panel, ADR-0017) |
 
@@ -67,7 +68,8 @@ icons:
   after its **Actions**.
 - **About card**: clicking the avatar chip (or `⌘⇧K`, ADR-0027) opens the app's About menu — a
   card with the same UX as the actions card (search input at the bottom): **App** holds
-  **Open Config File** / **Save AI Key**, **Support** holds **Send Feedback**. `↑↓` select,
+  **Open Config File** (`⌘,`) / **Save AI Key**, **Support** holds **Send Feedback**; rows show
+  their Kbd when a binding exists. `↑↓` select,
   `⏎` run, `Esc` or empty `⌫` dismiss, clicking outside closes it.
 
 Every shortcut is rendered as Kbd blocks, one key per block.

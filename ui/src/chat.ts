@@ -314,7 +314,7 @@ function actionSections(): CardSection[] {
     },
     {
       title: "App",
-      rows: [{ title: "Open Config File", icon: "settings-2", run: openConfig }],
+      rows: [{ title: "Open Config File", icon: "settings-2", keys: GENERAL_KEY_LABELS.openConfig, run: openConfig }],
     },
     {
       title: "Window",
@@ -708,6 +708,13 @@ window.addEventListener("keydown", (e) => {
   if (general === "new") {
     e.preventDefault();
     newChat();
+    return;
+  }
+  if (general === "openConfig") {
+    // ⌘, opens the config file (the macOS Preferences convention, ADR-0027 amendment)
+    e.preventDefault();
+    closeActionsCard();
+    openConfig();
     return;
   }
   // Delete slot (ADR-0022): ⌃X deletes the current conversation / focused row in the history card; ⌃⇧X deletes all conversations.
