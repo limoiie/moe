@@ -5,6 +5,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
 import { appendMention, validatePath } from "./attachment";
+import { createCard, type CardSection } from "./card";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
@@ -23,7 +24,9 @@ const closeEl = document.querySelector<HTMLButtonElement>("#close")!;
 const historyCardEl = document.querySelector<HTMLDivElement>("#history-card")!;
 const historySearchEl = document.querySelector<HTMLInputElement>("#history-search")!;
 const historyListEl = document.querySelector<HTMLUListElement>("#history-list")!;
-const actionsMenuEl = document.querySelector<HTMLDivElement>("#actions-menu")!;
+const actionsCardEl = document.querySelector<HTMLDivElement>("#actions-card")!;
+const actionSearchEl = document.querySelector<HTMLInputElement>("#action-search")!;
+const actionListEl = document.querySelector<HTMLUListElement>("#action-list")!;
 const messagesEl = document.querySelector<HTMLElement>("#messages")!;
 const emptyEl = document.querySelector<HTMLDivElement>("#empty")!;
 const errorEl = document.querySelector<HTMLDivElement>("#error")!;
@@ -258,7 +261,7 @@ function conversationItem(conversation: Conversation) {
 }
 
 historyButtonEl.addEventListener("click", () => {
-  closeActionsMenu();
+  closeActionsCard();
   toggleHistoryCard();
 });
 
@@ -289,16 +292,7 @@ historySearchEl.addEventListener("keydown", (e) => {
   }
 });
 
-// ---- More Actions (the ⌘ icon button): menu-style; close on outside click / Esc ----
-
-let actionsOpen = false;
-
-interface MenuAction {
-  label: string;
-  icon: string;
-  shortcut?: string;
-  run: () => void;
-}
+// ---- More Actions card (the ⌘ icon button / ⌘⇧P): the same card as the panel's actions card (ADR-0028) ----
 
 function openConfig() {
   void invoke("invoke_command", {
@@ -311,56 +305,53 @@ function openConfig() {
   );
 }
 
-function menuActions(): MenuAction[] {
+/** The app's commands on this surface, grouped into sections; the card anchors top-center with the input on top. */
+function actionSections(): CardSection[] {
   return [
-    { label: "New Chat", icon: "plus", shortcut: GENERAL_KEY_LABELS.new, run: newChat },
-    { label: "Open Config File", icon: "settings-2", run: openConfig },
-    { label: "Hide Side View", icon: "close", shortcut: "Esc", run: () => void getCurrentWindow().hide() },
+    {
+      title: "Chat",
+      rows: [{ title: "New Chat", icon: "plus", keys: GENERAL_KEY_LABELS.new, run: newChat }],
+    },
+    {
+      title: "App",
+      rows: [{ title: "Open Config File", icon: "settings-2", run: openConfig }],
+    },
+    {
+      title: "Window",
+      rows: [
+        {
+          title: "Hide Side View",
+          icon: "close",
+          keys: "Esc",
+          run: () => void getCurrentWindow().hide(),
+        },
+      ],
+    },
   ];
 }
 
-function renderActionsMenu() {
-  actionsMenuEl.replaceChildren(
-    ...menuActions().map((action) => {
-      const button = document.createElement("button");
-      button.className =
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700/70 hover:text-zinc-50";
-      button.append(iconEl(action.icon, { size: 14, className: "text-zinc-500" }));
-      const label = document.createElement("span");
-      label.className = "min-w-0 flex-1 truncate";
-      label.textContent = action.label;
-      button.append(label);
-      if (action.shortcut) {
-        const keys = kbdEl(action.shortcut, { firstOnly: true });
-        keys.classList.add("shrink-0");
-        button.append(keys);
-      }
-      button.addEventListener("click", () => {
-        closeActionsMenu();
-        action.run();
-      });
-      return button;
-    }),
-  );
-}
-
-function openActionsMenu() {
-  closeHistoryCard();
-  actionsOpen = true;
-  renderActionsMenu();
-  actionsMenuEl.classList.remove("hidden");
-}
-
-function closeActionsMenu() {
-  if (!actionsOpen) return;
-  actionsOpen = false;
-  actionsMenuEl.classList.add("hidden");
-}
-
-actionsButtonEl.addEventListener("click", () => {
-  if (actionsOpen) closeActionsMenu();
-  else openActionsMenu();
+const actionsCard = createCard({
+  cardEl: actionsCardEl,
+  listEl: actionListEl,
+  inputEl: actionSearchEl,
+  onClose: () => composerEl.focus(),
 });
+
+function openActionsCard() {
+  closeHistoryCard();
+  actionsCard.open(actionSections());
+}
+
+function closeActionsCard() {
+  actionsCard.close();
+}
+
+function toggleActionsCard() {
+  if (actionsCard.isOpen()) closeActionsCard();
+  else openActionsCard();
+}
+
+actionsButtonEl.addEventListener("click", () => toggleActionsCard());
 
 // Close on outside click (the buttons' own clicks are handled; exclude the two overlays and the two trigger buttons here)
 document.addEventListener("mousedown", (e) => {
@@ -368,8 +359,8 @@ document.addEventListener("mousedown", (e) => {
   if (historyOpen && !historyCardEl.contains(target) && !historyButtonEl.contains(target)) {
     closeHistoryCard();
   }
-  if (actionsOpen && !actionsMenuEl.contains(target) && !actionsButtonEl.contains(target)) {
-    closeActionsMenu();
+  if (actionsCard.isOpen() && !actionsCardEl.contains(target) && !actionsButtonEl.contains(target)) {
+    closeActionsCard();
   }
 });
 
@@ -584,7 +575,7 @@ void listen<SideOpenPayload>("side-open", (event) => {
   const raw = event.payload?.conversationId;
   conversationId = typeof raw === "string" && raw.length > 0 ? raw : null;
   closeHistoryCard();
-  closeActionsMenu();
+  closeActionsCard();
   setError(null);
   void loadHistory();
   void loadConversations();
@@ -705,13 +696,12 @@ window.addEventListener("keydown", (e) => {
   const general = generalActionOf(e);
   if (general === "actions") {
     e.preventDefault();
-    if (actionsOpen) closeActionsMenu();
-    else openActionsMenu();
+    toggleActionsCard();
     return;
   }
   if (general === "browse") {
     e.preventDefault();
-    closeActionsMenu();
+    closeActionsCard();
     toggleHistoryCard();
     return;
   }
@@ -763,8 +753,8 @@ async function back(options: { quit?: boolean } = {}) {
     closeHistoryCard();
     return;
   }
-  if (actionsOpen) {
-    closeActionsMenu();
+  if (actionsCard.isOpen()) {
+    closeActionsCard();
     return;
   }
   if (generating) {

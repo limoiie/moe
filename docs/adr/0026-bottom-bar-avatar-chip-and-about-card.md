@@ -48,3 +48,28 @@ into a pill. This ADR adopts that layout and turns the left chip into the About 
 - The About card duplicates `openActionsCard`'s rendering code by intent (a few dozen lines):
   the two cards are deliberately separate surfaces with different row sources and input
   placement; a shared abstraction can wait until a third card needs it.
+
+## Amendment: one card language — the input at the bottom, rows in sections
+
+The panel's two cards — the actions card and the About card — are now one layout, so both read
+the same way (the Side View's More Actions card joins them in ADR-0028, with its anchor and its
+input edge as the two deliberate differences):
+
+- **Every card's input sits at the bottom edge** — the actions card's filter input moves from the
+  top edge to the bottom edge, matching the About card; the input-at-the-bottom contrast in the
+  decision above stops being the About card's privilege and becomes the panel's card convention
+  (supersedes ADR-0015's "top input filters" phrasing too). Rows stay anchored to the top edge,
+  so the list does not jump down when the filter narrows it. The Side View's More Actions card is
+  the exception: it anchors top-center and keeps its input on the top edge (ADR-0028).
+- **Rows are grouped into Raycast-style sections**, each headed by a small uppercase label that
+  is not focusable and never participates in ↑↓ navigation (the same header contract as the root
+  page's source sections, ADR-0020): the actions card shows the focused item's **Actions** first
+  and, when the Extension declared them, the platform general actions (Browse ⌘P / New ⌘N,
+  ADR-0014) under **General**; the About card groups its meta actions as **App** (Open Config
+  File, Save AI Key) and **Support** (Send Feedback); the Side View's More Actions menu groups
+  its entries as **Chat** / **App** / **Window**.
+- **Filtering flattens the card** (Raycast): while the filter input is non-empty, matching rows
+  render as one header-less list; clearing the input brings the sections back. ↑↓ always walks
+  the flat row order, so headers never interrupt navigation.
+- **The `Action` contract is unchanged**: sections are the card's own grouping (the item's
+  actions vs the platform's general entries), not extension-provided metadata.

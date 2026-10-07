@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
+import { createCard, type CardRow, type CardSection } from "./card";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
@@ -31,10 +32,15 @@ import type {
 
 // ---- View state ----
 
-/** An entry on the actions layer: actions of the focused item, or platform generic actions (Browse/New, ADR-0014). */
+/** An entry on the actions layer: actions of the focused item, platform generic actions (Browse/New, ADR-0014), or command-level rows (ADR-0029). */
 interface ActionRow {
   action: Action;
   platform?: EntryAction;
+  /** Command-level rows: the favorite toggle works; the other two are disabled placeholders. */
+  root?: "favorite" | "openCommand" | "configureExtension";
+  /** The command a root row acts on (root card = focused command; inside a command = the source command). */
+  commandId?: string;
+  disabled?: boolean;
 }
 
 type Mode = "commands" | "items";
@@ -91,10 +97,22 @@ let detailMode: DetailMode = "none";
 /** After Esc dismisses the preview, it stays collapsed until focus changes (Raycast-style layering). */
 let previewDismissed = false;
 
-/** Actions card (the floating card opened by ⌘K / ⌘⇧P): all actions + filtering, without replacing the body. */
-let actionsCardRows: ActionRow[] = [];
-let actionsCardFocus = 0;
-let actionsCardOpen = false;
+/**
+ * Actions card (the floating card opened by ⌘K / ⌘⇧P): all actions + filtering, without replacing the body.
+ * It is the same card the Side View opens as More Actions (ADR-0028); the panel anchors it bottom-right
+ * with the input at the bottom, and the pill follows its highlighted row.
+ */
+const actionsCard = createCard({
+  cardEl: actionsCardEl,
+  listEl: actionListEl,
+  inputEl: actionSearchEl,
+  emptyText: "This result has no actions",
+  onFocusChange: () => renderActionBar(),
+  onClose: () => {
+    renderActionBar();
+    q.focus();
+  },
+});
 
 // ---- Avatar chip (ADR-0026): the bottom-left card ----
 
@@ -154,11 +172,17 @@ function renderChip() {
         : appAvatarEl(),
       chipLabel(extensionMeta.title),
     );
-    chipEl.title = `About ${extensionMeta.title}`;
+    chipEl.title = aboutTitle(`About ${extensionMeta.title}`);
     return;
   }
   chipEl.append(appAvatarEl());
-  chipEl.title = "About Moe";
+  chipEl.title = aboutTitle("About Moe");
+}
+
+/** The chip's tooltip carries the About binding (from the Rust keymap, like every other display string). */
+function aboutTitle(label: string): string {
+  const keys = keyDisplay.get("about");
+  return keys ? `${label} (${keys})` : label;
 }
 
 /** Fetch (and cache) the extension identity owning `commandId`, then refresh the chip. */
@@ -203,6 +227,7 @@ async function initActionBar() {
     if (!keyDisplay.has(semantic)) keyDisplay.set(semantic, display);
   }
   renderActionBar();
+  renderChip(); // the chip's About tooltip picks up its binding now that the keymap is loaded
 }
 
 /** Primary action of the focused item (same semantics as Apply): returns the title and where a click lands. */
@@ -210,12 +235,12 @@ function primaryActionOf(): { title: string; keys: string; run: () => void; disa
   const v = view.get();
   const applyKeys = keyDisplay.get("apply") ?? "⏎";
   // When the actions card is open: the pill's primary action follows the highlighted action in the card (Raycast-style)
-  if (actionsCardOpen) {
-    const row = filteredActionRows()[actionsCardFocus];
+  if (actionsCard.isOpen()) {
+    const row = actionsCard.focused();
     return {
-      title: row?.action.title ?? "Apply",
-      keys: row?.action.keybinding ?? applyKeys,
-      run: () => void runActionRow(row),
+      title: row?.title ?? "Apply",
+      keys: row?.keys ?? applyKeys,
+      run: () => actionsCard.runFocused(),
       disabled: !row,
     };
   }
@@ -262,8 +287,7 @@ function renderActionBar() {
   actionsButton.title = `All Actions (${actionsKeys})`;
   actionsButton.append(document.createTextNode("Actions"), kbdEl(actionsKeys, { firstOnly: true }));
   actionsButton.addEventListener("click", () => {
-    if (actionsCardOpen) closeActionsCard();
-    else void openActionsCard();
+    toggleActionsCard();
   });
 
   // Buttons must not steal the input bar focus (otherwise a later Enter would re-click the button)
@@ -331,6 +355,15 @@ function sectionHeaderEl(title: string): HTMLLIElement {
   li.className =
     "moe-section-header select-none px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
   li.style.height = `${SECTION_HEADER_HEIGHT}px`;
+  li.textContent = title;
+  return li;
+}
+
+/** Section header inside the About card: the shared card's header type at the About card's row inset (ADR-0026: the two cards duplicate by intent). */
+function cardSectionHeaderEl(title: string): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className =
+    "select-none px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
   li.textContent = title;
   return li;
 }
@@ -708,12 +741,28 @@ function move(delta: number) {
  * Open the actions card (Raycast-style floating card): the focused item's primary/secondary
  * actions, plus the platform generic actions the Extension actually declared (Browse ⌘P / New ⌘N, ADR-0014).
  * The body (command list / results) stays in place; it no longer replaces the whole panel as before.
+ * Rows are grouped into sections (ADR-0026 amendment): the item's own actions, then the platform general ones.
  */
 async function openActionsCard() {
   const v = view.get();
-  if (v.mode !== "items") return;
+  closeAboutCard(); // the two cards are peers: opening one closes the other (like openAboutCard)
+  const sections: CardSection[] = [];
+
+  // Root layer (ADR-0029): the focused command's own menu — favorites (works), plus
+  // Open Command / Configure Extension as disabled placeholders until they exist.
+  if (v.mode === "commands") {
+    const cmd = v.commands[v.focus];
+    if (!cmd) return;
+    const commandRows = await commandActionRows(cmd.id);
+    if (commandRows.length > 0) sections.push({ title: "Command", rows: commandRows });
+    actionsCard.open(sections);
+    return;
+  }
+
   const item = v.items[v.focus];
-  const rows: ActionRow[] = (item?.actions ?? []).map((action) => ({ action }));
+  const itemRows: CardRow[] = (item?.actions ?? []).map((action) => actionCardRow({ action }));
+  const commandRows = v.sourceCommandId ? await commandActionRows(v.sourceCommandId) : [];
+  const generalRows: CardRow[] = [];
   if (v.sourceCommandId) {
     const kinds: EntryAction[] = ["browse", "new"];
     const found = await Promise.all(
@@ -727,106 +776,103 @@ async function openActionsCard() {
     kinds.forEach((kind, index) => {
       const entry = found[index];
       if (!entry) return;
-      rows.push({
-        platform: kind,
-        action: {
-          id: `moe.platform.${kind}`,
-          title: kind === "browse" ? "Browse Records" : "New Record",
-          kind: "secondary",
-          keybinding: GENERAL_KEY_LABELS[kind],
-        },
-      });
+      generalRows.push(
+        actionCardRow({
+          platform: kind,
+          action: {
+            id: `moe.platform.${kind}`,
+            title: kind === "browse" ? "Browse Records" : "New Record",
+            kind: "secondary",
+            keybinding: GENERAL_KEY_LABELS[kind],
+          },
+        }),
+      );
     });
   }
-  actionsCardRows = rows;
-  actionsCardFocus = 0;
-  actionsCardOpen = true;
-  actionSearchEl.value = "";
-  actionsCardEl.classList.remove("hidden");
-  renderActionsCard();
-  actionSearchEl.focus();
-  renderActionBar();
+  if (itemRows.length > 0) sections.push({ title: "Actions", rows: itemRows });
+  if (commandRows.length > 0) sections.push({ title: "Command", rows: commandRows });
+  if (generalRows.length > 0) sections.push({ title: "General", rows: generalRows });
+  actionsCard.open(sections);
 }
 
-/** Close the actions card and return focus to the Input Bar. */
+/**
+ * The command-level rows (ADR-0029): Add to Favorites toggles immediately; Open Command and
+ * Configure Extension stay as disabled placeholders until those features exist.
+ */
+async function commandActionRows(commandId: string): Promise<CardRow[]> {
+  let favorited = false;
+  try {
+    favorited = await invoke<boolean>("is_favorite", { commandId });
+  } catch {
+    // Ignore: the toggle still works, the label just may be stale
+  }
+  const rootRow = (root: NonNullable<ActionRow["root"]>, title: string, disabled = false): ActionRow => ({
+    root,
+    commandId,
+    disabled,
+    action: {
+      id: `moe.${root}`,
+      title,
+      kind: "secondary",
+      keybinding: null,
+    },
+  });
+  return [
+    actionCardRow(rootRow("favorite", favorited ? "Remove from Favorites" : "Add to Favorites")),
+    actionCardRow(rootRow("openCommand", "Open Command", true)),
+    actionCardRow(rootRow("configureExtension", "Configure Extension", true)),
+  ];
+}
+
+/** Close the actions card; returning focus to the Input Bar is the card's onClose hook. */
 function closeActionsCard() {
-  if (!actionsCardOpen) return;
-  actionsCardOpen = false;
-  actionsCardEl.classList.add("hidden");
-  renderActionBar();
-  q.focus();
-}
-
-/** Filter by title (case-insensitive). */
-function filteredActionRows(): ActionRow[] {
-  const needle = actionSearchEl.value.trim().toLowerCase();
-  if (!needle) return actionsCardRows;
-  return actionsCardRows.filter((row) => row.action.title.toLowerCase().includes(needle));
+  actionsCard.close();
 }
 
 function iconOfActionRow(row: ActionRow): string {
+  if (row.root === "favorite") return "star";
+  if (row.root === "openCommand") return "corner-down-left";
+  if (row.root === "configureExtension") return "settings-2";
   if (row.platform) return row.platform === "browse" ? "history" : "plus";
   return row.action.kind === "primary" ? "corner-down-left" : "copy";
 }
 
-function renderActionsCard() {
-  const rows = filteredActionRows();
-  actionsCardFocus = rows.length === 0 ? 0 : Math.min(actionsCardFocus, rows.length - 1);
-  if (rows.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "px-2 py-3 text-xs text-zinc-600";
-    empty.textContent = actionSearchEl.value.trim() ? "No matching actions" : "This result has no actions";
-    actionListEl.replaceChildren(empty);
-    return;
-  }
-  actionListEl.replaceChildren(
-    ...rows.map((row, index) => {
-      const focused = index === actionsCardFocus;
-      const li = document.createElement("li");
-      li.className =
-        "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
-        (focused
-          ? "bg-zinc-700/70 text-zinc-50"
-          : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
-      li.append(
-        iconEl(iconOfActionRow(row), {
-          size: 15,
-          className: focused ? "text-zinc-200" : "text-zinc-500",
-        }),
-      );
-      const title = document.createElement("span");
-      title.className = "min-w-0 flex-1 truncate";
-      title.textContent = row.action.title;
-      li.append(title);
-      const keys = row.action.keybinding ?? (row.action.kind === "primary" ? "⏎" : null);
-      if (keys) {
-        const kbd = kbdEl(keys, { firstOnly: true });
-        kbd.classList.add("shrink-0");
-        li.append(kbd);
-      }
-      li.addEventListener("click", () => void runActionRow(row));
-      return li;
-    }),
-  );
-  actionListEl.children[actionsCardFocus]?.scrollIntoView({ block: "nearest" });
+/** One card row for an ActionRow: the icon/label/Kbd the card always showed; running goes through runActionRow. */
+function actionCardRow(row: ActionRow): CardRow {
+  return {
+    title: row.action.title,
+    icon: iconOfActionRow(row),
+    keys: row.action.keybinding ?? (row.action.kind === "primary" ? "⏎" : null),
+    disabled: row.disabled,
+    run: () => void runActionRow(row),
+  };
 }
 
-function moveActionFocus(delta: number) {
-  const rows = filteredActionRows();
-  if (rows.length === 0) return;
-  actionsCardFocus = (actionsCardFocus + delta + rows.length) % rows.length;
-  renderActionsCard();
-  renderActionBar();
-}
-
-/** Run one entry of the actions card: platform generic actions take the same path as ⌘P/⌘N; the rest go to the Extension. */
+/**
+ * Run one entry of the actions card: platform generic actions take the same path as ⌘P/⌘N; the rest go to the Extension.
+ * The card closes before running (its contract), so this only executes the action.
+ */
 async function runActionRow(row: ActionRow | undefined) {
   if (!row) return;
-  closeActionsCard();
   if (row.platform) {
     await openEntry(row.platform);
     return;
   }
+  if (row.root === "favorite") {
+    // Toggle the command's favorite state (ADR-0029); on the root layer re-run the list so the
+    // Favorites section updates immediately.
+    if (!row.commandId) return;
+    const v = view.get();
+    try {
+      const now = await invoke<boolean>("toggle_favorite", { commandId: row.commandId });
+      toast(now ? "Added to Favorites" : "Removed from Favorites");
+      if (v.mode === "commands") await refresh(q.value);
+    } catch (err) {
+      toast(`Failed: ${String(err)}`, "alert");
+    }
+    return;
+  }
+  if (row.root) return; // disabled placeholders never reach here (the card skips them)
   const v = view.get();
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
   if (!item || !v.sourceCommandId) return;
@@ -857,7 +903,7 @@ async function materialize() {
   }
 }
 
-// ---- About card (ADR-0026): the avatar chip's menu, same UX as the actions card ----
+// ---- About card (ADR-0026): the avatar chip's menu, same UX as the actions card (sections, input at the bottom) ----
 
 /** Feedback lands in the repository's issue tracker. */
 const FEEDBACK_URL = "https://github.com/limoiie/moe/issues";
@@ -869,29 +915,45 @@ interface AboutRow {
   run: () => void;
 }
 
+/** One group inside the About card (ADR-0026 amendment): the app's meta actions under a header. */
+interface AboutSection {
+  title: string;
+  rows: AboutRow[];
+}
+
 let aboutFocus = 0;
 let aboutCardOpen = false;
 
-/** The About menu: the app's own meta actions (ADR-0026). */
-function aboutRows(): AboutRow[] {
+/** The About menu: the app's own meta actions (ADR-0026), grouped into App / Support sections (ADR-0026 amendment). */
+function aboutSections(): AboutSection[] {
   return [
     {
-      id: "about.config",
-      title: "Open Config File",
-      icon: "settings-2",
-      run: () => void runAboutConfig(),
+      title: "App",
+      rows: [
+        {
+          id: "about.config",
+          title: "Open Config File",
+          icon: "settings-2",
+          run: () => void runAboutConfig(),
+        },
+        {
+          id: "about.key",
+          title: "Save AI Key",
+          icon: "key-round",
+          run: () => void runAboutKey(),
+        },
+      ],
     },
     {
-      id: "about.key",
-      title: "Save AI Key",
-      icon: "key-round",
-      run: () => void runAboutKey(),
-    },
-    {
-      id: "about.feedback",
-      title: "Send Feedback",
-      icon: "megaphone",
-      run: () => void runAboutFeedback(),
+      title: "Support",
+      rows: [
+        {
+          id: "about.feedback",
+          title: "Send Feedback",
+          icon: "megaphone",
+          run: () => void runAboutFeedback(),
+        },
+      ],
     },
   ];
 }
@@ -935,14 +997,42 @@ async function runAboutFeedback() {
   }
 }
 
-function filteredAboutRows(): AboutRow[] {
+/** Filter rows by title (case-insensitive); a section whose rows all filtered out disappears. */
+function filteredAboutSections(): AboutSection[] {
   const needle = aboutSearchEl.value.trim().toLowerCase();
-  if (!needle) return aboutRows();
-  return aboutRows().filter((row) => row.title.toLowerCase().includes(needle));
+  if (!needle) return aboutSections();
+  return aboutSections()
+    .map((section) => ({
+      title: section.title,
+      rows: section.rows.filter((row) => row.title.toLowerCase().includes(needle)),
+    }))
+    .filter((section) => section.rows.length > 0);
+}
+
+/** The card's rows in navigation order: the flat concatenation of its sections (focus indexes this list). */
+function filteredAboutRows(): AboutRow[] {
+  return filteredAboutSections().flatMap((section) => section.rows);
+}
+
+function aboutRowEl(row: AboutRow, focused: boolean): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className =
+    "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
+    (focused
+      ? "bg-zinc-700/70 text-zinc-50"
+      : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
+  li.append(iconEl(row.icon, { size: 15, className: focused ? "text-zinc-200" : "text-zinc-500" }));
+  const title = document.createElement("span");
+  title.className = "min-w-0 flex-1 truncate";
+  title.textContent = row.title;
+  li.append(title);
+  li.addEventListener("click", () => row.run());
+  return li;
 }
 
 function renderAboutCard() {
-  const rows = filteredAboutRows();
+  const sections = filteredAboutSections();
+  const rows = sections.flatMap((section) => section.rows);
   aboutFocus = rows.length === 0 ? 0 : Math.min(aboutFocus, rows.length - 1);
   if (rows.length === 0) {
     const empty = document.createElement("li");
@@ -951,27 +1041,22 @@ function renderAboutCard() {
     aboutListEl.replaceChildren(empty);
     return;
   }
-  aboutListEl.replaceChildren(
-    ...rows.map((row, index) => {
-      const focused = index === aboutFocus;
-      const li = document.createElement("li");
-      li.className =
-        "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
-        (focused
-          ? "bg-zinc-700/70 text-zinc-50"
-          : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
-      li.append(
-        iconEl(row.icon, { size: 15, className: focused ? "text-zinc-200" : "text-zinc-500" }),
-      );
-      const title = document.createElement("span");
-      title.className = "min-w-0 flex-1 truncate";
-      title.textContent = row.title;
-      li.append(title);
-      li.addEventListener("click", () => row.run());
-      return li;
-    }),
-  );
-  aboutListEl.children[aboutFocus]?.scrollIntoView({ block: "nearest" });
+  // Raycast-style: while filtering, matches render as one flat list without headers; headers return with the cleared input.
+  const showHeaders = aboutSearchEl.value.trim() === "";
+  const lis: HTMLLIElement[] = [];
+  let flat = 0;
+  let focusedLi: HTMLLIElement | null = null;
+  for (const section of sections) {
+    if (showHeaders) lis.push(cardSectionHeaderEl(section.title));
+    for (const row of section.rows) {
+      const li = aboutRowEl(row, flat === aboutFocus);
+      if (flat === aboutFocus) focusedLi = li;
+      lis.push(li);
+      flat += 1;
+    }
+  }
+  aboutListEl.replaceChildren(...lis);
+  focusedLi?.scrollIntoView({ block: "nearest" });
 }
 
 function moveAboutFocus(delta: number) {
@@ -1112,7 +1197,7 @@ async function back(options: { quit?: boolean } = {}) {
     return;
   }
   // The actions card is an overlay: close it first, then back out further (Raycast-style)
-  if (actionsCardOpen) {
+  if (actionsCard.isOpen()) {
     closeActionsCard();
     return;
   }
@@ -1323,7 +1408,11 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key === "Enter") {
     e.preventDefault();
     void applyFocused(e.altKey);
-  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+  } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "k") {
+    // About (⌘⇧K, ADR-0027): the chip's card, with a platform binding
+    e.preventDefault();
+    toggleAboutCard();
+  } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "k") {
     e.preventDefault();
     toggleActionsCard();
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "m") {
@@ -1337,45 +1426,19 @@ window.addEventListener("keydown", (e) => {
 
 /** Actions card toggle (⌘K / ⌘⇧P / the "Actions" button on the pill). */
 function toggleActionsCard() {
-  if (actionsCardOpen) closeActionsCard();
+  if (actionsCard.isOpen()) closeActionsCard();
   else void openActionsCard();
 }
-
-// The actions card's own bindings: ↑↓ select, ⏎ run, Esc/empty Backspace closes (Raycast-style)
-actionSearchEl.addEventListener("input", () => {
-  actionsCardFocus = 0;
-  renderActionsCard();
-  renderActionBar();
-});
 
 // Click outside the card/pill to close (the pill is excluded, otherwise it would cancel the "Actions" button's click)
 document.addEventListener("mousedown", (e) => {
   const target = e.target as Node;
-  if (actionsCardOpen && !actionsCardEl.contains(target) && !actionBarEl.contains(target)) {
+  if (actionsCard.isOpen() && !actionsCardEl.contains(target) && !actionBarEl.contains(target)) {
     closeActionsCard();
   }
   // The about card closes when clicking outside it or the chip it belongs to (ADR-0026)
   if (aboutCardOpen && !aboutCardEl.contains(target) && !chipEl.contains(target)) {
     closeAboutCard();
-  }
-});
-
-actionSearchEl.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    e.stopPropagation();
-    moveActionFocus(e.key === "ArrowDown" ? 1 : -1);
-  } else if (e.key === "Enter" && !e.isComposing) {
-    e.preventDefault();
-    e.stopPropagation();
-    void runActionRow(filteredActionRows()[actionsCardFocus]);
-  } else if (
-    e.key === "Escape" ||
-    (e.key === "Backspace" && actionSearchEl.value === "" && !e.repeat)
-  ) {
-    e.preventDefault();
-    e.stopPropagation();
-    closeActionsCard();
   }
 });
 

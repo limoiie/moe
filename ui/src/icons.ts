@@ -34,6 +34,7 @@ import {
   Sparkles,
   SpellCheck,
   Square,
+  Star,
   Terminal,
   TriangleAlert,
   Wand2,
@@ -67,6 +68,8 @@ const ICONS: Record<string, IconNode> = {
   smile: Smile,
   lightbulb: Lightbulb,
   "arrow-right": ArrowRight,
+  // Favorites (ADR-0029)
+  star: Star,
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
   command: Command,

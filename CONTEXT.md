@@ -63,10 +63,18 @@ extension with a new section.
 _Avoid_: category
 
 **Suggestions**:
-The first section on an empty input: the most recently used commands (at most 5, most recent
+The section on an empty input listing the most recently used commands (at most 5, most recent
 first, ADR-0023). Hidden when nothing has been used yet; typing switches back to normal matching
 (Raycast-style). ⌃X forgets one, ⌃⇧X clears all (ADR-0025).
-_Avoid_: recents, favorites (Suggestions means specifically this top group)
+_Avoid_: recents, favorites (favorites are a separate, user-curated section — see Favorites)
+
+**Favorites**:
+The user-curated section pinned **above Suggestions** on the root page (ADR-0029): commands
+toggled via the root actions card's **Add to Favorites** (remove with the same row). Stored
+platform-level in `favorites.json`, insertion-ordered; a favorited command is not repeated in
+Suggestions or in its source group. The root actions card's **Command** section also holds
+**Open Command** / **Configure Extension** as disabled placeholders.
+_Avoid_: bookmarks, pinned, starred (the star is the icon, not the term)
 
 **Page Shape**:
 Result pages have exactly three shapes: **list** (single column), **split** (list on the left +
@@ -176,8 +184,9 @@ and opens the **About card** on click.
 _Avoid_: extension badge, logo
 
 **About Card**:
-The card opened from the avatar chip: the app's meta actions (Open Config File / Save AI Key /
-Send Feedback) with a search input at the bottom; same UX as the actions card (ADR-0026).
+The card opened from the avatar chip or ⌘⇧K (ADR-0027): the app's meta actions (Open Config File /
+Save AI Key / Send Feedback) with the search input at the bottom and rows grouped into App /
+Support sections; same UX as the actions card (ADR-0026).
 _Avoid_: settings page, preferences window
 
 **Write Back**:

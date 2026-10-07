@@ -55,7 +55,8 @@
         <div id="action-bar" class="moe-action-bar"></div>
       </div>
 
-      <!-- About card (ADR-0026): the same UX as the actions card, with the search input at the bottom -->
+      <!-- About card (ADR-0026): the avatar chip's menu — same UX as the actions card: rows grouped
+           into sections (App / Support), the search input at the bottom -->
       <div
         id="about-card"
         class="moe-about-card absolute bottom-14 left-2 z-20 hidden w-80 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 backdrop-blur-xl"
@@ -69,18 +70,19 @@
         />
       </div>
 
-      <!-- Actions card (⌘K / ⌘⇧P): floating card, input + filtered action list, never replaces the body -->
+      <!-- Actions card (⌘K / ⌘⇧P): floating card that never replaces the body — grouped action list
+           (sections), the filter input at the bottom, same card language as the About card -->
       <div
         id="actions-card"
         class="moe-actions-card absolute bottom-14 right-2 z-20 hidden w-80 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 backdrop-blur-xl"
       >
+        <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
         <input
           id="action-search"
-          class="w-full border-b border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+          class="w-full border-t border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
           placeholder="Filter actions…"
           spellcheck="false"
         />
-        <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

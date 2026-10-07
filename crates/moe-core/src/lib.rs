@@ -2,6 +2,7 @@
 
 pub mod contract;
 pub mod conversation;
+pub mod favorites;
 pub mod frecency;
 pub mod keymap;
 pub mod registry;

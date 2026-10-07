@@ -2,6 +2,7 @@ use crate::contract::{
     Action, ActionResult, CommandMeta, CommandSection, Emitter, EntryKind, Extension,
     ExtensionMeta, Item, MoeError, NoopEmitter, Selection,
 };
+use crate::favorites::Favorites;
 use crate::frecency::FrecencyLookup;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -11,6 +12,8 @@ use std::sync::Arc;
 const SUGGESTION_LIMIT: usize = 5;
 /// Suggestions section header (Raycast-style semantics; other section headers are extension names).
 const SUGGESTIONS_TITLE: &str = "Suggestions";
+/// "Favorites" section header (ADR-0027): user-curated commands, pinned above Suggestions.
+const FAVORITES_TITLE: &str = "Favorites";
 
 /// Group an ordered command list by "source" (Extension); group order = order of each group's best item
 /// (matching score order on a query; frecency order on an empty query).
@@ -66,14 +69,16 @@ impl Registry {
     }
 
     /// Command palette search: nucleo fuzzy matching scores, frecency breaks ties.
-    /// Empty query: a "Suggestions" section is pinned on top (recently used commands, IIE4AD-395), then grouped by source;
-    /// non-empty query: grouped by source (Extension) (ADR-0020), groups ordered by their best item and items keeping score order within a group;
-    /// `selection` matters only in the "no match → fallback" step.
+    /// Empty query: a "Favorites" section is pinned on top (user-curated, ADR-0027), then a "Suggestions"
+    /// section (recently used commands, IIE4AD-395), then grouped by source; non-empty query: grouped by
+    /// source (Extension) (ADR-0020), groups ordered by their best item and items keeping score order within
+    /// a group; `selection` matters only in the "no match → fallback" step.
     pub fn search(
         &self,
         query: &str,
         selection: Option<&Selection>,
         frecency: &dyn FrecencyLookup,
+        favorites: &Favorites,
     ) -> Vec<CommandSection> {
         let q = query.trim();
         if q.is_empty() {
@@ -84,20 +89,37 @@ impl Registry {
                     .partial_cmp(&frecency.frecency(&a.id))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
+            let mut sections = Vec::new();
+            // Favorites (ADR-0027): pinned first, in user order; ids of commands that no longer
+            // exist (extension removed or renamed) are skipped silently.
+            let mut pinned: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let favorite_items: Vec<CommandMeta> = favorites
+                .ids()
+                .iter()
+                .filter_map(|id| commands.iter().find(|cmd| &cmd.id == id).cloned())
+                .collect();
+            if !favorite_items.is_empty() {
+                pinned.extend(favorite_items.iter().map(|cmd| cmd.id.clone()));
+                sections.push(CommandSection {
+                    title: FAVORITES_TITLE.into(),
+                    items: favorite_items,
+                });
+            }
             // Suggestions (IIE4AD-395): recently used commands pinned as their own section;
-            // remaining commands group by extension as usual, without repeating those already suggested.
+            // remaining commands group by extension as usual, without repeating favorites/suggestions.
             let mut used: Vec<(u64, CommandMeta)> = commands
                 .iter()
+                .filter(|cmd| !pinned.contains(&cmd.id))
                 .filter_map(|cmd| frecency.last_used(&cmd.id).map(|t| (t, cmd.clone())))
                 .collect();
             used.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
-            let mut sections = Vec::new();
             if !used.is_empty() {
                 let suggested: std::collections::HashSet<String> = used
                     .iter()
                     .take(SUGGESTION_LIMIT)
                     .map(|(_, cmd)| cmd.id.clone())
                     .collect();
+                pinned.extend(suggested);
                 sections.push(CommandSection {
                     title: SUGGESTIONS_TITLE.into(),
                     items: used
@@ -106,13 +128,10 @@ impl Registry {
                         .map(|(_, cmd)| cmd)
                         .collect(),
                 });
-                let rest = commands
-                    .into_iter()
-                    .filter(|cmd| !suggested.contains(&cmd.id));
-                sections.extend(group_by_extension(&self.extensions, rest));
-                return sections;
             }
-            return group_by_extension(&self.extensions, commands.into_iter());
+            let rest = commands.into_iter().filter(|cmd| !pinned.contains(&cmd.id));
+            sections.extend(group_by_extension(&self.extensions, rest));
+            return sections;
         }
         let ordered: Vec<CommandMeta> = {
             let pattern = Pattern::parse(q, CaseMatching::Smart, Normalization::Smart);
@@ -623,7 +642,7 @@ mod tests {
 
         let mut r = Registry::new();
         r.register(Box::new(FallbackToy));
-        let hits = r.search("hello", None, &NoFrecency);
+        let hits = r.search("hello", None, &NoFrecency, &Favorites::default());
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "Fallback");
         assert!(hits[0].items[0].title.contains("hello"));
@@ -632,7 +651,7 @@ mod tests {
         let mut r = Registry::new();
         r.register(Box::new(FallbackToy));
         r.register(Box::new(Toy));
-        let hits = r.search("toy", None, &NoFrecency);
+        let hits = r.search("toy", None, &NoFrecency, &Favorites::default());
         assert!(flat(&hits).iter().all(|c| c.id != "fb.ask"));
     }
 
@@ -832,7 +851,7 @@ mod tests {
 
     #[test]
     fn empty_query_lists_everything() {
-        let hits = registry().search("", None, &NoFrecency);
+        let hits = registry().search("", None, &NoFrecency, &Favorites::default());
         assert_eq!(hits.len(), 1, "single extension => single section");
         assert_eq!(hits[0].title, "Toy");
         assert_eq!(hits[0].items.len(), 2);
@@ -867,7 +886,12 @@ mod tests {
     #[test]
     fn empty_query_prepends_recent_suggestions() {
         // Toy has two commands; only toy.list has a use record
-        let hits = registry().search("", None, &recent(&[("toy.list", 100)]));
+        let hits = registry().search(
+            "",
+            None,
+            &recent(&[("toy.list", 100)]),
+            &Favorites::default(),
+        );
         assert_eq!(
             hits.len(),
             2,
@@ -895,7 +919,12 @@ mod tests {
         // No suggestions section on a non-empty query (Raycast-style: suggestions appear only on empty input)
         assert!(
             registry()
-                .search("toy", None, &recent(&[("toy.list", 100)]))
+                .search(
+                    "toy",
+                    None,
+                    &recent(&[("toy.list", 100)]),
+                    &Favorites::default()
+                )
                 .iter()
                 .all(|s| s.title != "Suggestions")
         );
@@ -953,6 +982,7 @@ mod tests {
             "",
             None,
             &RecentFrecency(used.into_iter().map(|(id, t)| (id, (0.0, t))).collect()),
+            &Favorites::default(),
         );
         assert_eq!(hits[0].title, "Suggestions");
         assert_eq!(
@@ -983,12 +1013,12 @@ mod tests {
         let mut frecency = Frecency::default();
         frecency.record("toy.hello", std::time::SystemTime::now());
 
-        let hits = r.search("", None, &frecency);
+        let hits = r.search("", None, &frecency, &Favorites::default());
         assert_eq!(hits[0].title, "Suggestions");
         assert_eq!(hits[0].items[0].id, "toy.hello");
 
         frecency.remove("toy.hello");
-        let hits = r.search("", None, &frecency);
+        let hits = r.search("", None, &frecency, &Favorites::default());
         assert!(
             hits.iter().all(|s| s.title != "Suggestions"),
             "no usage left => no Suggestions section"
@@ -1002,14 +1032,64 @@ mod tests {
         frecency.record("toy.list", std::time::SystemTime::now());
         frecency.record("toy.hello", std::time::SystemTime::now());
         frecency.clear();
-        let hits = r.search("", None, &frecency);
+        let hits = r.search("", None, &frecency, &Favorites::default());
         assert!(hits.iter().all(|s| s.title != "Suggestions"));
         assert_eq!(flat(&hits).len(), 2, "both commands still listed");
     }
 
+    /// Favorites (ADR-0027): pinned above Suggestions in user order; not repeated below;
+    /// unknown ids (extension gone) are skipped silently.
+    #[test]
+    fn favorites_are_pinned_above_suggestions_without_repeats() {
+        let mut favorites = Favorites::default();
+        favorites.toggle("toy.hello");
+        favorites.toggle("missing.command");
+        let hits = registry().search("", None, &recent(&[("toy.list", 100)]), &favorites);
+        assert_eq!(
+            hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
+            ["Favorites", "Suggestions"],
+            "favorites sit above suggestions; both toy commands are pinned so no Toy group remains"
+        );
+        assert_eq!(hits[0].items[0].id, "toy.hello");
+        // The favorite is not repeated in Suggestions (toy.list) nor in its own group
+        let below: Vec<&str> = flat(&hits[1..]).iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(below, ["toy.list"], "favorites are not repeated below");
+        // Unknown ids are skipped silently (no panic, no empty section for them)
+        assert!(hits[0].items.iter().all(|c| c.id != "missing.command"));
+    }
+
+    /// Without favorites the top section stays Suggestions (existing behavior, IIE4AD-395).
+    #[test]
+    fn no_favorites_means_no_favorites_section() {
+        let hits = registry().search(
+            "",
+            None,
+            &recent(&[("toy.list", 100)]),
+            &Favorites::default(),
+        );
+        assert_eq!(hits[0].title, "Suggestions");
+    }
+
+    /// The empty-query top order is Favorites → Suggestions → sources even when only favorites exist.
+    #[test]
+    fn favorites_alone_still_show_before_sources() {
+        let mut favorites = Favorites::default();
+        favorites.toggle("toy.list");
+        let hits = registry().search("", None, &NoFrecency, &favorites);
+        assert_eq!(hits[0].title, "Favorites");
+        assert_eq!(hits[0].items.len(), 1);
+        assert_eq!(hits[1].title, "Toy");
+        assert!(hits[1].items.iter().all(|c| c.id != "toy.list"));
+    }
+
     #[test]
     fn empty_query_orders_by_frecency() {
-        let hits = registry().search("", None, &fixed(&[("toy.hello", 9.0)]));
+        let hits = registry().search(
+            "",
+            None,
+            &fixed(&[("toy.hello", 9.0)]),
+            &Favorites::default(),
+        );
         assert_eq!(
             flat(&hits)
                 .iter()
@@ -1021,7 +1101,7 @@ mod tests {
 
     #[test]
     fn search_matches_title_and_extension() {
-        let hits = registry().search("list", None, &NoFrecency);
+        let hits = registry().search("list", None, &NoFrecency, &Favorites::default());
         assert_eq!(
             flat(&hits)
                 .iter()
@@ -1029,9 +1109,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["toy.list"]
         );
-        assert_eq!(flat(&registry().search("toy", None, &NoFrecency)).len(), 2);
+        assert_eq!(
+            flat(&registry().search("toy", None, &NoFrecency, &Favorites::default())).len(),
+            2
+        );
         // Subtitles are indexed too ("backspace demo" exists only in toy.hello's subtitle)
-        let hits = registry().search("pace", None, &NoFrecency);
+        let hits = registry().search("pace", None, &NoFrecency, &Favorites::default());
         assert_eq!(
             flat(&hits)
                 .iter()
@@ -1044,7 +1127,7 @@ mod tests {
     #[test]
     fn fuzzy_subsequence_matches_and_prefix_wins() {
         // "tl": a subsequence of "Toy: List"; in "Hello Toy" l precedes t, so no match
-        let hits = registry().search("tl", None, &NoFrecency);
+        let hits = registry().search("tl", None, &NoFrecency, &Favorites::default());
         assert_eq!(
             flat(&hits)
                 .iter()
@@ -1052,9 +1135,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["toy.list"]
         );
-        assert!(registry().search("zzz", None, &NoFrecency).is_empty());
+        assert!(
+            registry()
+                .search("zzz", None, &NoFrecency, &Favorites::default())
+                .is_empty()
+        );
         // Prefix match beats subsequence match
-        let hits = registry().search("toy", None, &NoFrecency);
+        let hits = registry().search("toy", None, &NoFrecency, &Favorites::default());
         assert_eq!(flat(&hits).first().map(|c| c.id.as_str()), Some("toy.list"));
     }
 
@@ -1093,7 +1180,12 @@ mod tests {
         let mut r = Registry::new();
         r.register(Box::new(Twin("a")));
         r.register(Box::new(Twin("b")));
-        let hits = r.search("deploy", None, &fixed(&[("b.deploy", 9.0)]));
+        let hits = r.search(
+            "deploy",
+            None,
+            &fixed(&[("b.deploy", 9.0)]),
+            &Favorites::default(),
+        );
         assert_eq!(
             flat(&hits)
                 .iter()

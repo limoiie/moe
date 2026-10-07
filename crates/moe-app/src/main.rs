@@ -142,8 +142,10 @@ struct AppState {
     selection: Mutex<Option<Selection>>,
     /// The platform implementation of selection read and write-back (ADR-0002).
     text_target: Box<dyn moe_platform::TextTarget>,
-    /// Command usage records (platform-level, IIE4AD-346); lock order: frecency before registry.
+    /// Command usage records (platform-level, IIE4AD-346); lock order: frecency → favorites → registry.
     frecency: Mutex<Frecency>,
+    /// User-curated favorites (platform-level, ADR-0027): pinned above Suggestions on the root page.
+    favorites: Mutex<moe_core::favorites::Favorites>,
     /// When the panel was last shown (blur-to-dismiss must ignore the showing transient).
     last_shown: Mutex<Option<std::time::Instant>>,
 }
@@ -434,13 +436,15 @@ fn keymap() -> Vec<(&'static str, SystemKey)> {
 fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandSection> {
     // The selection only matters for the "no match → fallback" path (e.g. an AI prompt uses the selected text as context); grab it and release.
     let selection = state.selection.lock().expect("selection poisoned").clone();
-    // Lock order: frecency before registry (the invoke path never holds nested locks)
+    // Lock order: frecency, favorites, then registry (the invoke path never holds nested locks)
     let frecency = state.frecency.lock().expect("frecency poisoned");
-    state
-        .registry
-        .lock()
-        .expect("registry poisoned")
-        .search(&query, selection.as_ref(), &*frecency)
+    let favorites = state.favorites.lock().expect("favorites poisoned");
+    state.registry.lock().expect("registry poisoned").search(
+        &query,
+        selection.as_ref(),
+        &*frecency,
+        &favorites,
+    )
 }
 
 /// Entry lookup for the generic actions Browse (⌘P) / New (⌘N) (ADR-0014):
@@ -549,6 +553,25 @@ fn extension_meta(state: State<'_, AppState>, command_id: String) -> Option<Exte
         .lock()
         .expect("registry poisoned")
         .extension_meta(&command_id)
+}
+
+/// Toggle a command's favorite state (ADR-0027); returns the new state.
+#[tauri::command]
+fn toggle_favorite(state: State<'_, AppState>, command_id: String) -> bool {
+    let mut favorites = state.favorites.lock().expect("favorites poisoned");
+    let now = favorites.toggle(&command_id);
+    moe_platform::store::save_favorites(&favorites);
+    now
+}
+
+/// Whether a command is currently favorited (the actions card's label, ADR-0027).
+#[tauri::command]
+fn is_favorite(state: State<'_, AppState>, command_id: String) -> bool {
+    state
+        .favorites
+        .lock()
+        .expect("favorites poisoned")
+        .contains(&command_id)
 }
 
 /// Open an external URL in the default browser (About card → Send Feedback, ADR-0026).
@@ -831,6 +854,7 @@ fn main() {
             selection: Mutex::new(None),
             text_target,
             frecency: Mutex::new(moe_platform::store::load_frecency()),
+            favorites: Mutex::new(moe_platform::store::load_favorites()),
             last_shown: Mutex::new(None),
         });
 
@@ -994,6 +1018,8 @@ fn main() {
             delete_all,
             delete_suggestion,
             clear_suggestions,
+            toggle_favorite,
+            is_favorite,
             extension_meta,
             open_external,
             hide_panel,

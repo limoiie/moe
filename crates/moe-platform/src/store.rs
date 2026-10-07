@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use moe_core::favorites::Favorites;
 use moe_core::frecency::Frecency;
 use serde::{Deserialize, Serialize};
 
@@ -40,10 +41,49 @@ pub fn save_frecency(frecency: &Frecency) {
     match serde_json::to_string(frecency) {
         Ok(json) => {
             if let Err(err) = std::fs::write(&path, json) {
-                eprintln!("moe: frecency save failed: {err}");
+                eprintln!("moe: saving frecency failed: {err}");
             }
         }
-        Err(err) => eprintln!("moe: frecency serialization failed: {err}"),
+        Err(err) => eprintln!("moe: serializing frecency failed: {err}"),
+    }
+}
+
+/// `data_dir/moe/favorites.json` — the user-curated command set (ADR-0027), platform-level
+/// (outside every Namespace, like frecency).
+pub fn favorites_path() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join("moe").join("favorites.json"))
+}
+
+pub fn load_favorites() -> Favorites {
+    let Some(path) = favorites_path() else {
+        return Favorites::default();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|err| {
+            eprintln!(
+                "moe: parsing {} failed ({err}); favorites reset",
+                path.display()
+            );
+            Favorites::default()
+        }),
+        Err(_) => Favorites::default(),
+    }
+}
+
+pub fn save_favorites(favorites: &Favorites) {
+    let Some(path) = favorites_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match serde_json::to_string(favorites) {
+        Ok(json) => {
+            if let Err(err) = std::fs::write(&path, json) {
+                eprintln!("moe: saving favorites failed: {err}");
+            }
+        }
+        Err(err) => eprintln!("moe: serializing favorites failed: {err}"),
     }
 }
 
@@ -100,6 +140,20 @@ pub fn save_window_frame(name: &str, frame: WindowFrame) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Favorites JSON shape (ADR-0027): a flat `ids` list, round-trippable.
+    #[test]
+    fn favorites_serialize_as_an_ordered_id_list() {
+        let mut favorites = Favorites::default();
+        favorites.toggle("ai.quick-ask");
+        favorites.toggle("moe.open-config");
+        let json = serde_json::to_string(&favorites).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["ids"][0], "ai.quick-ask");
+        assert_eq!(parsed["ids"][1], "moe.open-config");
+        let back: Favorites = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, favorites);
+    }
 
     #[test]
     fn window_frames_round_trip_in_memory() {

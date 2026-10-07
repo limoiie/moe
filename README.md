@@ -2,7 +2,7 @@
 
 A keyboard-first desktop command palette: double-tap ⌘ in any app to summon a centered panel,
 search commands, and write results back to the selection or cursor. Product language lives in
-`CONTEXT.md`; every design decision lives in `docs/adr/0001–0026`.
+`CONTEXT.md`; every design decision lives in `docs/adr/0001–0029`.
 
 ## Install (macOS)
 
@@ -23,11 +23,12 @@ spans every extension:
 Root results are **grouped by source** (ADR-0020): one section per extension, headed by the
 extension name (headers are not focusable); section order follows each group's best item
 (match score when searching, frecency on an empty query), and items keep their score order
-within a group. On an empty query there is also a **Suggestions** section on top (ADR-0023):
-the most recently used commands (at most 5, most recent first) that are not repeated in the
-sections below; it is hidden when nothing has been used yet. **⌃X forgets the focused
-suggestion, ⌃⇧X clears all recent usage** (ADR-0025) — the commands themselves stay listed
-in their own sections.
+within a group. On an empty query two pinned sections sit on top: **Favorites** (ADR-0029 — the
+commands you starred via the root actions card, in the order you added them) and then
+**Suggestions** (ADR-0023 — the most recently used commands, at most 5, most recent first);
+nothing pinned is repeated in the sections below, and both are hidden while empty.
+**⌃X forgets the focused suggestion, ⌃⇧X clears all recent usage** (ADR-0025) — the commands
+themselves stay listed in their own sections.
 
 | Keys | Semantics | Notes |
 |---|---|---|
@@ -41,6 +42,7 @@ in their own sections.
 | `⌃⇧X` | DeleteAll | Delete all records (AI = all conversations; also clears all suggestions, ADR-0022/0025) |
 | `⌘M` | Materialize | Move the current conversation into the extension's Side View |
 | `⌘⇧A` | Attach | Type/paste a file path, inserted as `@"path"` (ADR-0010) |
+| `⌘⇧K` | About | Open the About card (Open Config File / Save AI Key / Send Feedback; the avatar chip's menu, ADR-0027) |
 | `Esc` | Layered back | While generating → stop; otherwise actions card → (full-screen) detail → root → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
 | `⌫` | Layered back | Non-empty input = normal delete; **empty input steps back one layer** (like `Esc`, but the root layer never closes the panel, ADR-0017) |
 
@@ -53,12 +55,18 @@ icons:
   chip into a pill (Raycast-style) instead of popping up anywhere else.
 - **Action pill (bottom-right)**: **primary action** (the focused item's main action; becomes
   "Stop Generation" while generating) and **actions** (`⌘K` / `⌘⇧P`). `⌘K` pops up the **actions
-  card**: a floating overlay whose top input filters actions and whose list below shows the item's
-  actions (plus the `⌘P`/`⌘N` entries the extension declared), without replacing the main body;
-  `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015).
-- **About card**: clicking the avatar chip opens the app's About menu — a card with the same UX
-  as the actions card but its search input at the bottom: **Open Config File** / **Save AI Key** /
-  **Send Feedback**. `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss, clicking outside closes it.
+  card**: a floating overlay that never replaces the main body; its list groups the item's
+  actions under **Actions** and the `⌘P`/`⌘N` entries the extension declared under **General**
+  (Raycast-style sections; they flatten while the search input at the card's bottom filters),
+  `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015, ADR-0026 amendment). The Side
+  View's **More Actions** is this same card (ADR-0028). On the **root page** the card shows the
+  focused command's own **Command** section: **Add to Favorites** / **Remove from Favorites**
+  (ADR-0029) plus **Open Command** and **Configure Extension** as dimmed, not-yet-built
+  placeholders; inside a command the same section appears after its **Actions**.
+- **About card**: clicking the avatar chip (or `⌘⇧K`, ADR-0027) opens the app's About menu — a
+  card with the same UX as the actions card (search input at the bottom): **App** holds
+  **Open Config File** / **Save AI Key**, **Support** holds **Send Feedback**. `↑↓` select,
+  `⏎` run, `Esc` or empty `⌫` dismiss, clicking outside closes it.
 
 Every shortcut is rendered as Kbd blocks, one key per block.
 
@@ -88,13 +96,17 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   text is used; Esc keeps what was generated so far and does not write back (⏎ writes back
   manually, ⌥⏎ copies).
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
-  buttons sit at the end of the header: **More Actions (⌘ icon: New Chat / Open Config File /
-  Hide)** , **History**, and **New Chat**. Clicking History (or `⌘P`) pops up a **floating history
-  card** centered at the top: its top input filters titles, the list below highlights with `↑` `↓`,
+  buttons sit at the end of the header: **More Actions (⌘ icon / `⌘⇧P`)**, **History**, and
+  **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028): the same
+  sections, filter input, `↑↓`/`⏎` selection and `Esc` dismissal — with **New Chat** /
+  **Open Config File** / **Hide Side View** under the **Chat** / **App** / **Window** sections —
+  floating centered nearly at the top, its filter input on top. Clicking
+  History (or `⌘P`) pops up a **floating history card** centered at the top: its top input
+  filters titles, the list below highlights with `↑` `↓`,
   `⏎` opens, `Esc` dismisses, and clicking outside also dismisses it. `⌘P` (Browse) / `⌘⇧P`
   (Actions) / `⌘N` (New) / `⌃X` (Delete) / `⌃⇧X` (DeleteAll) are the general actions spanning
   every command/sub-app (ADR-0014/0022); in the Side View they land on the history card / actions
-  menu / new chat / delete current conversation / delete all conversations (while the history card
+  card / new chat / delete current conversation / delete all conversations (while the history card
   is open they act on the focused row; deleting the current conversation returns to the empty
   state). In the panel they land on the extension's declared record list / actions layer / new
   record / delete hooks (an error toast when the extension implements none). `⌃[` / `⌃]` step

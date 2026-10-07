@@ -26,6 +26,8 @@ pub enum SystemKey {
     Delete,
     /// DeleteAll: delete all records (AI = all conversations). General action, default ⌃⇧X (ADR-0022).
     DeleteAll,
+    /// About: open the app's About card (the avatar chip's meta actions: Open Config File / Save AI Key / Send Feedback). Default ⌘⇧K.
+    About,
     /// Esc: layered back (with input → clear; on a result layer → back up one layer; otherwise close the panel).
     Back,
     /// Materialize: turn into the Extension's Side View.
@@ -48,6 +50,7 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("⌘N", K::New),
         ("⌃X", K::Delete),
         ("⌃⇧X", K::DeleteAll),
+        ("⌘⇧K", K::About),
         ("Esc", K::Back),
         ("⌘M", K::Materialize),
         ("⌘⇧A", K::Attach),
@@ -73,7 +76,7 @@ mod tests {
         }
         assert_eq!(
             seen.len(),
-            12,
+            13,
             "keep the Hints Bar grouping in sync when adding semantics"
         );
     }
@@ -94,5 +97,16 @@ mod tests {
         assert_eq!(display(SystemKey::ShowAllActions), "⌘K / ⌘⇧P");
         assert_eq!(display(SystemKey::Delete), "⌃X");
         assert_eq!(display(SystemKey::DeleteAll), "⌃⇧X");
+    }
+
+    /// About is a platform semantic too: ⌘⇧K opens the app's About card (ADR-0027).
+    #[test]
+    fn about_keeps_its_default_binding() {
+        let table = default_keymap();
+        let display = table
+            .iter()
+            .find(|(_, k)| *k == SystemKey::About)
+            .map(|(d, _)| *d);
+        assert_eq!(display, Some("⌘⇧K"));
     }
 }

@@ -91,11 +91,21 @@
         <ul id="history-list" class="max-h-80 overflow-y-auto p-1"></ul>
       </div>
 
-      <!-- More Actions menu (⌘ button / ⌘⇧P) -->
+      <!-- More Actions card (the ⌘ button / ⌘⇧P): the same card as the panel's actions card —
+           sections + filter input (ADR-0028). The Side View anchors it horizontally centered, near
+           the top (like the history card), with the input at the top edge. -->
       <div
-        id="actions-menu"
-        class="absolute right-3 top-11 z-30 hidden w-52 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 p-1 shadow-2xl backdrop-blur-xl"
-      ></div>
+        id="actions-card"
+        class="moe-actions-card absolute left-1/2 top-12 z-30 hidden w-80 -translate-x-1/2 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 backdrop-blur-xl"
+      >
+        <input
+          id="action-search"
+          class="w-full border-b border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+          placeholder="Filter actions…"
+          spellcheck="false"
+        />
+        <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
+      </div>
 
       <div
         id="toast"
