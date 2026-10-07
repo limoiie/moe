@@ -29,6 +29,7 @@ export interface Item {
 export interface CommandMeta {
   id: string;
   extensionId: string;
+  /** The command name without the extension prefix (ADR-0030): rows show the extension name separately. */
   title: string;
   subtitle?: string;
   /** Icon semantic name (ADR-0012). */
@@ -36,6 +37,12 @@ export interface CommandMeta {
   input: "none" | "query" | "selection";
   /** Live list: once entered, every input change re-runs the list (e.g. history search). */
   live: boolean;
+  /** Invocation shortcut display string (e.g. "⌘,"), when the command declares one (ADR-0030). */
+  keybinding?: string | null;
+  /** The owning extension's display name, filled by the Registry (ADR-0030). */
+  extensionTitle?: string | null;
+  /** The kind of thing this row represents ("AI Command", later "File"…); absent renders as "Command". */
+  kind?: string | null;
 }
 
 /** One group in the command palette results (ADR-0020): source = section, header = extension title. */

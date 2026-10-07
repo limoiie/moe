@@ -247,6 +247,11 @@ impl Extension for AiCommands {
         "AI Commands"
     }
 
+    /// The trailing badge on root rows (ADR-0030).
+    fn command_kind(&self) -> Option<String> {
+        Some("AI Command".into())
+    }
+
     fn commands(&self) -> Vec<CommandMeta> {
         SPECS
             .iter()
@@ -258,6 +263,9 @@ impl Extension for AiCommands {
                 icon: Some(spec.icon.into()),
                 input: InputKind::Selection,
                 live: false,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
             })
             .collect()
     }

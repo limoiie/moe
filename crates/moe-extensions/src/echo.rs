@@ -24,6 +24,9 @@ fn meta(id: &str, title: &str, subtitle: &str, icon: &str, input: InputKind) -> 
         icon: Some(icon.into()),
         input,
         live: false,
+        keybinding: None,
+        extension_title: None,
+        kind: None,
     }
 }
 
@@ -40,21 +43,21 @@ impl Extension for Echo {
         vec![
             meta(
                 "echo.write-back",
-                "Echo: Write Back",
+                "Write Back",
                 "Write the input text back at the cursor",
                 "terminal",
                 InputKind::Query,
             ),
             meta(
                 "echo.items",
-                "Echo: List Demo",
+                "List Demo",
                 "Demo of an Item stream: results still support Apply / secondary actions",
                 "list",
                 InputKind::Query,
             ),
             meta(
                 "echo.shout",
-                "Echo: Shout",
+                "Shout",
                 "With a selection: write back uppercased; without: insert a marker",
                 "megaphone",
                 InputKind::Selection,

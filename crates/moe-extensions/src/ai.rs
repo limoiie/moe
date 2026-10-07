@@ -357,7 +357,7 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
 
 /// Guidance card for a not-yet-configured endpoint (shared by AI Q&A and AI Commands, ADR-0024).
 pub(crate) const SETUP_MD: &str = "## No AI endpoint configured yet\n\n\
-1. Run the command \"Moe: Open Config File\" and fill in:\n\n\
+1. Run the command \"Open Config File\" and fill in:\n\n\
 ```toml\n\
 [ai]\n\
 base_url = \"https://api.deepseek.com/v1\"\n\
@@ -597,29 +597,38 @@ impl Extension for AiShell {
             CommandMeta {
                 id: "ai.quick-ask".into(),
                 extension_id: "ai".into(),
-                title: "AI: Quick Ask".into(),
+                title: "Quick Ask".into(),
                 subtitle: Some("Or just type a question (an ask item appears automatically when nothing matches)".into()),
                 icon: Some("sparkles".into()),
                 input: InputKind::Query,
                 live: false,
+            keybinding: None,
+            extension_title: None,
+            kind: None,
             },
             CommandMeta {
                 id: "ai.search-history".into(),
                 extension_id: "ai".into(),
-                title: "AI: Search Chat History".into(),
+                title: "Search Chat History".into(),
                 subtitle: Some("Type to filter titles; Enter opens in the side view".into()),
                 icon: Some("history".into()),
                 input: InputKind::Query,
                 live: true,
+            keybinding: None,
+            extension_title: None,
+            kind: None,
             },
             CommandMeta {
                 id: "ai.new-chat".into(),
                 extension_id: "ai".into(),
-                title: "AI: New Chat".into(),
+                title: "New Chat".into(),
                 subtitle: Some("Clear the current Q&A and start a fresh conversation".into()),
                 icon: Some("plus".into()),
                 input: InputKind::None,
                 live: false,
+            keybinding: None,
+            extension_title: None,
+            kind: None,
             },
         ]
     }
@@ -656,6 +665,11 @@ impl Extension for AiShell {
         self.commands().into_iter().find(|c| c.id == "ai.new-chat")
     }
 
+    /// The trailing badge on root rows (ADR-0030): AI's commands are AI Commands.
+    fn command_kind(&self) -> Option<String> {
+        Some("AI Command".into())
+    }
+
     fn invoke_streaming(
         &self,
         command_id: &str,
@@ -678,9 +692,9 @@ impl Extension for AiShell {
         let (cleaned, paths) = attachment::parse_mentions(query);
         let selected_files = selection.map(|s| s.files.len()).unwrap_or(0);
         let title = match (cleaned.is_empty(), paths.is_empty(), selected_files) {
-            (false, _, _) => format!("AI: Ask \"{cleaned}\""),
-            (true, false, _) | (true, true, 1..) => "AI: Ask with attachments".into(),
-            (true, true, _) => format!("AI: Ask \"{query}\""),
+            (false, _, _) => format!("Ask \"{cleaned}\""),
+            (true, false, _) | (true, true, 1..) => "Ask with attachments".into(),
+            (true, true, _) => format!("Ask \"{query}\""),
         };
         let total_files = paths.len() + selected_files;
         let has_text = selection
@@ -705,6 +719,9 @@ impl Extension for AiShell {
             icon: Some("sparkles".into()),
             input: InputKind::Query,
             live: false,
+            keybinding: None,
+            extension_title: None,
+            kind: None,
         })
     }
 
@@ -748,8 +765,7 @@ impl Extension for AiShell {
         let config = MoeConfig::load();
         if !config.ai.configured() {
             return Err(MoeError::Internal(
-                "AI endpoint not configured yet (run \"Moe: Open Config File\" in the palette)"
-                    .into(),
+                "AI endpoint not configured yet (run \"Open Config File\" in the palette)".into(),
             ));
         }
         let Some(key) = keychain::ai_api_key() else {
@@ -873,14 +889,14 @@ mod tests {
         let with_attachments = ext
             .fallback_command("Summarize @\"/tmp/a b.md\"", None)
             .expect("fallback");
-        assert_eq!(with_attachments.title, "AI: Ask \"Summarize\"");
+        assert_eq!(with_attachments.title, "Ask \"Summarize\"");
         assert_eq!(
             with_attachments.subtitle.as_deref(),
             Some("1 attachment(s); Enter to send")
         );
 
         let attachment_only = ext.fallback_command("@/tmp/a.md", None).expect("fallback");
-        assert_eq!(attachment_only.title, "AI: Ask with attachments");
+        assert_eq!(attachment_only.title, "Ask with attachments");
     }
 
     /// Selected files (ADR-0021): the fallback advertises the file count; file-only selection and text selection can combine.
@@ -893,7 +909,7 @@ mod tests {
         };
         // Empty input + selected files: the ask-with-attachments entry
         let files_only = ext.fallback_command("", Some(&files)).expect("fallback");
-        assert_eq!(files_only.title, "AI: Ask with attachments");
+        assert_eq!(files_only.title, "Ask with attachments");
         assert_eq!(
             files_only.subtitle.as_deref(),
             Some("2 attachment(s); Enter to send")
@@ -908,7 +924,7 @@ mod tests {
                 }),
             )
             .expect("fallback");
-        assert_eq!(both.title, "AI: Ask \"Summarize\"");
+        assert_eq!(both.title, "Ask \"Summarize\"");
         assert_eq!(
             both.subtitle.as_deref(),
             Some("2 attachment(s) and selected text attached; Enter to send")

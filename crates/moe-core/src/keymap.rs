@@ -64,6 +64,16 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
     ]
 }
 
+/// The display string for one semantic (the first row that carries it), e.g. `OpenConfig` → "⌘,".
+/// Extensions declaring a command's invocation shortcut read it from here, so the displayed Kbd
+/// can never drift from the platform table (ADR-0030).
+pub fn display_of(key: SystemKey) -> Option<&'static str> {
+    default_keymap()
+        .into_iter()
+        .find(|(_, semantic)| *semantic == key)
+        .map(|(display, _)| display)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +147,12 @@ mod tests {
             .find(|(_, k)| *k == SystemKey::OpenConfig)
             .map(|(d, _)| *d);
         assert_eq!(display, Some("⌘,"));
+    }
+
+    /// `display_of` is the single read path extensions use for declared invocation shortcuts (ADR-0030).
+    #[test]
+    fn display_of_reads_the_table() {
+        assert_eq!(display_of(SystemKey::OpenConfig), Some("⌘,"));
+        assert_eq!(display_of(SystemKey::Favorite), Some("⌘⇧F"));
     }
 }

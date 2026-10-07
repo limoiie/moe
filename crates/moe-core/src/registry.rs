@@ -64,8 +64,24 @@ impl Registry {
         &self.extensions
     }
 
+    /// All commands, each annotated with its owner's display name and kind (ADR-0030) — rows
+    /// label themselves from these, so mixed sections (Favorites / Suggestions) stay correct.
     pub fn commands(&self) -> Vec<CommandMeta> {
-        self.extensions.iter().flat_map(|e| e.commands()).collect()
+        self.extensions
+            .iter()
+            .flat_map(|extension| {
+                let title = extension.title().to_string();
+                let kind = extension.command_kind();
+                extension
+                    .commands()
+                    .into_iter()
+                    .map(move |cmd| CommandMeta {
+                        extension_title: cmd.extension_title.or(Some(title.clone())),
+                        kind: cmd.kind.or_else(|| kind.clone()),
+                        ..cmd
+                    })
+            })
+            .collect()
     }
 
     /// Command palette search: nucleo fuzzy matching scores, frecency breaks ties.
@@ -169,13 +185,22 @@ impl Registry {
                     .then_with(|| a.2.id.cmp(&b.2.id))
             });
             if scored.is_empty() {
-                // No match: give extensions a chance to "catch the input" (e.g. AI Q&A).
-                // Keep registration order (earlier-registered extensions win, e.g. `key …` hits Moe's save item).
+                // No match: give extensions a chance to "capture" the input (e.g. AI quick ask).
+                // Registration order is kept (earlier extensions win, e.g. `key …` hits Moe's save item).
                 return group_by_extension(
                     &self.extensions,
-                    self.extensions
-                        .iter()
-                        .filter_map(|ext| ext.fallback_command(q, selection)),
+                    self.extensions.iter().flat_map(|extension| {
+                        let title = extension.title().to_string();
+                        let kind = extension.command_kind();
+                        extension
+                            .fallback_command(q, selection)
+                            .into_iter()
+                            .map(move |cmd| CommandMeta {
+                                extension_title: cmd.extension_title.or(Some(title.clone())),
+                                kind: cmd.kind.or_else(|| kind.clone()),
+                                ..cmd
+                            })
+                    }),
                 );
             }
             scored.into_iter().map(|(_, _, cmd)| cmd).collect()
@@ -338,6 +363,9 @@ mod tests {
                     icon: None,
                     input: InputKind::Query,
                     live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
                 },
                 CommandMeta {
                     id: "toy.hello".into(),
@@ -347,6 +375,9 @@ mod tests {
                     icon: None,
                     input: InputKind::None,
                     live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
                 },
             ]
         }
@@ -414,6 +445,9 @@ mod tests {
                 icon: None,
                 input: InputKind::Query,
                 live: false,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
             }]
         }
         fn invoke(
@@ -636,6 +670,9 @@ mod tests {
                     icon: None,
                     input: InputKind::Query,
                     live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
                 })
             }
         }
@@ -692,6 +729,9 @@ mod tests {
                 icon: None,
                 input: InputKind::None,
                 live: false,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
             }
         }
 
@@ -739,6 +779,9 @@ mod tests {
                     icon: Some("wand-2".into()),
                     input: InputKind::None,
                     live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
                 }]
             }
             fn invoke(
@@ -794,6 +837,9 @@ mod tests {
                     icon: None,
                     input: InputKind::None,
                     live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
                 }]
             }
             fn invoke(
@@ -950,6 +996,9 @@ mod tests {
                     icon: None,
                     input: InputKind::None,
                     live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
                 }]
             }
             fn invoke(
@@ -1082,6 +1131,61 @@ mod tests {
         assert!(hits[1].items.iter().all(|c| c.id != "toy.list"));
     }
 
+    /// Rows are annotated with their owner's name and kind (ADR-0030): the UI labels rows from the
+    /// payload, so mixed sections (Favorites/Suggestions) and fallbacks stay correct.
+    #[test]
+    fn commands_are_annotated_with_owner_and_kind() {
+        struct Kinded;
+        impl Extension for Kinded {
+            fn id(&self) -> &str {
+                "kinded"
+            }
+            fn title(&self) -> &str {
+                "Kinded"
+            }
+            fn command_kind(&self) -> Option<String> {
+                Some("AI Command".into())
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![CommandMeta {
+                    id: "kinded.run".into(),
+                    extension_id: "kinded".into(),
+                    title: "Run".into(),
+                    subtitle: None,
+                    icon: None,
+                    input: InputKind::None,
+                    live: false,
+                    keybinding: Some("⌘,".into()),
+                    extension_title: None,
+                    kind: None,
+                }]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&Selection>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(Kinded));
+        let cmd = &r.commands()[0];
+        assert_eq!(cmd.extension_title.as_deref(), Some("Kinded"));
+        assert_eq!(cmd.kind.as_deref(), Some("AI Command"));
+        assert_eq!(
+            cmd.keybinding.as_deref(),
+            Some("⌘,"),
+            "extension-declared shortcut kept"
+        );
+        // Plain extensions (Toy) get the owner name but no kind → the UI renders the "Command" default
+        let toy = &registry().commands()[0];
+        assert_eq!(toy.extension_title.as_deref(), Some("Toy"));
+        assert_eq!(toy.kind, None);
+    }
+
     #[test]
     fn empty_query_orders_by_frecency() {
         let hits = registry().search(
@@ -1165,6 +1269,9 @@ mod tests {
                     icon: None,
                     input: InputKind::None,
                     live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
                 }]
             }
             fn invoke(

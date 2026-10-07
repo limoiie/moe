@@ -333,6 +333,8 @@ interface Row {
   icon?: string;
   /** Fallback shape (no icon specified) is displayed dimmed. */
   iconMuted?: boolean;
+  /** Trailing type badge on command rows (ADR-0030): "Command" unless the extension declares otherwise. */
+  badge?: string;
 }
 
 function currentEntries(): Row[] {
@@ -396,10 +398,18 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   }
   li.append(left);
   if (e.key) {
-    // Key blocks (shadcn Kbd style): same inline-key style as the action bar and the ⌘K card
+    // Key blocks (shadcn Kbd style): the shared kbdEl component, one block per key (ADR-0015/0030)
     const keys = kbdEl(e.key, { firstOnly: true });
     keys.classList.add("shrink-0");
     li.append(keys);
+  }
+  if (e.badge) {
+    // Trailing type badge (ADR-0030): what kind of row this is (Command / AI Command / File…)
+    const badge = document.createElement("span");
+    badge.className =
+      "shrink-0 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[10px] leading-none text-zinc-500 group-hover:text-zinc-400";
+    badge.textContent = e.badge;
+    li.append(badge);
   }
   li.addEventListener("mousedown", () => {
     view.update((s) => ({ ...s, focus: i }));
@@ -419,7 +429,9 @@ function render() {
   applyPanelSize(shape);
   let focusedLi: HTMLLIElement | null = null;
   if (v.mode === "commands") {
-    // Command layer: render grouped by source (headers + command rows within each group); the focus index stays on the flat list.
+    // Command layer: grouped by source (headers + rows); the focus index stays on the flat list.
+    // Row anatomy (ADR-0030): [icon] command name · extension name [shortcut Kbd] [kind badge].
+    // The extension name replaces the details subtitle here — the root page labels sources, not blurbs.
     const lis: HTMLLIElement[] = [];
     let flat = 0;
     for (const section of v.sections) {
@@ -428,9 +440,11 @@ function render() {
         const li = rowEl(
           {
             title: c.title,
-            subtitle: c.subtitle,
+            subtitle: c.extensionTitle ?? undefined,
+            key: c.keybinding ?? undefined,
             icon: c.icon,
             iconMuted: !c.icon,
+            badge: c.kind ?? "Command",
           },
           flat,
           flat === v.focus,

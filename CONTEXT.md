@@ -18,7 +18,15 @@ _Avoid_: plugin, sub-app (acceptable colloquially; formally always Extension)
 **Command**:
 One callable entry an Extension exposes to the user; every Command is searchable in the command
 palette and is the interface through which the user interacts with an Extension's internal data.
+Its title carries **no extension prefix** — root rows show the extension name as secondary text
+and the command's kind as a trailing badge (ADR-0030).
 _Avoid_: subcommand, shortcut, action
+
+**Row anatomy (root)**:
+What a root command row renders, left to right (ADR-0030): icon · command name (prefix-free) ·
+extension name · the command's declared shortcut as a Kbd (when it has one) · kind badge.
+Every key panel anywhere on the surface is the same `kbdEl` component.
+_Avoid_: list item style
 
 **Namespace**:
 The storage isolation domain each Extension exclusively owns; an Extension's history and data
@@ -87,7 +95,7 @@ _Avoid_: layout template, view mode
 
 **Live List**:
 A list semantics of a Command (`CommandMeta.live`): once entered, every Input Bar change re-runs
-the Command with the new query (e.g. "AI: Search Chat History" filters titles as you type). For
+the Command with the new query (e.g. "Search Chat History" filters titles as you type). For
 non-live Commands, input changes remain palette search.
 _Avoid_: dynamic search, autocomplete
 

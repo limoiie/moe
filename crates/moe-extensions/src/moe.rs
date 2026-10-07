@@ -1,11 +1,12 @@
 //! Moe's own meta-extension: settings entry points (ADR-0009 — no settings UI in v1).
 //!
-//! - "Moe: Open Config File" (regular command)
+//! - "Open Config File" (regular command; declares its ⌘, invocation shortcut from the platform keymap)
 //! - `key <your-key>` (capturing fallback): stores the API key in a local key file (0600), never echoed
 
 use moe_core::contract::{
     ActionResult, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
 };
+use moe_core::keymap::{SystemKey, display_of};
 use moe_platform::keychain;
 
 pub struct Moe;
@@ -53,22 +54,29 @@ impl Extension for Moe {
             CommandMeta {
                 id: "moe.open-config".into(),
                 extension_id: "moe".into(),
-                title: "Moe: Open Config File".into(),
+                title: "Open Config File".into(),
                 subtitle: Some("Summon hotkey, [ai] endpoint and other settings".into()),
                 icon: Some("settings-2".into()),
                 input: InputKind::None,
                 live: false,
+                // Its invocation shortcut comes from the platform table, so the Kbd can never drift (ADR-0030).
+                keybinding: display_of(SystemKey::OpenConfig).map(str::to_string),
+                extension_title: None,
+                kind: None,
             },
             CommandMeta {
                 id: "moe.set-ai-key".into(),
                 extension_id: "moe".into(),
-                title: "Moe: Save AI Key".into(),
+                title: "Save AI Key".into(),
                 subtitle: Some(
                     "Type `key <your-key>` (never echoed, stored in a local key file)".into(),
                 ),
                 icon: Some("key-round".into()),
                 input: InputKind::Query,
                 live: false,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
             },
         ]
     }
@@ -109,11 +117,14 @@ impl Extension for Moe {
         Some(CommandMeta {
             id: "moe.set-ai-key".into(),
             extension_id: "moe".into(),
-            title: "Moe: Save AI Key (never echoed)".into(),
+            title: "Save AI Key (never echoed)".into(),
             subtitle: Some("Enter to store in a local key file (0600)".into()),
             icon: Some("key-round".into()),
             input: InputKind::Query,
             live: false,
+            keybinding: None,
+            extension_title: None,
+            kind: None,
         })
     }
 }
@@ -133,6 +144,29 @@ mod tests {
             ext.commands().iter().any(|c| c.id == fallback.id),
             "fallback id must be routable within commands(): {}",
             fallback.id
+        );
+    }
+
+    /// Titles carry no extension prefix (ADR-0030): the row shows the extension name separately.
+    /// Open Config File declares its ⌘, shortcut straight from the platform keymap, so the Kbd
+    /// can never drift from the table.
+    #[test]
+    fn titles_are_prefix_free_and_open_config_declares_its_shortcut() {
+        let ext = Moe;
+        let commands = ext.commands();
+        assert!(
+            commands.iter().all(|c| !c.title.starts_with("Moe: ")),
+            "titles must not repeat the extension name"
+        );
+        let open = commands
+            .iter()
+            .find(|c| c.id == "moe.open-config")
+            .expect("open-config registered");
+        assert_eq!(open.title, "Open Config File");
+        assert_eq!(
+            open.keybinding.as_deref(),
+            display_of(SystemKey::OpenConfig),
+            "the Kbd comes from the keymap table"
         );
     }
 }

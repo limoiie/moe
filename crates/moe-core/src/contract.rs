@@ -108,6 +108,8 @@ pub struct CommandMeta {
     /// Globally unique, by convention `"{extension_id}.{command}"`.
     pub id: String,
     pub extension_id: String,
+    /// The command name **without** the extension prefix (e.g. "Open Config File", not "Moe: Open Config File"):
+    /// rows show the extension name as secondary text instead (ADR-0030).
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
@@ -118,6 +120,18 @@ pub struct CommandMeta {
     /// Live list: each Input Bar change re-runs this command with the new query (e.g. history search);
     /// when false, input is only used for command palette search (default).
     pub live: bool,
+    /// Invocation shortcut, when the command has one (a platform keymap display string, e.g. "⌘,");
+    /// rows render it as a Kbd after the extension name (ADR-0030). None = no shortcut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keybinding: Option<String>,
+    /// The owning extension's display name, filled by the Registry so mixed sections
+    /// (Favorites / Suggestions) can label every row (ADR-0030).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_title: Option<String>,
+    /// The kind of thing this row represents — the trailing badge on root rows (ADR-0030).
+    /// Filled by the Registry from `Extension::command_kind`; None renders as "Command".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 /// One group of command palette search results (Raycast-style section, ADR-0020):
@@ -262,6 +276,13 @@ pub trait Extension: Send + Sync {
     /// "Record list" entry (Browse, ⌘P): AI = conversation history. None by default —
     /// Extensions without records don't declare it, and the platform shows a one-off inline hint for that keybinding (ADR-0014).
     fn browse_command(&self) -> Option<CommandMeta> {
+        None
+    }
+
+    /// The kind of thing this Extension's commands are (ADR-0030): the trailing badge on root
+    /// rows. None = the platform's default ("Command"); the AI extensions declare "AI Command",
+    /// a future file source could declare "File".
+    fn command_kind(&self) -> Option<String> {
         None
     }
 

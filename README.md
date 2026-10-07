@@ -2,7 +2,7 @@
 
 A keyboard-first desktop command palette: double-tap ⌘ in any app to summon a centered panel,
 search commands, and write results back to the selection or cursor. Product language lives in
-`CONTEXT.md`; every design decision lives in `docs/adr/0001–0029`.
+`CONTEXT.md`; every design decision lives in `docs/adr/0001–0030`.
 
 ## Install (macOS)
 
@@ -23,7 +23,10 @@ spans every extension:
 Root results are **grouped by source** (ADR-0020): one section per extension, headed by the
 extension name (headers are not focusable); section order follows each group's best item
 (match score when searching, frecency on an empty query), and items keep their score order
-within a group. On an empty query two pinned sections sit on top: **Favorites** (ADR-0029 — the
+within a group. Each row reads (ADR-0030): **command name** (never prefixed with the extension
+name) · **extension name** · the command's declared shortcut as a Kbd (e.g. Open Config File's
+`⌘,`) · a trailing **kind badge** ("Command" / "AI Command"). On an empty query two pinned
+sections sit on top: **Favorites** (ADR-0029 — the
 commands you starred via the root actions card, in the order you added them) and then
 **Suggestions** (ADR-0023 — the most recently used commands, at most 5, most recent first);
 nothing pinned is repeated in the sections below, and both are hidden while empty.
@@ -84,7 +87,7 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   layer has two shapes declared by the command (ADR-0013): full-screen detail (AI answers,
   notices) fills the panel and shows an inline three-dot indicator while generating; everything
   else (like AI history search) is a list on the left with a detail preview on the right.
-- **AI Chat**: type a question and press Enter (the fallback "AI: Ask \"…\"" appears when nothing
+- **AI Chat**: type a question and press Enter (the fallback "Ask \"…\"" appears when nothing
   matches); answers stream as Markdown cards; `⌥⏎` copies the full text, `⌘M` continues in the
   Side View. **Text selected before summoning automatically becomes question context** (not
   repeated when the question already contains it, truncated when overlong; history stores only
@@ -117,9 +120,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   through the current conversation list; opening/switching a conversation scrolls to the bottom
   of the last line; `⏎` sends / `⇧⏎` newline / `Esc` dismisses overlays first, stops while
   generating, otherwise hides; 📎 adds attachments; window position and size are remembered after
-  dragging. Past conversations are also reachable from the command "AI: Search Chat History"
+  dragging. Past conversations are also reachable from the command "Search Chat History" (AI)
   (narrow list on the left + detail on the right, showing the last answer).
-- **Config**: run "Moe: Open Config File" or edit
+- **Config**: run "Open Config File" or edit
   `~/Library/Application Support/moe/config.toml` directly:
 
   ```toml
