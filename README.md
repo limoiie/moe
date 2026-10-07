@@ -62,10 +62,10 @@ icons:
   (Raycast-style sections; they flatten while the search input at the card's bottom filters),
   `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015, ADR-0026 amendment). The Side
   View's **More Actions** is this same card (ADR-0028). On the **root page** the card shows the
-  focused command's own **Command** section: **Open Command** first (a dimmed placeholder until
-  it exists), then **Add to Favorites** / **Remove from Favorites** (`⌘⇧F`, ADR-0029), then
-  **Configure Extension** (also a dimmed placeholder); inside a command the same section appears
-  after its **Actions**.
+  focused command's own **Command** section: **Open Command** first — the same Apply as Enter,
+  with the `⏎` Kbd — then **Add to Favorites** / **Remove from Favorites** (`⌘⇧F`, ADR-0029),
+  then **Configure Extension** (a dimmed, not-yet-built placeholder); inside a command the same
+  section appears after its **Actions**, without Open Command.
 - **About card**: clicking the avatar chip (or `⌘⇧K`, ADR-0027) opens the app's About menu — a
   card with the same UX as the actions card (search input at the bottom): **App** holds
   **Open Config File** (`⌘,`) / **Save AI Key**, **Support** holds **Send Feedback**; rows show

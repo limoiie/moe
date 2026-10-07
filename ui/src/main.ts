@@ -688,24 +688,32 @@ async function openEntry(kind: "browse" | "new") {
   }
 }
 
+/**
+ * Apply one command from the command layer (Enter and the Open Command row share this path,
+ * including frecency recording and live-command input takeover).
+ */
+async function applyCommand(cmd: CommandMeta) {
+  try {
+    const res = await invoke<ActionResult>("invoke_command", {
+      commandId: cmd.id,
+      // Live commands take over input with their own view: clear the input on entry; subsequent input is that command's query
+      query: cmd.live ? null : q.value || null,
+    });
+    if (cmd.live) {
+      q.value = "";
+    }
+    applyResult(res, cmd.id, cmd.live, cmd.icon, cmd.title);
+  } catch (err) {
+    showMessage(`Failed to run: ${String(err)}`);
+  }
+}
+
 async function applyFocused(alt: boolean) {
   const v = view.get();
   if (v.mode === "commands") {
     const cmd = v.commands[v.focus];
     if (!cmd) return;
-    try {
-      const res = await invoke<ActionResult>("invoke_command", {
-        commandId: cmd.id,
-        // Live commands take over input with their own view: clear the input on entry; subsequent input is that command's query
-        query: cmd.live ? null : q.value || null,
-      });
-      if (cmd.live) {
-        q.value = "";
-      }
-      applyResult(res, cmd.id, cmd.live, cmd.icon, cmd.title);
-    } catch (err) {
-      showMessage(`Failed to run: ${String(err)}`);
-    }
+    await applyCommand(cmd);
     return;
   }
   if (v.mode === "items") {
@@ -748,12 +756,12 @@ async function openActionsCard() {
   closeAboutCard(); // the two cards are peers: opening one closes the other (like openAboutCard)
   const sections: CardSection[] = [];
 
-  // Root layer (ADR-0029): the focused command's own menu — favorites (works), plus
-  // Open Command / Configure Extension as disabled placeholders until they exist.
+  // Root layer (ADR-0029): the focused command's own menu. Open Command is the same Apply
+  // semantics as Enter (live), the favorite toggle works, Configure Extension is still a placeholder.
   if (v.mode === "commands") {
     const cmd = v.commands[v.focus];
     if (!cmd) return;
-    const commandRows = await commandActionRows(cmd.id);
+    const commandRows = await commandActionRows(cmd.id, { openable: true });
     if (commandRows.length > 0) sections.push({ title: "Command", rows: commandRows });
     actionsCard.open(sections);
     return;
@@ -761,7 +769,11 @@ async function openActionsCard() {
 
   const item = v.items[v.focus];
   const itemRows: CardRow[] = (item?.actions ?? []).map((action) => actionCardRow({ action }));
-  const commandRows = v.sourceCommandId ? await commandActionRows(v.sourceCommandId) : [];
+  // Inside a command "open" would re-run the view the user is already in (and reset views like
+  // AI answers), so the source command's section only carries the favorite toggle and the placeholder.
+  const commandRows = v.sourceCommandId
+    ? await commandActionRows(v.sourceCommandId, { openable: false })
+    : [];
   const generalRows: CardRow[] = [];
   if (v.sourceCommandId) {
     const kinds: EntryAction[] = ["browse", "new"];
@@ -796,8 +808,8 @@ async function openActionsCard() {
 }
 
 /**
- * The command-level rows (ADR-0029): Add to Favorites toggles immediately; Open Command and
- * Configure Extension stay as disabled placeholders until those features exist.
+ * The command-level rows (ADR-0029): Open Command (root only, = Apply), the favorite toggle,
+ * and the Configure Extension placeholder.
  */
 /** The command a command-level action acts on: the focused one at the root, the source command inside a command. */
 function currentCommandId(): string | undefined {
@@ -824,11 +836,15 @@ async function toggleFavorite(commandId: string | undefined) {
 }
 
 /**
- * The command-level rows (ADR-0029): **Open Command comes first** (the menu shape is fixed even
- * while the feature is a placeholder), then Add to Favorites (⌘⇧F, works), then Configure
- * Extension; both placeholders stay disabled until those features exist.
+ * The command-level rows (ADR-0029): **Open Command comes first** — on the root layer it is the
+ * same Apply path as Enter (live), so the row shows ⏎ and runs the focused command. Inside a
+ * command the row is omitted ("opening" the view you are in would reset it). Then Add to
+ * Favorites (⌘⇧F, works) and Configure Extension (a disabled placeholder until it exists).
  */
-async function commandActionRows(commandId: string): Promise<CardRow[]> {
+async function commandActionRows(
+  commandId: string,
+  options: { openable: boolean },
+): Promise<CardRow[]> {
   let favorited = false;
   try {
     favorited = await invoke<boolean>("is_favorite", { commandId });
@@ -843,14 +859,19 @@ async function commandActionRows(commandId: string): Promise<CardRow[]> {
       id: `moe.${root}`,
       title,
       kind: "secondary",
-      keybinding: root === "favorite" ? GENERAL_KEY_LABELS.favorite : null,
+      keybinding:
+        root === "favorite"
+          ? GENERAL_KEY_LABELS.favorite
+          : root === "openCommand"
+            ? (keyDisplay.get("apply") ?? "⏎")
+            : null,
     },
   });
-  return [
-    actionCardRow(rootRow("openCommand", "Open Command", true)),
-    actionCardRow(rootRow("favorite", favorited ? "Remove from Favorites" : "Add to Favorites")),
-    actionCardRow(rootRow("configureExtension", "Configure Extension", true)),
-  ];
+  const rows: ActionRow[] = [];
+  if (options.openable) rows.push(rootRow("openCommand", "Open Command"));
+  rows.push(rootRow("favorite", favorited ? "Remove from Favorites" : "Add to Favorites"));
+  rows.push(rootRow("configureExtension", "Configure Extension", true));
+  return rows.map(actionCardRow);
 }
 
 /** Close the actions card; returning focus to the Input Bar is the card's onClose hook. */
@@ -890,6 +911,12 @@ async function runActionRow(row: ActionRow | undefined) {
   if (row.root === "favorite") {
     // The same path as the ⌘⇧F binding (ADR-0029)
     await toggleFavorite(row.commandId);
+    return;
+  }
+  if (row.root === "openCommand") {
+    // Root only: the same Apply path as Enter (ADR-0029)
+    const cmd = view.get().commands.find((c) => c.id === row.commandId);
+    if (cmd) await applyCommand(cmd);
     return;
   }
   if (row.root) return; // disabled placeholders never reach here (the card skips them)

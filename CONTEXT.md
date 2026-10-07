@@ -73,8 +73,8 @@ The user-curated section pinned **above Suggestions** on the root page (ADR-0029
 toggled via the root actions card's **Add to Favorites** (or `⌘⇧F`; remove with the same row).
 Stored platform-level in `favorites.json`, insertion-ordered; a favorited command is not repeated
 in Suggestions or in its source group. The root actions card's **Command** section starts with
-**Open Command** (disabled placeholder), then the favorite toggle, then **Configure Extension**
-(also a placeholder).
+**Open Command** (the same Apply as Enter — runs the focused command), then the favorite toggle,
+then **Configure Extension** (a disabled placeholder).
 _Avoid_: bookmarks, pinned, starred (the star is the icon, not the term)
 
 **Page Shape**:

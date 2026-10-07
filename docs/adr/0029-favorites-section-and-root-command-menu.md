@@ -18,14 +18,18 @@ section above Suggestions (Raycast's Favorites slot).
   same dedup applies to Suggestions versus groups (ADR-0023 kept). Non-empty queries are
   unchanged — favorites are a root-page affordance.
 - **The root actions card** (⌘K / ⌘⇧P on the command layer) shows one **Command** section with
-  three rows, in this order:
-  - **Open Command** — **disabled placeholder**, always first (the menu shape is fixed; skipped by
-    ↑↓, never runnable);
+  rows in this order:
+  - **Open Command** — **live**, not a placeholder: it is exactly the Apply semantics of Enter
+    (the row shows the `⏎` Kbd), running the focused command with the same path as Apply
+    (frecency recorded, live commands take over the input). Root layer only:
+    inside a command "opening" the view you already have would reset it (AI answers), so the row
+    is omitted there rather than shown disabled;
   - **Add to Favorites** / **Remove from Favorites** (`⌘⇧F`) — works; toggling re-runs the root
     list so the section updates and toasts the new state. The binding is a platform semantic
     (`SystemKey::Favorite`, default ⌘⇧F) recognized on every surface: at the root it acts on the
     focused command, inside a command on the source command;
-  - **Configure Extension** — **disabled placeholder** (dimmed, skipped by ↑↓, never runnable).
+  - **Configure Extension** — **disabled placeholder** (dimmed, skipped by ↑↓, never runnable)
+    until extension preferences exist.
   The card itself is the shared `createCard` component (ADR-0028), which learns one new concept:
   `CardRow.disabled`.
 - **Inside a command** the same **Command** section is appended after the item's **Actions** and
@@ -37,7 +41,8 @@ section above Suggestions (Raycast's Favorites slot).
 - Toggling a favorite at the root re-runs the whole search (an IPC round trip) — the list is
   local and small, so this is cheap; if it ever matters, the Favorites section could be patched
   in place.
-- Disabled rows are visible-but-inert; they exist to hold the menu shape the user specified.
-  When Open Command / Configure Extension ship, they become real rows without moving anything.
+- The disabled row is visible-but-inert; it exists to hold the menu shape the user specified
+  for Configure Extension. When extension preferences ship, it becomes a real row without
+  moving anything.
 - Favorites and Suggestions both pin commands out of their groups; a heavily favorited set can
   push source groups far down the root page — acceptable, that is the point of pinning.
