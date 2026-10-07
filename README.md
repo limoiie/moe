@@ -25,7 +25,8 @@ extension name (headers are not focusable); section order follows each group's b
 (match score when searching, frecency on an empty query), and items keep their score order
 within a group. Each row reads (ADR-0030): **command name** (never prefixed with the extension
 name) · **extension name** · the command's declared shortcut as a Kbd (e.g. Open Config File's
-`⌘,`) · a trailing **kind badge** ("Command" / "AI Command"). On an empty query two pinned
+`⌘,`, revealed while the row is focused or hovered, ADR-0031) · a trailing **kind badge**
+("Command" / "AI Command"). On an empty query two pinned
 sections sit on top: **Favorites** (ADR-0029 — the
 commands you starred via the root actions card, in the order you added them) and then
 **Suggestions** (ADR-0023 — the most recently used commands, at most 5, most recent first);
@@ -38,7 +39,7 @@ themselves stay listed in their own sections.
 | `↓` / `⌃N`, `↑` / `⌃P` | Navigate | Move the Focused Item |
 | `⏎` | Apply | Run the primary action on the Focused Item |
 | `⌥⏎` | Secondary | Default semantics: copy (e.g. copy the full AI answer to the clipboard) |
-| `⌘K` / `⌘⇧P` | Show All Actions | The current item's primary/secondary action list |
+| `⌘K` / `⌘⇧P` | Show All Actions | The current item's primary/secondary action list (`⌘K` only — `⌃K` stays the macOS kill-line, ADR-0031) |
 | `⌘P` | Browse | The current extension's record list (AI = chat history; a hint if the extension declares none) |
 | `⌘N` | New | Create a new record (AI = new chat; a hint if the extension declares none) |
 | `⌃X` | Delete | Delete the current record (AI = current conversation; results layer and Suggestions only, ADR-0022/0025) |
@@ -63,7 +64,9 @@ icons:
   card**: a floating overlay that never replaces the main body; its list groups the item's
   actions under **Actions** and the `⌘P`/`⌘N` entries the extension declared under **General**
   (Raycast-style sections; they flatten while the search input at the card's bottom filters),
-  `↑↓` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015, ADR-0026 amendment). The Side
+  `↑↓` / `⌃N` `⌃P` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015, ADR-0026 amendment).
+  While a card is open it owns the keyboard: navigation and `⌫` act on the card, never on the
+  list below (ADR-0031). The Side
   View's **More Actions** is this same card (ADR-0028). On the **root page** the card shows the
   focused command's own **Command** section: **Open Command** first — the same Apply as Enter,
   with the `⏎` Kbd — then **Add to Favorites** / **Remove from Favorites** (`⌘⇧F`, ADR-0029),
@@ -72,7 +75,7 @@ icons:
 - **About card**: clicking the avatar chip (or `⌘⇧K`, ADR-0027) opens the app's About menu — a
   card with the same UX as the actions card (search input at the bottom): **App** holds
   **Open Config File** (`⌘,`) / **Save AI Key**, **Support** holds **Send Feedback**; rows show
-  their Kbd when a binding exists. `↑↓` select,
+  their Kbd when a binding exists. `↑↓` / `⌃N` `⌃P` select,
   `⏎` run, `Esc` or empty `⌫` dismiss, clicking outside closes it.
 
 Every shortcut is rendered as Kbd blocks, one key per block.
@@ -105,11 +108,11 @@ Every shortcut is rendered as Kbd blocks, one key per block.
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
   buttons sit at the end of the header: **More Actions (⌘ icon / `⌘⇧P`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028): the same
-  sections, filter input, `↑↓`/`⏎` selection and `Esc` dismissal — with **New Chat** /
+  sections, filter input, `↑↓`/`⌃N` `⌃P`/`⏎` selection and `Esc` dismissal — with **New Chat** /
   **Open Config File** / **Hide Side View** under the **Chat** / **App** / **Window** sections —
   floating centered nearly at the top, its filter input on top. Clicking
   History (or `⌘P`) pops up a **floating history card** centered at the top: its top input
-  filters titles, the list below highlights with `↑` `↓`,
+  filters titles, the list below highlights with `↑` `↓` (or `⌃N` `⌃P`),
   `⏎` opens, `Esc` dismisses, and clicking outside also dismisses it. `⌘P` (Browse) / `⌘⇧P`
   (Actions) / `⌘N` (New) / `⌃X` (Delete) / `⌃⇧X` (DeleteAll) are the general actions spanning
   every command/sub-app (ADR-0014/0022); in the Side View they land on the history card / actions

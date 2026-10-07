@@ -335,6 +335,8 @@ interface Row {
   iconMuted?: boolean;
   /** Trailing type badge on command rows (ADR-0030): "Command" unless the extension declares otherwise. */
   badge?: string;
+  /** Root page rows (ADR-0031): the declared shortcut reveals only while the row is focused or hovered. */
+  revealKeys?: boolean;
 }
 
 function currentEntries(): Row[] {
@@ -378,6 +380,7 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
     (focused
       ? "bg-zinc-700/70 text-zinc-50"
       : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
+  if (focused) li.dataset.focused = "true";
   li.append(
     iconEl(e.icon, {
       className: e.iconMuted
@@ -401,6 +404,8 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
     // Key blocks (shadcn Kbd style): the shared kbdEl component, one block per key (ADR-0015/0030)
     const keys = kbdEl(e.key, { firstOnly: true });
     keys.classList.add("shrink-0");
+    // Root page (ADR-0031): reveal on focus/hover only (styles.css `.moe-row-keys`)
+    if (e.revealKeys) keys.classList.add("moe-row-keys");
     li.append(keys);
   }
   if (e.badge) {
@@ -445,6 +450,7 @@ function render() {
             icon: c.icon,
             iconMuted: !c.icon,
             badge: c.kind ?? "Command",
+            revealKeys: true,
           },
           flat,
           flat === v.focus,
@@ -1170,21 +1176,28 @@ aboutSearchEl.addEventListener("input", () => {
 });
 // The about card owns its keys while its input is focused (same UX as the actions card)
 aboutSearchEl.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+  const up =
+    e.key === "ArrowUp" ||
+    (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "p");
+  const down =
+    e.key === "ArrowDown" ||
+    (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "n");
+  if (up || down) {
     e.preventDefault();
     e.stopPropagation();
-    moveAboutFocus(e.key === "ArrowDown" ? 1 : -1);
+    moveAboutFocus(down ? 1 : -1);
   } else if (e.key === "Enter" && !e.isComposing) {
     e.preventDefault();
     e.stopPropagation();
     filteredAboutRows()[aboutFocus]?.run();
-  } else if (
-    e.key === "Escape" ||
-    (e.key === "Backspace" && aboutSearchEl.value === "" && !e.repeat)
-  ) {
-    e.preventDefault();
+  } else if (e.key === "Escape" || e.key === "Backspace") {
+    // The front-most card owns these keys: the window-level "empty Backspace = Back" must
+    // never see them (otherwise deleting a filter char would close the card)
     e.stopPropagation();
-    closeAboutCard();
+    if (e.key === "Escape" || (aboutSearchEl.value === "" && !e.repeat)) {
+      e.preventDefault();
+      closeAboutCard();
+    }
   }
 });
 
@@ -1479,17 +1492,20 @@ window.addEventListener("keydown", (e) => {
     else void openEntry(general);
     return;
   }
+  // The front-most list owns navigation and Backspace (ADR-0031): while a card is open, the card's
+  // own input stops propagation for the keys it consumes; this guard covers focus sitting elsewhere.
   // Backspace with empty input = Back (layered back, ADR-0017):
   // leave it alone when the input is non-empty (normal delete); when empty, back out layer by layer, but the root layer does not close the panel (quit:false).
-  if (e.key === "Backspace" && q.value === "" && !e.isComposing && !e.repeat) {
+  const cardOpen = actionsCard.isOpen() || aboutCardOpen;
+  if (!cardOpen && e.key === "Backspace" && q.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
     return;
   }
-  if (e.key === "ArrowDown" || (e.ctrlKey && !e.metaKey && e.key === "n")) {
+  if (!cardOpen && (e.key === "ArrowDown" || (e.ctrlKey && !e.metaKey && e.key === "n"))) {
     e.preventDefault();
     move(1);
-  } else if (e.key === "ArrowUp" || (e.ctrlKey && !e.metaKey && e.key === "p")) {
+  } else if (!cardOpen && (e.key === "ArrowUp" || (e.ctrlKey && !e.metaKey && e.key === "p"))) {
     e.preventDefault();
     move(-1);
   } else if (e.key === "Enter") {
@@ -1499,7 +1515,8 @@ window.addEventListener("keydown", (e) => {
     // About (⌘⇧K, ADR-0027): the chip's card, with a platform binding
     e.preventDefault();
     toggleAboutCard();
-  } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "k") {
+  } else if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+    // ⌘K only: ⌃K must stay the macOS kill-line editing key (ADR-0031)
     e.preventDefault();
     toggleActionsCard();
   } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "m") {

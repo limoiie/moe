@@ -112,6 +112,17 @@ body {
   letter-spacing: -0.4px;
 }
 
+/* Root row declared shortcuts (ADR-0031): at rest the command list hides them, keeping the rows
+   calm; they reveal while the row is focused (keyboard) or hovered (mouse). Unlayered selectors,
+   so they beat .moe-keys' own display. */
+.moe-keys.moe-row-keys {
+  display: none;
+}
+[data-focused="true"] > .moe-keys.moe-row-keys,
+.group:hover > .moe-keys.moe-row-keys {
+  display: inline-flex;
+}
+
 /* Section header band (ADR-0020/0026): fixed height (set from SECTION_HEADER_HEIGHT in
    layout.ts), label sits on the baseline near the rows below. */
 .moe-section-header {

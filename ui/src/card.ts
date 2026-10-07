@@ -191,18 +191,28 @@ export function createCard(options: CardOptions): Card {
 
   // The card owns its keys while its input is focused (same UX as the panel card and the About card)
   inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    const up =
+      e.key === "ArrowUp" ||
+      (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "p");
+    const down =
+      e.key === "ArrowDown" ||
+      (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "n");
+    if (up || down) {
       e.preventDefault();
       e.stopPropagation();
-      move(e.key === "ArrowDown" ? 1 : -1);
+      move(down ? 1 : -1);
     } else if (e.key === "Enter" && !e.isComposing) {
       e.preventDefault();
       e.stopPropagation();
       runFocused();
-    } else if (e.key === "Escape" || (e.key === "Backspace" && inputEl.value === "" && !e.repeat)) {
-      e.preventDefault();
+    } else if (e.key === "Escape" || e.key === "Backspace") {
+      // The front-most card owns these keys: the window-level "empty Backspace = Back" must
+      // never see them (otherwise deleting a filter char would close the card, IIE4AD-406)
       e.stopPropagation();
-      close();
+      if (e.key === "Escape" || (inputEl.value === "" && !e.repeat)) {
+        e.preventDefault();
+        close();
+      }
     }
   });
 

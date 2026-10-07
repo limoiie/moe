@@ -271,24 +271,34 @@ historySearchEl.addEventListener("input", () => {
 });
 
 historySearchEl.addEventListener("keydown", (e) => {
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+  // The front-most list owns navigation (ADR-0031): ↓/↑ and the panel-wide ⌃N/⌃P move the history focus.
+  const up =
+    e.key === "ArrowUp" ||
+    (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "p");
+  const down =
+    e.key === "ArrowDown" ||
+    (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "n");
+  if (up || down) {
     e.preventDefault();
-    moveHistory(e.key === "ArrowDown" ? 1 : -1);
+    e.stopPropagation();
+    moveHistory(down ? 1 : -1);
   } else if (e.key === "Enter" && !e.isComposing) {
     e.preventDefault();
+    e.stopPropagation();
     const target = conversations[historyIndex];
     if (target) {
       void selectConversation(target.id);
       closeHistoryCard();
     }
-  } else if (
-    e.key === "Escape" ||
-    (e.key === "Backspace" && historySearchEl.value === "" && !e.repeat)
-  ) {
-    e.preventDefault();
+  } else if (e.key === "Escape" || e.key === "Backspace") {
+    // The front-most card owns these keys: the window-level "empty Backspace = Back" must
+    // never see them (otherwise deleting a filter char would close the card, IIE4AD-406)
     e.stopPropagation();
-    closeHistoryCard();
-    composerEl.focus();
+    if (e.key === "Escape" || (historySearchEl.value === "" && !e.repeat)) {
+      e.preventDefault();
+      closeHistoryCard();
+      composerEl.focus();
+    }
   }
 });
 
@@ -742,9 +752,12 @@ window.addEventListener("keydown", (e) => {
     void back();
     return;
   }
+  // The front-most list owns navigation and Backspace (ADR-0031): while a card is open, its own input
+  // routing decides; this guard covers focus sitting elsewhere on the surface.
+  const cardOpen = historyOpen || actionsCard.isOpen();
   // Backspace with empty input = Back (layered back, ADR-0017):
   // leave it alone when non-empty (normal delete); when empty, back out layer by layer, but the root layer does not hide the side view (quit:false).
-  if (e.key === "Backspace" && composerEl.value === "" && !e.isComposing && !e.repeat) {
+  if (!cardOpen && e.key === "Backspace" && composerEl.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
   }
