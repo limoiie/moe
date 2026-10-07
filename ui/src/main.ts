@@ -1045,7 +1045,7 @@ function aboutSections(): AboutSection[] {
         {
           id: "about.feedback",
           title: "Send Feedback",
-          icon: "megaphone",
+          icon: "message-circle-warning",
           run: () => void runAboutFeedback(),
         },
       ],

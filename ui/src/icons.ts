@@ -19,6 +19,7 @@ import {
   List,
   ListChecks,
   Megaphone,
+  MessageCircleWarning,
   MessageSquare,
   MessagesSquare,
   PanelLeft,
@@ -58,6 +59,7 @@ const ICONS: Record<string, IconNode> = {
   terminal: Terminal,
   list: List,
   megaphone: Megaphone,
+  "message-circle-warning": MessageCircleWarning,
   quote: Quote,
   // AI Commands (ADR-0024)
   "wand-2": Wand2,
