@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="107 82 1040 1031">
+  <!-- Moe radiant-diamond mark: a rotated square (the launcher core) with twelve satellite wedges
+       orbiting it. Single ink: currentColor = one asset, per-theme and per-scene color (the white
+       background rect is gone — the mark is transparent, as an icon must be). viewBox is cropped
+       to the artwork bbox (107 82 → 1147 1113) so the mark fills whatever size it is given.
+       The tray raster (crates/moe-app/icons/gen-tray-icon.py) parses THIS file directly — no
+       duplicated geometry to keep in sync. -->
+  <g fill="currentColor">
+    <!-- Outer shapes -->
+    <path d="M627 82 705 159 627 237 549 159Z"/>
+    <path d="M421 154 539 273Q480 285 433 320L345 231Z"/>
+    <path d="M833 154 909 231 820 320Q774 285 715 273Z"/>
+    <path d="M247 317 339 410Q306 457 290 509L173 393Z"/>
+    <path d="M1007 317 1081 393 964 509Q948 457 915 410Z"/>
+    <path d="M185 525 262 602 185 680 107 602Z"/>
+    <path d="M1069 525 1147 602 1069 680 991 602Z"/>
+    <path d="M286 680Q299 741 333 787L226 895 149 818Z"/>
+    <path d="M968 678 1105 818 1028 895 921 787Q954 740 968 678Z"/>
+    <path d="M428 882Q474 915 529 931L395 1066 319 992Z"/>
+    <path d="M825 882 935 992 859 1066 724 931Q779 915 825 882Z"/>
+    <path d="M627 957 704 1035 627 1113 549 1035Z"/>
+    <!-- Center square, rotated 45 degrees -->
+    <path d="M627 309 918 600 627 891 336 600Z"/>
+  </g>
+</svg>

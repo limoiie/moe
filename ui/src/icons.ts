@@ -22,6 +22,8 @@ import {
   MessageCircleWarning,
   MessageSquare,
   MessagesSquare,
+  Monitor,
+  Moon,
   PanelLeft,
   PanelRight,
   Paperclip,
@@ -36,8 +38,8 @@ import {
   Sparkles,
   SpellCheck,
   Square,
-  SquareM,
   Star,
+  Sun,
   Terminal,
   Trash2,
   TriangleAlert,
@@ -75,10 +77,13 @@ const ICONS: Record<string, IconNode> = {
   "arrow-right": ArrowRight,
   // Favorites (ADR-0029)
   star: Star,
+  // Appearance (the About card's theme rows, ADR-0035 amendment)
+  monitor: Monitor,
+  sun: Sun,
+  moon: Moon,
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
   "arrow-left": ArrowLeft,
-  "square-m": SquareM,
   "trash-2": Trash2,
   command: Command,
   copy: Copy,
