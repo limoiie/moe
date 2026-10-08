@@ -1,12 +1,12 @@
 # M7i: Quick Ask v2 — the panel's conversation page
 
 - **ID**: MOE-0001
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: 8e8c118
 
 User feedback round: Quick Ask becomes a real conversation page inside the panel, instead of
 "the search text becomes the question". The old shape broke down as soon as a conversation needed a
@@ -89,3 +89,5 @@ model), there was no way to keep chatting in the panel, and the answer card's ca
   the ⌘⇧A attachment toggle (a modal must not open another mode). `cargo fmt --check`,
   `clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (146 tests) and
   `pnpm build` are green. Remaining: the delivery commit (`Commit:` line), then `State: done`.
+- 2026-10-09 (agent): delivered in `8e8c118` (the local tracker itself landed in `e661ebd`);
+  closing.
