@@ -15,7 +15,7 @@ use moe_core::contract::{
 use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
 use moe_core::registry::Registry;
-use moe_platform::config::{MoeConfig, SummonKey};
+use moe_platform::config::{MoeConfig, SummonKey, Theme};
 use moe_platform::summon::{Modifier, SummonEvent, SummonListener, SummonStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
@@ -146,6 +146,9 @@ impl CommandEmitter for TauriEventEmitter {
 struct AppState {
     registry: Mutex<Registry>,
     config: MoeConfig,
+    /// The live appearance preference (ADR-0035 amendment): config.toml seeds it at startup, the
+    /// About card's theme rows change it at runtime (`set_theme`) and persist it back to the file.
+    theme: Mutex<Theme>,
     listener: Mutex<Box<dyn SummonListener>>,
     /// The selection context captured before the panel is summoned (AX focus leaves the target
     /// app once the panel becomes key): text selection + Finder-selected files (ADR-0021).
@@ -723,6 +726,23 @@ fn summon_status(state: State<'_, AppState>) -> SummonStatusPayload {
     }
 }
 
+/// Appearance preference for the UI (config `[ui] theme`, ADR-0035); the seed for theme.ts at startup.
+#[tauri::command]
+fn ui_theme(state: State<'_, AppState>) -> &'static str {
+    state.theme.lock().expect("theme poisoned").as_str()
+}
+
+/// Switch the appearance at runtime (the About card's theme rows, ADR-0035 amendment): persist
+/// the choice to config.toml first, then broadcast it — both windows re-theme without a restart.
+#[tauri::command]
+fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: String) -> Result<String, String> {
+    let parsed = Theme::parse(&theme).map_err(|err| err.to_string())?;
+    moe_platform::config::store_theme(parsed).map_err(|err| err.to_string())?;
+    *state.theme.lock().expect("theme poisoned") = parsed;
+    let _ = app.emit("theme-changed", parsed.as_str());
+    Ok(parsed.as_str().to_string())
+}
+
 #[tauri::command]
 fn open_input_monitoring_settings() {
     #[cfg(target_os = "macos")]
@@ -874,6 +894,8 @@ fn main() {
     let toggle_on_start = std::env::args().any(|arg| arg == "--toggle");
     eprintln!("moe: started, summon key = {summon_label}");
 
+    let theme = config.ui.theme;
+
     let builder = tauri::Builder::default()
         // Single instance must be registered first: `moe --toggle` is forwarded from the second
         // process to the running instance (the WM binding path when Wayland has no global key
@@ -899,6 +921,7 @@ fn main() {
         .manage(AppState {
             registry: Mutex::new(registry),
             config,
+            theme: Mutex::new(theme),
             listener: Mutex::new(listener),
             selection: Mutex::new(None),
             text_target,
@@ -1078,6 +1101,8 @@ fn main() {
             side_conversations,
             side_send,
             summon_status,
+            ui_theme,
+            set_theme,
             open_input_monitoring_settings,
             open_accessibility_settings
         ])
