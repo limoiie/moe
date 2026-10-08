@@ -2,8 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
+import { createActionPlan } from "./actions";
 import { appendMention, validatePath } from "./attachment";
-import { createCard, type CardSection } from "./card";
+import { createCard } from "./card";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
@@ -302,7 +303,7 @@ historySearchEl.addEventListener("keydown", (e) => {
   }
 });
 
-// ---- More Actions card (the ⌘ icon button / ⌘⇧P): the same card as the panel's actions card (ADR-0028) ----
+// ---- More Actions card (the ⌘ icon button / ⌘K): the same card as the panel's actions card (ADR-0028/0037) ----
 
 function openConfig() {
   void invoke("invoke_command", {
@@ -315,30 +316,59 @@ function openConfig() {
   );
 }
 
-/** The app's commands on this surface, grouped into sections; the card anchors top-center with the input on top. */
-function actionSections(): CardSection[] {
-  return [
-    {
-      title: "Chat",
-      rows: [{ title: "New Chat", icon: "plus", keys: GENERAL_KEY_LABELS.new, run: newChat }],
-    },
-    {
-      title: "App",
-      rows: [{ title: "Open Config File", icon: "settings-2", keys: GENERAL_KEY_LABELS.openConfig, run: openConfig }],
-    },
-    {
-      title: "Window",
-      rows: [
-        {
-          title: "Hide Side View",
-          icon: "close",
-          keys: "Esc",
-          run: () => void getCurrentWindow().hide(),
-        },
-      ],
-    },
-  ];
-}
+/**
+ * The Side View's card (ADR-0037): the same registered-sources pipeline as the panel's, with this
+ * surface's landing spots. Chat holds the page's general slots (Browse ⌘P opens the history card,
+ * New ⌘N a blank conversation, Delete ⌃X / DeleteAll ⌃⇧X the current / all conversations), App and
+ * Window the app rows.
+ */
+const sideActionPlan = createActionPlan([
+  {
+    title: "Chat",
+    when: () => true,
+    rows: () => [
+      {
+        title: "Chat History",
+        icon: "history",
+        keys: GENERAL_KEY_LABELS.browse,
+        run: () => toggleHistoryCard(),
+      },
+      { title: "New Chat", icon: "plus", keys: GENERAL_KEY_LABELS.new, run: newChat },
+      {
+        title: "Remove Conversation",
+        icon: "trash-2",
+        keys: GENERAL_KEY_LABELS.delete,
+        disabled: !conversationId,
+        run: () => void deleteCurrent(false),
+      },
+      {
+        title: "Remove All Conversations",
+        icon: "trash-2",
+        keys: GENERAL_KEY_LABELS.deleteAll,
+        run: () => void deleteCurrent(true),
+      },
+    ],
+  },
+  {
+    title: "App",
+    when: () => true,
+    rows: () => [
+      { title: "Open Config File", icon: "settings-2", keys: GENERAL_KEY_LABELS.openConfig, run: openConfig },
+    ],
+  },
+  {
+    title: "Window",
+    when: () => true,
+    rows: () => [
+      {
+        title: "Hide Side View",
+        icon: "close",
+        keys: "Esc",
+        run: () => void getCurrentWindow().hide(),
+      },
+    ],
+  },
+]);
 
 const actionsCard = createCard({
   cardEl: actionsCardEl,
@@ -349,7 +379,9 @@ const actionsCard = createCard({
 
 function openActionsCard() {
   closeHistoryCard();
-  actionsCard.open(actionSections());
+  void sideActionPlan
+    .sections({ surface: "side", mode: "chat" })
+    .then((sections) => actionsCard.open(sections));
 }
 
 function closeActionsCard() {

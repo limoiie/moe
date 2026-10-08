@@ -4,7 +4,8 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
-import { createCard, type CardRow, type CardSection } from "./card";
+import { createActionPlan, type PageContext } from "./actions";
+import { createCard, type CardRow } from "./card";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
@@ -43,17 +44,7 @@ initPointerIntent();
 
 // ---- View state ----
 
-/** An entry on the actions layer: actions of the focused item, platform generic actions (Browse/New, ADR-0014), or command-level rows (ADR-0029). */
-interface ActionRow {
-  action: Action;
-  platform?: EntryAction;
-  /** Command-level rows: the favorite and suggestion rows work; Configure Extension is a placeholder. */
-  root?: "favorite" | "openCommand" | "removeSuggestion" | "configureExtension";
-  /** The command a root row acts on (root card = focused command; inside a command = the source command). */
-  commandId?: string;
-  disabled?: boolean;
-}
-
+/** The panel's page kinds: the command layer, a result page (any shape), the Quick Ask conversation page. */
 type Mode = "commands" | "items" | "chat";
 interface View {
   mode: Mode;
@@ -1067,8 +1058,8 @@ function applyResult(
  */
 async function openEntry(kind: "browse" | "new") {
   const v = view.get();
-  // Current Extension: use the source command once in the results/actions layers; on the command layer, use the focused command
-  const from = v.sourceCommandId ?? (v.mode === "commands" ? v.commands[v.focus]?.id : undefined);
+  // Current Extension: the focused command on the command layer, the page's source command once inside
+  const from = v.mode === "commands" ? v.commands[v.focus]?.id : v.sourceCommandId;
   if (!from) return;
   let command: CommandMeta | null;
   try {
@@ -1157,48 +1148,73 @@ function move(delta: number) {
   });
 }
 
-/**
- * Open the actions card (Raycast-style floating card): the focused item's primary/secondary
- * actions, plus the platform generic actions the Extension actually declared (Browse ⌘P / New ⌘N, ADR-0014).
- * The body (command list / results) stays in place; it no longer replaces the whole panel as before.
- * Rows are grouped into sections (ADR-0026 amendment): the item's own actions, then the platform general ones.
- */
-async function openActionsCard() {
+// ---- Actions card (ADR-0037): registered sources, loaded per page ----
+
+/** The page the actions card is opening for: what every source's rows key on. */
+function panelPageContext(): PageContext {
   const v = view.get();
-  closeAboutCard(); // the two cards are peers: opening one closes the other (like openAboutCard)
-  const sections: CardSection[] = [];
+  return {
+    surface: "panel",
+    mode: v.mode,
+    item: v.mode === "items" ? v.items[v.focus] : undefined,
+    commandId: currentCommandId(),
+    suggestion: isSuggestionFocus(v),
+  };
+}
 
-  // Root layer (ADR-0029): the focused command's own menu. Open Command is the same Apply
-  // semantics as Enter (live), the favorite toggle works, Configure Extension is still a placeholder.
-  if (v.mode === "commands") {
-    const cmd = v.commands[v.focus];
-    if (!cmd) return;
-    const commandRows = await commandActionRows(cmd.id, {
-      openable: true,
-      suggestion: isSuggestionFocus(v),
-    });
-    if (commandRows.length > 0) sections.push({ title: "Command", rows: commandRows });
-    actionsCard.open(sections);
-    return;
+/**
+ * "Command" (ADR-0029): the page command's own rows — one menu for the root and for inside a command.
+ * Open Command leads on the root (the same Apply path as Enter); inside a command the row is omitted
+ * ("opening" the view you are already in would reset it). Then the favorite toggle, Remove from
+ * Suggestions on a Suggestions row (⌃X, ADR-0025), and the Configure Extension placeholder.
+ */
+async function commandCardRows(ctx: PageContext): Promise<CardRow[]> {
+  if (!ctx.commandId) return [];
+  const commandId = ctx.commandId;
+  let favorited = false;
+  try {
+    favorited = await invoke<boolean>("is_favorite", { commandId });
+  } catch {
+    // Ignore: the toggle still works, the label just may be stale
   }
+  const rows: CardRow[] = [];
+  if (ctx.mode === "commands") {
+    rows.push({
+      title: "Open Command",
+      icon: "corner-down-left",
+      keys: keyDisplay.get("apply") ?? "⏎",
+      run: () => {
+        const cmd = view.get().commands.find((c) => c.id === commandId);
+        if (cmd) void applyCommand(cmd);
+      },
+    });
+  }
+  rows.push({
+    title: favorited ? "Remove from Favorites" : "Add to Favorites",
+    icon: "star",
+    keys: GENERAL_KEY_LABELS.favorite,
+    run: () => void toggleFavorite(commandId),
+  });
+  if (ctx.suggestion) {
+    rows.push({
+      title: "Remove from Suggestions",
+      icon: "trash-2",
+      keys: GENERAL_KEY_LABELS.delete,
+      run: () => void deleteSuggestion(commandId),
+    });
+  }
+  rows.push({ title: "Configure Extension", icon: "settings-2", disabled: true, run: () => {} });
+  return rows;
+}
 
-  // Quick Ask page (ADR-0036): the conversation's own actions — new / remove / side view / answer actions.
-  if (v.mode === "chat") {
+/**
+ * "Actions": the object's own actions. A result page's object is its focused item — the shape
+ * (list / split / detail) never changes it — while a chat page's object is the conversation.
+ */
+function objectCardRows(ctx: PageContext): CardRow[] {
+  if (ctx.mode === "chat") {
     const hasAnswer = lastAnswerText() !== null;
-    const rows: CardRow[] = [
-      {
-        title: "New Chat",
-        icon: "plus",
-        keys: GENERAL_KEY_LABELS.new,
-        run: () => void openEntry("new"),
-      },
-      {
-        title: "Remove Chat",
-        icon: "trash-2",
-        keys: GENERAL_KEY_LABELS.delete,
-        disabled: !chatConversationId,
-        run: () => void removeCurrentChat(),
-      },
+    return [
       {
         title: "Open in Side View",
         icon: "panel-right",
@@ -1220,48 +1236,111 @@ async function openActionsCard() {
         run: () => void writeBackLastAnswer(),
       },
     ];
-    actionsCard.open([{ title: "Chat", rows }]);
-    return;
   }
+  const item = ctx.item;
+  if (!item) return [];
+  // The item's own declaration (ADR-0006): the first action carries the Apply semantic (⏎).
+  return item.actions.map((action) => ({
+    title: action.title,
+    icon: action.kind === "primary" ? "corner-down-left" : "copy",
+    keys: action.keybinding ?? (action.kind === "primary" ? "⏎" : null),
+    run: () => void runItemAction(item, action),
+  }));
+}
 
-  const item = v.items[v.focus];
-  const itemRows: CardRow[] = (item?.actions ?? []).map((action) => actionCardRow({ action }));
-  // Inside a command "open" would re-run the view the user is already in (and reset views like
-  // AI answers), so the source command's section only carries the favorite toggle and the placeholder.
-  const commandRows = v.sourceCommandId
-    ? await commandActionRows(v.sourceCommandId, { openable: false })
-    : [];
-  const generalRows: CardRow[] = [];
-  if (v.sourceCommandId) {
+/**
+ * "General" (ADR-0014/0022): the platform general slots as they are live on this page — Browse ⌘P /
+ * New ⌘N resolved from the Extension's declared entries, plus the delete slots where the page owns
+ * records (a result page, or the chat page as Remove Chat / Remove All Chats, ADR-0036).
+ */
+async function pageCardRows(ctx: PageContext): Promise<CardRow[]> {
+  const rows: CardRow[] = [];
+  if (ctx.commandId) {
     const kinds: EntryAction[] = ["browse", "new"];
     const found = await Promise.all(
       kinds.map((kind) =>
         invoke<CommandMeta | null>("entry_command", {
-          commandId: v.sourceCommandId,
+          commandId: ctx.commandId,
           kind,
         }).catch(() => null),
       ),
     );
+    const titles = ctx.mode === "chat"
+      ? { browse: "Browse Chats", new: "New Chat" }
+      : { browse: "Browse Records", new: "New Record" };
     kinds.forEach((kind, index) => {
-      const entry = found[index];
-      if (!entry) return;
-      generalRows.push(
-        actionCardRow({
-          platform: kind,
-          action: {
-            id: `moe.platform.${kind}`,
-            title: kind === "browse" ? "Browse Records" : "New Record",
-            kind: "secondary",
-            keybinding: GENERAL_KEY_LABELS[kind],
-          },
-        }),
-      );
+      if (!found[index]) return;
+      rows.push({
+        title: titles[kind],
+        icon: kind === "browse" ? "history" : "plus",
+        keys: GENERAL_KEY_LABELS[kind],
+        run: () => void openEntry(kind),
+      });
     });
   }
-  if (itemRows.length > 0) sections.push({ title: "Actions", rows: itemRows });
-  if (commandRows.length > 0) sections.push({ title: "Command", rows: commandRows });
-  if (generalRows.length > 0) sections.push({ title: "General", rows: generalRows });
-  actionsCard.open(sections);
+  if (ctx.mode === "items") {
+    rows.push({
+      title: "Delete Record",
+      icon: "trash-2",
+      keys: GENERAL_KEY_LABELS.delete,
+      run: () => void deleteFocused(false),
+    });
+    rows.push({
+      title: "Delete All Records",
+      icon: "trash-2",
+      keys: GENERAL_KEY_LABELS.deleteAll,
+      run: () => void deleteFocused(true),
+    });
+  } else if (ctx.mode === "chat") {
+    rows.push({
+      title: "Remove Chat",
+      icon: "trash-2",
+      keys: GENERAL_KEY_LABELS.delete,
+      disabled: !chatConversationId,
+      run: () => void removeCurrentChat(),
+    });
+    rows.push({
+      title: "Remove All Chats",
+      icon: "trash-2",
+      keys: GENERAL_KEY_LABELS.deleteAll,
+      run: () => void deleteAllChats(),
+    });
+  }
+  return rows;
+}
+
+/** The panel's card (ADR-0037): Actions → Command → General, loaded for every page kind. */
+const panelActionPlan = createActionPlan([
+  { title: "Actions", when: (ctx) => ctx.mode !== "commands", rows: objectCardRows },
+  { title: "Command", when: (ctx) => ctx.commandId !== undefined, rows: commandCardRows },
+  { title: "General", when: () => true, rows: pageCardRows },
+]);
+
+/**
+ * Open the actions card (Raycast-style floating card, Show All Actions ⌘K): the registered sources
+ * for the current page, one section each — the call site no longer merges rows by page kind
+ * (ADR-0037). The body (command list / results) stays in place behind the card.
+ */
+async function openActionsCard() {
+  closeAboutCard(); // the two cards are peers: opening one closes the other (like openAboutCard)
+  actionsCard.open(await panelActionPlan.sections(panelPageContext()));
+}
+
+/** Run one of the object's declared actions through the Extension's hook (result pages). */
+async function runItemAction(item: Item, action: Action) {
+  const v = view.get();
+  if (!v.sourceCommandId) return;
+  try {
+    const res = await invoke<ActionResult>("run_item_action", {
+      commandId: v.sourceCommandId,
+      item,
+      action,
+    });
+    if (action.id === "copy") toast("Copied");
+    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
+  } catch (err) {
+    showMessage(`Failed to run: ${String(err)}`);
+  }
 }
 
 /**
@@ -1292,119 +1371,9 @@ async function toggleFavorite(commandId: string | undefined) {
   }
 }
 
-/**
- * The command-level rows (ADR-0029): **Open Command comes first** — on the root layer it is the
- * same Apply path as Enter (live), so the row shows ⏎ and runs the focused command. Inside a
- * command the row is omitted ("opening" the view you are in would reset it). Then Add to
- * Favorites (⌘⇧F, works), Remove from Suggestions on a Suggestions row (⌃X, ADR-0025), and
- * Configure Extension (a disabled placeholder until it exists).
- */
-async function commandActionRows(
-  commandId: string,
-  options: { openable: boolean; suggestion?: boolean },
-): Promise<CardRow[]> {
-  let favorited = false;
-  try {
-    favorited = await invoke<boolean>("is_favorite", { commandId });
-  } catch {
-    // Ignore: the toggle still works, the label just may be stale
-  }
-  const rootRow = (
-    root: NonNullable<ActionRow["root"]>,
-    title: string,
-    keybinding: string | null,
-    disabled = false,
-  ): ActionRow => ({
-    root,
-    commandId,
-    disabled,
-    action: { id: `moe.${root}`, title, kind: "secondary", keybinding },
-  });
-  const rows: ActionRow[] = [];
-  if (options.openable) {
-    rows.push(rootRow("openCommand", "Open Command", keyDisplay.get("apply") ?? "⏎"));
-  }
-  rows.push(
-    rootRow(
-      "favorite",
-      favorited ? "Remove from Favorites" : "Add to Favorites",
-      GENERAL_KEY_LABELS.favorite,
-    ),
-  );
-  // A Suggestions row is a record (ADR-0025): the row that forgets it carries the delete slot's ⌃X
-  if (options.suggestion) {
-    rows.push(rootRow("removeSuggestion", "Remove from Suggestions", GENERAL_KEY_LABELS.delete));
-  }
-  rows.push(rootRow("configureExtension", "Configure Extension", null, true));
-  return rows.map(actionCardRow);
-}
-
 /** Close the actions card; returning focus to the Input Bar is the card's onClose hook. */
 function closeActionsCard() {
   actionsCard.close();
-}
-
-function iconOfActionRow(row: ActionRow): string {
-  if (row.root === "favorite") return "star";
-  if (row.root === "openCommand") return "corner-down-left";
-  if (row.root === "removeSuggestion") return "trash-2";
-  if (row.root === "configureExtension") return "settings-2";
-  if (row.platform) return row.platform === "browse" ? "history" : "plus";
-  return row.action.kind === "primary" ? "corner-down-left" : "copy";
-}
-
-/** One card row for an ActionRow: the icon/label/Kbd the card always showed; running goes through runActionRow. */
-function actionCardRow(row: ActionRow): CardRow {
-  return {
-    title: row.action.title,
-    icon: iconOfActionRow(row),
-    keys: row.action.keybinding ?? (row.action.kind === "primary" ? "⏎" : null),
-    disabled: row.disabled,
-    run: () => void runActionRow(row),
-  };
-}
-
-/**
- * Run one entry of the actions card: platform generic actions take the same path as ⌘P/⌘N; the rest go to the Extension.
- * The card closes before running (its contract), so this only executes the action.
- */
-async function runActionRow(row: ActionRow | undefined) {
-  if (!row) return;
-  if (row.platform) {
-    await openEntry(row.platform);
-    return;
-  }
-  if (row.root === "favorite") {
-    // The same path as the ⌘⇧F binding (ADR-0029)
-    await toggleFavorite(row.commandId);
-    return;
-  }
-  if (row.root === "removeSuggestion") {
-    // The same path as the ⌃X delete slot on the Suggestions section (ADR-0025)
-    await deleteSuggestion(row.commandId);
-    return;
-  }
-  if (row.root === "openCommand") {
-    // Root only: the same Apply path as Enter (ADR-0029)
-    const cmd = view.get().commands.find((c) => c.id === row.commandId);
-    if (cmd) await applyCommand(cmd);
-    return;
-  }
-  if (row.root) return; // disabled placeholders never reach here (the card skips them)
-  const v = view.get();
-  const item = v.mode === "items" ? v.items[v.focus] : undefined;
-  if (!item || !v.sourceCommandId) return;
-  try {
-    const res = await invoke<ActionResult>("run_item_action", {
-      commandId: v.sourceCommandId,
-      item,
-      action: row.action,
-    });
-    if (row.action.id === "copy") toast("Copied");
-    applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
-  } catch (err) {
-    showMessage(`Failed to run: ${String(err)}`);
-  }
 }
 
 async function materialize() {

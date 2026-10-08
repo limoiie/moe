@@ -167,8 +167,11 @@ _Avoid_: shortcut mapping, bindings
 
 **Show All Actions**:
 The layered behavior triggered by ⌘K on every surface (command panel and Side View alike): lists
-the Focused Item's primary/secondary actions as one layer for keyboard selection. One semantics,
-one key (ADR-0014 amendment).
+what can run from the page as one layer for keyboard selection — the object's own actions
+(**Actions**: the focused item, whatever the page shape; the conversation on a chat page), the
+page command's own rows (**Command**, ADR-0029), and the platform slots live on the page
+(**General**: Browse ⌘P / New ⌘N as declared, Delete ⌃X / DeleteAll ⌃⇧X on records). Assembled
+from registered sources (ADR-0037); one semantics, one key (ADR-0014 amendment).
 _Avoid_: command menu
 
 **Browse**:

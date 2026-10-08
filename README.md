@@ -69,17 +69,23 @@ icons:
   chip into a pill (Raycast-style) instead of popping up anywhere else.
 - **Action pill (bottom-right)**: **primary action** (the focused item's main action; becomes
   "Stop Generation" while generating) and **actions** (`⌘K`). `⌘K` pops up the **actions
-  card**: a floating overlay that never replaces the main body; its list groups the item's
-  actions under **Actions** and the `⌘P`/`⌘N` entries the extension declared under **General**
-  (Raycast-style sections; they flatten while the search input at the card's bottom filters),
+  card**: a floating overlay that never replaces the main body, its sections loaded automatically
+  per page from registered sources (ADR-0037) — **Actions** (the focused item's own actions on
+  every page shape, or the shown conversation's: Open in Side View / Copy Last Answer / Write
+  Back), **Command** (the page command's own menu: **Open Command** first on the root — the same
+  Apply as Enter, with the `⏎` Kbd — then **Add to / Remove from Favorites** (`⌘⇧F`, ADR-0029),
+  **Remove from Suggestions** on a suggestion (`⌃X`, ADR-0025), and the dimmed **Configure
+  Extension** placeholder), and **General** — the platform slots live on that page: **Browse
+  Records / Chats** (`⌘P`) and **New Record / Chat** (`⌘N`) when the extension declares them,
+  plus **Delete Record** (`⌃X`) / **Delete All Records** (`⌃⇧X`) — or **Remove Chat / Remove All
+  Chats** on the conversation page — wherever the page carries records (ADR-0014/0022).
+  Sections flatten while the search input at the card's bottom filters,
   `↑↓` / `⌃N` `⌃P` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015, ADR-0026 amendment).
   While a card is open it owns the keyboard: navigation and `⌫` act on the card, never on the
   list below (ADR-0031). The Side
-  View's **More Actions** is this same card (ADR-0028). On the **root page** the card shows the
-  focused command's own **Command** section: **Open Command** first — the same Apply as Enter,
-  with the `⏎` Kbd — then **Add to Favorites** / **Remove from Favorites** (`⌘⇧F`, ADR-0029),
-  then **Configure Extension** (a dimmed, not-yet-built placeholder); inside a command the same
-  section appears after its **Actions**, without Open Command.
+  View's **More Actions** is this same card (ADR-0028) with this surface's landing spots
+  (**Chat**: Chat History / New Chat / Remove Conversation / Remove All Conversations; **App**:
+  Open Config File; **Window**: Hide Side View).
 - **About card**: clicking the avatar chip (or `⌘⇧K`, ADR-0027) opens the app's About menu — a
   card with the same UX as the actions card (search input at the bottom): **App** holds
   **Open Config File** (`⌘,`) / **Save AI Key**, **Theme** holds **System** / **Light** / **Dark**
@@ -106,7 +112,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
   **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step through
   history, **`⌘P`** opens the history list, **`⌘J`** continues in the Side View, `⌥⏎` copies the last
-  answer and `⌘K` also offers Write Back. **Text selected before summoning automatically becomes
+  answer and `⌘K` groups the conversation's actions (Open in Side View / Copy Last Answer / Write
+  Back) with the page's slots (Browse Chats / New Chat / Remove Chat / Remove All Chats). **Text
+  selected before summoning automatically becomes
   context for the conversation's first message** (not repeated when the question already contains
   it, truncated when overlong; history stores only the question itself). **Files selected in Finder
   before summoning automatically become attachments** (deduplicated with `@path` by path; the first
@@ -121,9 +129,10 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   was generated so far and does not write back (⏎ writes back manually, ⌥⏎ copies).
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
   buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
-  **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028): the same
-  sections, filter input, `↑↓`/`⌃N` `⌃P`/`⏎` selection and `Esc` dismissal — with **New Chat** /
-  **Open Config File** / **Hide Side View** under the **Chat** / **App** / **Window** sections —
+  **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same
+  registered sections, filter input, `↑↓`/`⌃N` `⌃P`/`⏎` selection and `Esc` dismissal — with the
+  **Chat** section (Chat History / New Chat / Remove Conversation / Remove All Conversations),
+  **App** (Open Config File) and **Window** (Hide Side View) —
   floating centered nearly at the top, its filter input on top. Clicking
   History (or `⌘P`) pops up a **floating history card** centered at the top: its top input
   filters titles, the list below highlights with `↑` `↓` (or `⌃N` `⌃P`),
