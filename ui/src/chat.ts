@@ -10,7 +10,11 @@ import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
+import { initTheme } from "./theme";
 import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
+
+// ---- Appearance (ADR-0035): resolve the theme before the first render ----
+initTheme();
 
 /** Side View continue-chat event contract (moe-extensions::ai::SIDE_COMMAND_ID). */
 const SIDE_COMMAND_ID = "ai.side";
@@ -74,7 +78,9 @@ newChatEl.title = `New Chat (${GENERAL_KEY_LABELS.new})`;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 function toast(text: string, icon = "check") {
-  toastIconEl.replaceChildren(iconEl(icon, { size: 12 }));
+  toastIconEl.replaceChildren(
+    iconEl(icon, { size: 12, className: icon === "check" ? "text-success" : "text-warning" }),
+  );
   toastTextEl.textContent = text;
   toastEl.classList.remove("hidden");
   toastEl.classList.add("flex");
@@ -113,10 +119,10 @@ function toggleHistoryCard() {
 
 function rowClass(highlighted: boolean): string {
   return (
-    "flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-xs " +
+    "flex cursor-default items-center gap-2 rounded-xl px-2 py-1.5 text-xs transition-colors duration-100 " +
     (highlighted
-      ? "bg-zinc-700/70 text-zinc-50"
-      : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60")
+      ? "bg-surface-selected text-fg"
+      : "text-fg hover:bg-surface-hover")
   );
 }
 
@@ -138,7 +144,7 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
   const li = document.createElement("li");
   li.dataset.index = String(index);
   li.className = rowClass(false);
-  li.append(iconEl("message-square", { size: 14, className: "text-zinc-500" }));
+  li.append(iconEl("message-square", { size: 14, className: "text-fg-subtle" }));
   const label = document.createElement("span");
   label.className = "min-w-0 flex-1 truncate";
   label.textContent = conversation.title;
@@ -146,10 +152,10 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
   li.append(label);
   const time = document.createElement("span");
   if (conversation.id === conversationId) {
-    time.className = "shrink-0 text-[10px] text-sky-400/80";
+    time.className = "shrink-0 text-[10px] text-accent";
     time.textContent = "Current";
   } else {
-    time.className = "shrink-0 text-[10px] text-zinc-500";
+    time.className = "shrink-0 text-[10px] text-fg-subtle";
     time.textContent = relativeTime(conversation.updatedUnix);
   }
   li.append(time);
@@ -162,7 +168,7 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
 
 function emptyRow(text: string): HTMLLIElement {
   const li = document.createElement("li");
-  li.className = "px-2 py-3 text-xs text-zinc-600";
+  li.className = "px-2 py-3 text-xs text-fg-subtle";
   li.textContent = text;
   return li;
 }
@@ -463,7 +469,7 @@ function appendMessage(message: Message): HTMLElement {
     row.className = "flex flex-col items-end gap-1";
     const card = document.createElement("div");
     card.className =
-      "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-sky-600/80 px-3 py-2 text-sm text-white";
+      "moe-bubble max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-bubble-user px-3 py-2 text-sm text-fg";
     card.textContent = message.content;
     row.append(card);
     if (message.attachments?.length) {
@@ -472,7 +478,7 @@ function appendMessage(message: Message): HTMLElement {
       for (const reference of message.attachments) {
         const chip = document.createElement("span");
         chip.className =
-          "max-w-full truncate rounded-full border border-zinc-600/60 bg-zinc-800/70 px-2 py-0.5 text-[11px] text-zinc-300";
+          "moe-rim max-w-full truncate rounded-full bg-surface-float px-2 py-0.5 text-[11px] text-fg-muted";
         chip.textContent = `📎 ${reference.name}`;
         chip.title = reference.path;
         chips.append(chip);
@@ -480,7 +486,7 @@ function appendMessage(message: Message): HTMLElement {
       row.append(chips);
     }
   } else {
-    row.className = "md text-sm text-zinc-200";
+    row.className = "md text-sm text-fg";
     row.innerHTML = markdown(message.content);
   }
   messagesEl.append(row);
@@ -494,7 +500,7 @@ function appendMessage(message: Message): HTMLElement {
 function ensureStreamingBubble(): StreamingBubble {
   if (!streaming) {
     const root = document.createElement("div");
-    root.className = "md text-sm text-zinc-200";
+    root.className = "md text-sm text-fg";
     const body = document.createElement("div");
     const indicator = generatingEl();
     root.append(body, indicator);
@@ -611,10 +617,10 @@ void listen<CommandEventPayload>("command-event", (event) => {
 // ---- Attachments (📎 = same path as the panel's ⌘⇧A, ADR-0010) ----
 
 const ATTACH_ROW_BASE =
-  "flex items-center gap-2 border-t border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs";
+  "flex items-center gap-2 border-t border-accent-line bg-accent-soft px-3 py-2 text-xs";
 
 function openAttachRow() {
-  attachRowEl.className = `${ATTACH_ROW_BASE} text-sky-200`;
+  attachRowEl.className = `${ATTACH_ROW_BASE} text-accent`;
   attachPathEl.value = "";
   attachMsgEl.textContent = "";
   attachMsgEl.className = "shrink-0";
@@ -638,7 +644,7 @@ async function submitAttachPath() {
     closeAttachRow();
     composerEl.focus();
   } catch (err) {
-    attachMsgEl.className = "shrink-0 text-red-300";
+    attachMsgEl.className = "shrink-0 text-danger";
     attachMsgEl.textContent = String(err);
   }
 }
@@ -671,8 +677,8 @@ attachEl.addEventListener("click", () => {
 
 function updateSendUi() {
   sendEl.className = generating
-    ? "flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-500"
-    : "flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-500";
+    ? "moe-focus-ring flex items-center gap-1.5 rounded-full bg-warning-fill px-3 py-1 text-xs text-on-warning transition-colors hover:bg-warning-fill-hover"
+    : "moe-focus-ring flex items-center gap-1.5 rounded-full bg-accent-fill px-3 py-1 text-xs text-on-accent transition-colors hover:bg-accent-fill-hover";
   sendEl.replaceChildren(
     iconEl(generating ? "stop" : "send", { size: 13 }),
     document.createTextNode(generating ? "Stop" : "Send"),
@@ -701,7 +707,7 @@ async function stopGeneration() {
 
 window.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  // Generic actions (ADR-0014): Browse ⌘P / Actions ⌘⇧P / New ⌘N.
+  // Generic actions (ADR-0014): Browse ⌘P / Actions ⌘K / New ⌘N.
   // Semantics shared with the command panel (./keymap); the landing spots are decided by this view: history card / actions menu / new chat.
   const general = generalActionOf(e);
   if (general === "actions") {

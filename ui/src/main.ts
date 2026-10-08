@@ -9,6 +9,7 @@ import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, type EntryAction } from "./keymap";
+import { logoEl } from "./logo";
 import {
   DETAIL_PANE_CLASS,
   LIST_FULL_CLASS,
@@ -21,6 +22,7 @@ import {
   type PageShape,
 } from "./layout";
 import { store } from "./store";
+import { initTheme, themePreference, type ThemePreference } from "./theme";
 import type {
   Action,
   ActionResult,
@@ -29,6 +31,9 @@ import type {
   CommandSection,
   Item,
 } from "./types";
+
+// ---- Appearance (ADR-0035): the config theme override lands before the first render ----
+initTheme();
 
 // ---- View state ----
 
@@ -135,12 +140,10 @@ let extensionMeta: ExtensionMeta | null = null;
 let toastState: { text: string; icon: string } | null = null;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-function appAvatarEl(): HTMLImageElement {
-  const img = document.createElement("img");
-  img.src = "./moe.png";
-  img.alt = "Moe";
-  img.className = "moe-avatar-img";
-  return img;
+/** Fallback identity for extensions that declare no icon: the brand mark, inline so it follows the
+   theme (the old moe.png bitmap could not). */
+function appAvatarEl(): SVGElement {
+  return logoEl("moe-avatar-logo text-fg-muted");
 }
 
 /** The chip's label: the extension's name while inside a command, otherwise none. */
@@ -158,12 +161,17 @@ function chipLabel(text: string): HTMLSpanElement {
 function renderChip() {
   chipEl.replaceChildren();
   delete chipEl.dataset.labeled;
+  delete chipEl.dataset.toast;
   if (toastState) {
     chipEl.dataset.labeled = "true";
+    // A toast (unlike an extension name) may carry a long message: the wider label cap plus the
+    // title tooltip keep errors readable instead of ellipsized at 170px (styles.css).
+    chipEl.dataset.toast = "true";
+    chipEl.title = toastState.text;
     chipEl.append(
       iconEl(toastState.icon, {
         size: 14,
-        className: toastState.icon === "check" ? "text-emerald-400" : "text-amber-400",
+        className: toastState.icon === "check" ? "text-success" : "text-warning",
       }),
       chipLabel(toastState.text),
     );
@@ -174,7 +182,7 @@ function renderChip() {
     chipEl.dataset.labeled = "true";
     chipEl.append(
       extensionMeta.icon
-        ? iconEl(extensionMeta.icon, { size: 18, className: "text-zinc-300" })
+        ? iconEl(extensionMeta.icon, { size: 18, className: "text-fg-muted" })
         : appAvatarEl(),
       chipLabel(extensionMeta.title),
     );
@@ -182,7 +190,7 @@ function renderChip() {
     return;
   }
   // Root: the About button's own icon (ADR-0026 amendment) — the chip is a button, not the brand
-  chipEl.append(iconEl("message-circle-warning", { size: 18, className: "text-zinc-300" }));
+  chipEl.append(iconEl("message-circle-warning", { size: 18, className: "text-fg-muted" }));
   chipEl.title = aboutTitle("About Moe");
 }
 
@@ -364,7 +372,7 @@ function currentEntries(): Row[] {
 function sectionHeaderEl(title: string): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "moe-section-header select-none px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
+    "moe-section-header select-none px-3 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
   li.style.height = `${SECTION_HEADER_HEIGHT}px`;
   li.textContent = title;
   return li;
@@ -374,7 +382,7 @@ function sectionHeaderEl(title: string): HTMLLIElement {
 function cardSectionHeaderEl(title: string): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "select-none px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
+    "select-none px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
   li.textContent = title;
   return li;
 }
@@ -383,18 +391,18 @@ function cardSectionHeaderEl(title: string): HTMLLIElement {
 function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "group flex cursor-default items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm " +
+    "group flex cursor-default items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm transition-colors duration-100 " +
     (focused
-      ? "bg-zinc-700/70 text-zinc-50"
-      : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
+      ? "bg-surface-selected text-fg"
+      : "text-fg hover:bg-surface-hover");
   if (focused) li.dataset.focused = "true";
   li.append(
     iconEl(e.icon, {
       className: e.iconMuted
-        ? "text-zinc-600"
+        ? "text-fg-faint"
         : focused
-          ? "text-zinc-200"
-          : "text-zinc-400 group-hover:text-zinc-300",
+          ? "text-fg"
+          : "text-fg-subtle group-hover:text-fg-muted",
     }),
   );
   const left = document.createElement("div");
@@ -402,7 +410,7 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   left.textContent = e.title;
   if (e.subtitle) {
     const sub = document.createElement("span");
-    sub.className = "ml-2 text-xs text-zinc-500";
+    sub.className = "ml-2 text-xs text-fg-subtle";
     sub.textContent = e.subtitle;
     left.append(sub);
   }
@@ -505,17 +513,17 @@ const DETAIL_MESSAGE_CLASS = DETAIL_PANE_CLASS;
 function detailHeaderEl(item: Item): HTMLElement {
   const header = document.createElement("div");
   header.className =
-    "mb-3 flex items-center gap-2.5 border-b border-zinc-800 pb-2.5 text-sm not-prose";
+    "mb-3 flex items-center gap-2.5 border-b border-line pb-2.5 text-sm not-prose";
   header.append(
-    iconEl(item.icon, { size: 15, className: "shrink-0 text-zinc-500" }),
+    iconEl(item.icon, { size: 15, className: "shrink-0 text-fg-subtle" }),
   );
   const title = document.createElement("span");
-  title.className = "min-w-0 flex-1 truncate font-medium text-zinc-100";
+  title.className = "min-w-0 flex-1 truncate font-medium text-fg";
   title.textContent = item.title;
   header.append(title);
   if (item.subtitle) {
     const sub = document.createElement("span");
-    sub.className = "shrink-0 text-xs text-zinc-500";
+    sub.className = "shrink-0 text-xs text-fg-subtle";
     sub.textContent = item.subtitle;
     header.append(sub);
   }
@@ -985,7 +993,7 @@ async function runActionRow(row: ActionRow | undefined) {
 async function materialize() {
   const v = view.get();
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
-  const action = item?.actions.find((a) => a.id === "materialize" || a.keybinding === "⌘M");
+  const action = item?.actions.find((a) => a.id === "materialize" || a.keybinding === "⌘J");
   if (item && action && v.sourceCommandId) {
     const res = await invoke<ActionResult>("run_item_action", {
       commandId: v.sourceCommandId,
@@ -1007,6 +1015,8 @@ interface AboutRow {
   icon: string;
   /** Kbd display string (e.g. "⌘,"); rows without a platform binding show none. */
   keys?: string;
+  /** The row's state is on (the theme rows): a trailing check marks it. */
+  active?: boolean;
   run: () => void;
 }
 
@@ -1019,7 +1029,14 @@ interface AboutSection {
 let aboutFocus = 0;
 let aboutCardOpen = false;
 
-/** The About menu: the app's own meta actions (ADR-0026), grouped into App / Support sections (ADR-0026 amendment). */
+/** Appearance rows (ADR-0035 amendment): System follows the OS; the choice persists to config.toml. */
+const THEME_ROWS: { value: ThemePreference; title: string; icon: string }[] = [
+  { value: "system", title: "System", icon: "monitor" },
+  { value: "light", title: "Light", icon: "sun" },
+  { value: "dark", title: "Dark", icon: "moon" },
+];
+
+/** The About menu: the app's own meta actions (ADR-0026), grouped into App / Theme / Support sections (ADR-0026/0035 amendments). */
 function aboutSections(): AboutSection[] {
   return [
     {
@@ -1039,6 +1056,16 @@ function aboutSections(): AboutSection[] {
           run: () => void runAboutKey(),
         },
       ],
+    },
+    {
+      title: "Theme",
+      rows: THEME_ROWS.map((option) => ({
+        id: `about.theme.${option.value}`,
+        title: option.title,
+        icon: option.icon,
+        active: themePreference() === option.value,
+        run: () => void runAboutTheme(option.value),
+      })),
     },
     {
       title: "Support",
@@ -1098,6 +1125,22 @@ async function runAboutFeedback() {
   }
 }
 
+/**
+ * Switch the appearance (ADR-0035 amendment): Rust persists it to config.toml and broadcasts
+ * (both windows re-theme); the card stays open — a theme is worth trying twice — and its check
+ * follows the new preference.
+ */
+async function runAboutTheme(theme: ThemePreference) {
+  const label = THEME_ROWS.find((option) => option.value === theme)?.title ?? theme;
+  try {
+    await invoke("set_theme", { theme });
+    toast(`Theme: ${label}`);
+  } catch (err) {
+    toast(`Failed to set theme: ${String(err)}`, "alert");
+  }
+  if (aboutCardOpen) renderAboutCard();
+}
+
 /** Filter rows by title (case-insensitive); a section whose rows all filtered out disappears. */
 function filteredAboutSections(): AboutSection[] {
   const needle = aboutSearchEl.value.trim().toLowerCase();
@@ -1118,11 +1161,11 @@ function filteredAboutRows(): AboutRow[] {
 function aboutRowEl(row: AboutRow, focused: boolean): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
+    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
     (focused
-      ? "bg-zinc-700/70 text-zinc-50"
-      : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
-  li.append(iconEl(row.icon, { size: 15, className: focused ? "text-zinc-200" : "text-zinc-500" }));
+      ? "bg-surface-selected text-fg"
+      : "text-fg hover:bg-surface-hover");
+  li.append(iconEl(row.icon, { size: 15, className: focused ? "text-fg" : "text-fg-subtle" }));
   const title = document.createElement("span");
   title.className = "min-w-0 flex-1 truncate";
   title.textContent = row.title;
@@ -1131,6 +1174,10 @@ function aboutRowEl(row: AboutRow, focused: boolean): HTMLLIElement {
     const keys = kbdEl(row.keys, { firstOnly: true });
     keys.classList.add("shrink-0");
     li.append(keys);
+  }
+  // The state rows (themes): a trailing check marks the active one — shape, not color alone
+  if (row.active) {
+    li.append(iconEl("check", { size: 14, className: "shrink-0 text-accent" }));
   }
   li.addEventListener("click", () => row.run());
   return li;
@@ -1142,7 +1189,7 @@ function renderAboutCard() {
   aboutFocus = rows.length === 0 ? 0 : Math.min(aboutFocus, rows.length - 1);
   if (rows.length === 0) {
     const empty = document.createElement("li");
-    empty.className = "px-2 py-3 text-xs text-zinc-600";
+    empty.className = "px-2 py-3 text-xs text-fg-subtle";
     empty.textContent = "No matching actions";
     aboutListEl.replaceChildren(empty);
     return;
@@ -1408,10 +1455,14 @@ function renderInputIcon() {
   if (kind === inputIconKind) return;
   inputIconKind = kind;
   inputIconEl.classList.toggle("moe-input-icon-back", kind === "back");
+  // The root page carries the brand mark (inline SVG, currentColor); nested pages the back arrow,
+  // attachment mode the paperclip (ADR-0034 amendment).
   inputIconEl.replaceChildren(
-    iconEl(kind === "attach" ? "paperclip" : kind === "back" ? "arrow-left" : "square-m", {
-      className: "moe-input-glyph text-zinc-400",
-    }),
+    kind === "attach"
+      ? iconEl("paperclip", { className: "moe-input-glyph text-fg-muted" })
+      : kind === "back"
+        ? iconEl("arrow-left", { className: "moe-input-glyph text-fg-muted" })
+        : logoEl("moe-input-glyph text-fg"),
   );
 }
 
@@ -1424,8 +1475,8 @@ function setAttachBar(kind: "hint" | "error", text: string) {
   attachTextEl.textContent = text;
   const palette =
     kind === "error"
-      ? "border-red-500/30 bg-red-500/10 text-red-200"
-      : "border-sky-500/30 bg-sky-500/10 text-sky-200";
+      ? "border-danger-line bg-danger-soft text-danger"
+      : "border-accent-line bg-accent-soft text-accent";
   attachBarEl.className = `${ATTACH_BAR_BASE} flex ${palette}`;
 }
 
@@ -1514,7 +1565,7 @@ window.addEventListener("keydown", (e) => {
     closeAboutCard();
     return;
   }
-  // Generic actions (ADR-0014/0022/0029): Browse ⌘P / Actions ⌘⇧P / New ⌘N /
+  // Generic actions (ADR-0014/0022/0029): Browse ⌘P / Actions ⌘K / New ⌘N /
   // Delete ⌃X / DeleteAll ⌃⇧X / Favorite ⌘⇧F. Semantics are recognized by the shared keymap module; the landing spot is decided by this surface.
   const general = generalActionOf(e);
   if (general) {
@@ -1579,11 +1630,9 @@ window.addEventListener("keydown", (e) => {
     // About (⌘⇧K, ADR-0027): the chip's card, with a platform binding
     e.preventDefault();
     toggleAboutCard();
-  } else if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "k") {
-    // ⌘K only: ⌃K must stay the macOS kill-line editing key (ADR-0031)
-    e.preventDefault();
-    toggleActionsCard();
-  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "m") {
+  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
+    // Materialize (⌘J, ADR-0014 amendment). ⌘K is routed through generalActionOf above; ⌃K stays
+    // the macOS kill-line editing key (ADR-0031)
     e.preventDefault();
     void materialize();
   } else if (e.key === "Escape") {
