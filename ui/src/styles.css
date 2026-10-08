@@ -428,7 +428,7 @@ body {
   display: none;
 }
 [data-focused="true"] > .moe-keys.moe-row-keys,
-.group:hover > .moe-keys.moe-row-keys {
+[data-pointer="live"] .group:hover > .moe-keys.moe-row-keys {
   display: inline-flex;
 }
 
@@ -446,8 +446,17 @@ body {
   color: var(--moe-fg-subtle);
 }
 /* Hover brightens the badge (the rows' standing hover rule; focus never changes it) */
-.group:hover .moe-kind-badge {
+[data-pointer="live"] .group:hover .moe-kind-badge {
   color: var(--moe-fg-muted);
+}
+
+/* Row hover is a pointer affordance, gated on real pointer movement (ADR-0031 amendment): while
+   the keyboard drives the UI, rows re-render under a stationary cursor and CSS :hover recomputes
+   on the fresh nodes — the wash flickered on arbitrary rows during ↑↓/⌃N/⌃P navigation and while
+   typing. ui/src/pointer.ts owns the data-pointer attribute; rows opt in via .moe-row, and the
+   focused row is excluded (its highlight is the selection, not a hover). */
+[data-pointer="live"] li.moe-row:not([data-focused="true"]):hover {
+  background-color: var(--moe-surface-hover);
 }
 
 /* Top input row (all panel pages): text from the shared token; the input sits in the same grid
@@ -567,7 +576,7 @@ body {
   box-shadow: inset 0 0 0 1px var(--moe-line-strong);
 }
 
-.moe-action-bar button:not(:disabled):hover {
+[data-pointer="live"] .moe-action-bar button:not(:disabled):hover {
   background: var(--moe-surface-hover);
 }
 .moe-action-bar button:not(:disabled):active {

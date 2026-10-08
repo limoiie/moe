@@ -10,11 +10,13 @@ import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
+import { initPointerIntent } from "./pointer";
 import { initTheme } from "./theme";
 import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
 
 // ---- Appearance (ADR-0035): resolve the theme before the first render ----
 initTheme();
+initPointerIntent();
 
 /** Side View continue-chat event contract (moe-extensions::ai::SIDE_COMMAND_ID). */
 const SIDE_COMMAND_ID = "ai.side";
@@ -119,17 +121,20 @@ function toggleHistoryCard() {
 
 function rowClass(highlighted: boolean): string {
   return (
-    "flex cursor-default items-center gap-2 rounded-xl px-2 py-1.5 text-xs transition-colors duration-100 " +
+    "moe-row flex cursor-default items-center gap-2 rounded-xl px-2 py-1.5 text-xs transition-colors duration-100 " +
     (highlighted
       ? "bg-surface-selected text-fg"
-      : "text-fg hover:bg-surface-hover")
+      : "text-fg")
   );
 }
 
 function paintHistoryHighlight() {
   for (const child of Array.from(historyListEl.children)) {
-    const on = Number((child as HTMLElement).dataset.index) === historyIndex;
-    child.className = rowClass(on);
+    const row = child as HTMLElement;
+    const on = Number(row.dataset.index) === historyIndex;
+    row.className = rowClass(on);
+    if (on) row.dataset.focused = "true";
+    else delete row.dataset.focused;
   }
 }
 

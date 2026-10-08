@@ -41,3 +41,16 @@ front", and modifier matching was too loose.
 - Root rows hide declared shortcuts at rest, so discoverability of e.g. `⌘,` leans on the Kbd
   appearing as soon as a row is focused — the row is focused on open, so the first row always
   shows its shortcut.
+
+## Amendment: hover is pointer intent, gated against render flicker
+
+While the keyboard drives the UI, every render replaces the row DOM under a stationary cursor,
+and CSS `:hover` recomputes on the fresh nodes — the hover wash flickered on arbitrary rows while
+navigating with ↑↓/⌃N/⌃P or while typing. Hover is now a pointer affordance by construction:
+`ui/src/pointer.ts` marks the root `data-pointer="live"` after real pointer activity (mousemove
+or mousedown) and `"stale"` on any keydown (capture phase, so card-owned keys count); every hover
+style on a re-rendered surface — the row wash (`.moe-row`), the kind-badge brightening, the
+declared-shortcut reveal, the action pill's buttons — is gated on `live` in styles.css. Persistent
+controls (the chip, the Side View's window buttons, send/attach) keep their plain `:hover`: they
+never re-render under the cursor, so they cannot flicker. The focused row is excluded from hover
+by `data-focused` — its highlight is the selection, not a hover.

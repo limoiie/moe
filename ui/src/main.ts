@@ -21,6 +21,7 @@ import {
   SECTION_HEADER_HEIGHT,
   type PageShape,
 } from "./layout";
+import { initPointerIntent } from "./pointer";
 import { store } from "./store";
 import { initTheme, themePreference, type ThemePreference } from "./theme";
 import type {
@@ -34,6 +35,7 @@ import type {
 
 // ---- Appearance (ADR-0035): the config theme override lands before the first render ----
 initTheme();
+initPointerIntent();
 
 // ---- View state ----
 
@@ -387,14 +389,16 @@ function cardSectionHeaderEl(title: string): HTMLLIElement {
   return li;
 }
 
-/** A single row: hover = interactive hint (does not steal focus); only the focused row gets the main highlight. */
+/** A single row: hover is an interactive hint (never steals focus) and only applies after real
+ * pointer movement — the re-render flicker while keyboard-navigating is gated away in
+ * styles.css (.moe-row + data-pointer); only the focused row gets the main highlight. */
 function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "group flex cursor-default items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm transition-colors duration-100 " +
+    "moe-row group flex cursor-default items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm transition-colors duration-100 " +
     (focused
       ? "bg-surface-selected text-fg"
-      : "text-fg hover:bg-surface-hover");
+      : "text-fg");
   if (focused) li.dataset.focused = "true";
   li.append(
     iconEl(e.icon, {
@@ -1161,10 +1165,11 @@ function filteredAboutRows(): AboutRow[] {
 function aboutRowEl(row: AboutRow, focused: boolean): HTMLLIElement {
   const li = document.createElement("li");
   li.className =
-    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
+    "moe-row flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
     (focused
       ? "bg-surface-selected text-fg"
-      : "text-fg hover:bg-surface-hover");
+      : "text-fg");
+  if (focused) li.dataset.focused = "true";
   li.append(iconEl(row.icon, { size: 15, className: focused ? "text-fg" : "text-fg-subtle" }));
   const title = document.createElement("span");
   title.className = "min-w-0 flex-1 truncate";

@@ -83,12 +83,13 @@ export function createCard(options: CardOptions): Card {
     const li = document.createElement("li");
     const disabled = row.disabled === true;
     li.className =
-      "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
+      "moe-row flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
       (disabled
         ? "text-fg-subtle opacity-45"
         : focused
           ? "bg-surface-selected text-fg"
-          : "text-fg hover:bg-surface-hover");
+          : "text-fg");
+    if (focused) li.dataset.focused = "true";
     li.append(
       iconEl(row.icon, {
         size: 15,
