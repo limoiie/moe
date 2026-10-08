@@ -4,14 +4,14 @@
 
 ### Issue tracker
 
-Issues live in Linear (workspace iie4limo, team IIE4AD, project Moe /
-`P-IIE4AD-12`); all operations go through the Linear MCP tools. See
+Issues live as Markdown files in `docs/issues/` (`MOE-NNNN-slug.md`); every
+operation is a plain file read or edit — no external tracker. See
 `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
 Default five-role vocabulary (needs-triage / needs-info / ready-for-agent /
-ready-for-human / wontfix), as Linear labels on team IIE4AD. See
+ready-for-human / wontfix), written into each issue file's `Labels` line. See
 `docs/agents/triage-labels.md`.
 
 ### Domain docs

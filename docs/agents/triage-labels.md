@@ -1,8 +1,8 @@
 # Triage Labels
 
 The skills speak in terms of five canonical triage roles. This file maps those
-roles to the actual label strings used in this repo's issue tracker (Linear,
-team IIE4AD).
+roles to the actual label strings used in this repo's issue tracker
+(`docs/issues/`, the `Labels` line of an issue file).
 
 | Label in mattpocock/skills | Label in our tracker | Meaning                                  |
 | -------------------------- | -------------------- | ---------------------------------------- |
@@ -12,8 +12,8 @@ team IIE4AD).
 | `ready-for-human`          | `ready-for-human`    | Requires human implementation            |
 | `wontfix`                  | `wontfix`            | Will not be actioned                     |
 
-When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use
-the corresponding label string from this table. The five labels are created
-as Linear issue labels on team IIE4AD on first use (`save_issue_label`).
-
-Edit the right-hand column to match whatever vocabulary you actually use.
+When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the
+corresponding label string from this table and write it into the issue file's
+`Labels` line (e.g. `- **Labels**: ready-for-agent, feature`). Free-form labels
+(`feature`, `bug`, `ux`, `wayfinder:…`) sit alongside the triage roles; there is
+nothing to create upfront — a label exists as soon as it appears in a file.
