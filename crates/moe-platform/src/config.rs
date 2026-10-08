@@ -18,6 +18,10 @@ pub const DEFAULT_TEMPLATE: &str = "\
 key = \"double-cmd\"
 double_tap_ms = 400
 
+[ui]
+# system | light | dark — system follows the OS appearance (ADR-0035)
+theme = \"system\"
+
 # [ai]  Uncomment and fill in any OpenAI-compatible endpoint (DeepSeek/OpenRouter/local llama.cpp …)
 # base_url = \"https://api.deepseek.com/v1\"
 # model = \"deepseek-chat\"
@@ -118,12 +122,53 @@ impl AiConfig {
 pub struct MoeConfig {
     pub summon: SummonConfig,
     pub ai: AiConfig,
+    pub ui: UiConfig,
+}
+
+/// Appearance preference for the two UI themes (ADR-0035): follow the OS, or pin light/dark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Theme {
+    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "system" | "auto" => Ok(Self::System),
+            "light" => Ok(Self::Light),
+            "dark" => Ok(Self::Dark),
+            _ => Err(ConfigError::UnknownTheme(raw.to_string())),
+        }
+    }
+
+    /// The value the UI reads (`ui_theme`); the UI resolves `system` against the OS appearance.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UiConfig {
+    pub theme: Theme,
 }
 
 #[derive(Deserialize, Default)]
 struct RawConfig {
     summon: Option<RawSummon>,
     ai: Option<RawAi>,
+    ui: Option<RawUi>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawUi {
+    theme: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -157,7 +202,18 @@ impl MoeConfig {
             base_url: raw_ai.base_url,
             model: raw_ai.model,
         });
-        Ok(Self { summon, ai })
+        let ui = match raw.ui {
+            Some(raw_ui) => UiConfig {
+                theme: raw_ui
+                    .theme
+                    .as_deref()
+                    .map(Theme::parse)
+                    .transpose()?
+                    .unwrap_or_default(),
+            },
+            None => UiConfig::default(),
+        };
+        Ok(Self { summon, ai, ui })
     }
 
     /// Load from the platform config directory; fall back to defaults when the file is missing or fails to parse (ADR-0008).
@@ -187,6 +243,7 @@ pub enum ConfigError {
     ComboMissingModifier(String),
     ComboMissingKey(String),
     DoubleTapRange(u64),
+    UnknownTheme(String),
     Toml(String),
 }
 
@@ -202,6 +259,9 @@ impl fmt::Display for ConfigError {
                 f,
                 "double_tap_ms {ms} out of range ({MIN_DOUBLE_TAP_MS}..={MAX_DOUBLE_TAP_MS})"
             ),
+            Self::UnknownTheme(raw) => {
+                write!(f, "unknown theme: {raw} (expected system | light | dark)")
+            }
             Self::Toml(msg) => write!(f, "invalid config.toml: {msg}"),
         }
     }
@@ -231,6 +291,75 @@ pub fn open_in_editor() -> std::io::Result<PathBuf> {
     #[cfg(not(target_os = "macos"))]
     let _ = std::process::Command::new("xdg-open").arg(&path).spawn()?;
     Ok(path)
+}
+
+/// The canonical `theme` assignment line for the persisted config.
+fn theme_line(theme: Theme) -> String {
+    format!("theme = \"{}\"", theme.as_str())
+}
+
+/// Whether a config line assigns the `theme` key (a commented line never counts).
+fn is_theme_assignment(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return false;
+    }
+    trimmed
+        .split_once('=')
+        .is_some_and(|(key, _)| key.trim() == "theme")
+}
+
+/// Replace (or add) the `theme` key inside the `[ui]` section of config.toml text, keeping every
+/// other line — comments included — byte for byte (ADR-0035 amendment): the file is the user's, so
+/// the app never re-serializes it. Pure, so the surgery is unit-tested.
+pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
+    let key_line = theme_line(theme);
+    let mut lines: Vec<String> = if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').map(str::to_string).collect()
+    };
+    // Drop the empty tail of a trailing newline so appends land before it; the join re-adds it.
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    match lines.iter().position(|line| line.trim() == "[ui]") {
+        Some(start) => {
+            let end = lines[start + 1..]
+                .iter()
+                .position(|line| line.trim_start().starts_with('['))
+                .map_or(lines.len(), |offset| start + 1 + offset);
+            match (start + 1..end).find(|&i| is_theme_assignment(&lines[i])) {
+                Some(at) => lines[at] = key_line,
+                None => lines.insert(start + 1, key_line),
+            }
+        }
+        None => {
+            if lines.last().is_some_and(|line| !line.trim().is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push("[ui]".to_string());
+            lines.push(key_line);
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// Persist the appearance preference to `config.toml` (a missing file is created from the default
+/// template first, so its comments teach the other settings too).
+pub fn store_theme(theme: Theme) -> std::io::Result<()> {
+    let path = config_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => DEFAULT_TEMPLATE.to_string(),
+        Err(err) => return Err(err),
+    };
+    std::fs::write(&path, set_theme_in_toml(&text, theme))
 }
 
 #[cfg(test)]
@@ -298,6 +427,57 @@ mod tests {
         let cfg = MoeConfig::from_toml("[ai]\nbase_url = \"https://x/v1\"\n").unwrap();
         assert!(cfg.ai.configured());
         assert_eq!(cfg.ai.model_or_default(), "gpt-4o-mini");
+    }
+
+    #[test]
+    fn ui_theme_parses_and_defaults_to_system() {
+        assert_eq!(MoeConfig::from_toml("").unwrap().ui.theme, Theme::System);
+        assert_eq!(Theme::parse(" Light ").unwrap(), Theme::Light);
+        assert_eq!(Theme::parse("auto").unwrap(), Theme::System);
+        assert_eq!(Theme::parse("dark").unwrap().as_str(), "dark");
+        assert!(Theme::parse("neon").is_err());
+
+        let cfg = MoeConfig::from_toml("[ui]\ntheme = \"dark\"\n").unwrap();
+        assert_eq!(cfg.ui.theme, Theme::Dark);
+        assert!(MoeConfig::from_toml("[ui]\ntheme = \"neon\"\n").is_err());
+    }
+
+    #[test]
+    fn set_theme_in_toml_replaces_in_place_and_keeps_everything_else() {
+        let text = "# mine\n[summon]\nkey = \"double-option\"\n\n[ui]\n# appearance\ntheme = \"dark\"\n\n[ai]\nmodel = \"deepseek-chat\"\n";
+        let out = set_theme_in_toml(text, Theme::Light);
+        assert!(out.contains("theme = \"light\""));
+        assert!(!out.contains("theme = \"dark\""));
+        assert!(out.contains("# appearance"));
+        assert!(out.contains("# mine"));
+        assert!(out.ends_with('\n'));
+        // The rest of the file still lands
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ui.theme, Theme::Light);
+        assert_eq!(cfg.summon.key, SummonKey::DoubleTap(Modifier::Alt));
+        assert_eq!(cfg.ai.model.as_deref(), Some("deepseek-chat"));
+    }
+
+    #[test]
+    fn set_theme_in_toml_inserts_the_key_or_the_section() {
+        // The section exists without the key: the key goes right under the header
+        let out = set_theme_in_toml("[ui]\n", Theme::Dark);
+        assert_eq!(out, "[ui]\ntheme = \"dark\"\n");
+
+        // No section at all: one is appended after a blank line
+        let out = set_theme_in_toml("[summon]\nkey = \"double-cmd\"\n", Theme::Light);
+        assert!(out.ends_with("[ui]\ntheme = \"light\"\n"));
+        assert_eq!(MoeConfig::from_toml(&out).unwrap().ui.theme, Theme::Light);
+
+        // A commented-out key is not the key
+        let out = set_theme_in_toml("# theme = \"light\"\n", Theme::Dark);
+        assert!(out.contains("# theme = \"light\""));
+        assert!(out.contains("theme = \"dark\""));
+
+        // The template (which already carries the key) is edited in place
+        let out = set_theme_in_toml(DEFAULT_TEMPLATE, Theme::Dark);
+        assert_eq!(MoeConfig::from_toml(&out).unwrap().ui.theme, Theme::Dark);
+        assert!(out.contains("system | light | dark"));
     }
 
     #[test]
