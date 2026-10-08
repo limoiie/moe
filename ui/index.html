@@ -4,17 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Moe</title>
+    <script>
+      /* Seed the appearance from the OS before the first paint (styles.css); theme.ts applies
+         the config override ([ui] theme) as soon as the backend answers. */
+      document.documentElement.dataset.theme = window.matchMedia?.(
+        "(prefers-color-scheme: dark)",
+      )?.matches
+        ? "dark"
+        : "light";
+    </script>
   </head>
   <body class="bg-transparent">
     <div
       id="root"
-      class="moe-window-card relative m-3 flex h-[calc(100vh-1.5rem)] flex-col overflow-hidden rounded-2xl border border-zinc-700/60 bg-zinc-900/90 pb-2 backdrop-blur-xl"
+      class="moe-window-card relative m-3 flex h-[calc(100vh-1.5rem)] flex-col overflow-hidden rounded-window bg-surface pb-2"
     >
       <div id="query-row" class="flex items-center gap-2.5 px-5 pt-4 pb-3">
-        <span id="input-icon" class="moe-input-icon text-zinc-500"></span>
+        <span id="input-icon" class="moe-input-icon text-fg-subtle"></span>
         <input
           id="query"
-          class="moe-query-input w-full bg-transparent text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+          class="moe-query-input w-full bg-transparent text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Search commands…"
           autofocus
           spellcheck="false"
@@ -22,7 +31,7 @@
       </div>
       <div
         id="banner"
-        class="hidden items-center justify-between gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200"
+        class="hidden items-center justify-between gap-3 border-b border-warning-line bg-warning-soft px-4 py-2 text-xs text-warning"
       >
         <span class="flex min-w-0 items-center gap-2">
           <span id="banner-icon"></span>
@@ -30,7 +39,7 @@
         </span>
         <button
           id="banner-action"
-          class="shrink-0 rounded-md border border-amber-400/40 px-2 py-1 text-amber-100 hover:bg-amber-400/20"
+          class="moe-focus-ring shrink-0 rounded-full border border-warning-line px-2.5 py-1 text-warning transition-colors hover:bg-warning/15 active:bg-warning/25"
         >
           Open System Settings
         </button>
@@ -39,8 +48,8 @@
         <span id="attach-text"></span>
       </div>
       <div class="flex min-h-0 flex-1">
-        <ul id="list" class="min-h-0 flex-1 overflow-y-auto px-2"></ul>
-        <div id="detail" class="md hidden"></div>
+        <ul id="list" class="moe-scroll-fade min-h-0 flex-1 overflow-y-auto px-2"></ul>
+        <div id="detail" class="md moe-scroll-fade hidden"></div>
       </div>
 
       <!-- Bottom bar (ADR-0026): exactly one row tall, overlaying the list's last visible row band.
@@ -59,12 +68,12 @@
            into sections (App / Support), the search input at the bottom -->
       <div
         id="about-card"
-        class="moe-about-card absolute bottom-14 left-2 z-20 hidden w-80 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 backdrop-blur-xl"
+        class="moe-about-card absolute bottom-14 left-2 z-20 hidden w-80 overflow-hidden rounded-2xl bg-surface-overlay"
       >
         <ul id="about-list" class="max-h-72 overflow-y-auto p-1"></ul>
         <input
           id="about-search"
-          class="w-full border-t border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+          class="w-full border-t border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Search…"
           spellcheck="false"
         />
@@ -74,12 +83,12 @@
            (sections), the filter input at the bottom, same card language as the About card -->
       <div
         id="actions-card"
-        class="moe-actions-card absolute bottom-14 right-2 z-20 hidden w-80 overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900/95 backdrop-blur-xl"
+        class="moe-actions-card absolute bottom-14 right-2 z-20 hidden w-80 overflow-hidden rounded-2xl bg-surface-overlay"
       >
         <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
         <input
           id="action-search"
-          class="w-full border-t border-zinc-800 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+          class="w-full border-t border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Filter actions…"
           spellcheck="false"
         />

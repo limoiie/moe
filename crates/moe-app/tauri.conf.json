@@ -22,7 +22,7 @@
         "label": "panel",
         "title": "Moe",
         "width": 768,
-        "height": 512,
+        "height": 510,
         "center": true,
         "decorations": false,
         "transparent": true,
@@ -73,7 +73,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "15.0"
     }
   }
 }

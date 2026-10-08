@@ -1,8 +1,263 @@
 @import "tailwindcss";
 
+/* Appearance (ADR-0035): two themes — light and dark — behind one semantic token layer.
+
+   The palettes live in raw `--moe-*` variables under `:root[data-theme=…]`; `@theme inline` maps
+   them to Tailwind color utilities (`bg-surface`, `text-fg-muted`, `border-line`, …), so every
+   view class names a role, never a hue. A new theme is one more attribute block here, never a
+   sweep through the markup.
+
+   `data-theme` sits on <html>: the inline head script seeds it from the OS appearance
+   (prefers-color-scheme) before the first paint; theme.ts then applies the config override
+   (`[ui] theme = system|light|dark` in config.toml). `color-scheme` keeps native chrome
+   (scrollbars, form controls) in the same appearance. */
+
+@theme inline {
+  --color-surface: var(--moe-surface);
+  --color-surface-overlay: var(--moe-surface-overlay);
+  --color-surface-float: var(--moe-surface-float);
+  --color-surface-hover: var(--moe-surface-hover);
+  --color-surface-selected: var(--moe-surface-selected);
+  --color-fg: var(--moe-fg);
+  --color-fg-muted: var(--moe-fg-muted);
+  --color-fg-subtle: var(--moe-fg-subtle);
+  --color-fg-faint: var(--moe-fg-faint);
+  --color-line: var(--moe-line);
+  --color-line-strong: var(--moe-line-strong);
+  --color-accent: var(--moe-accent);
+  --color-accent-fill: var(--moe-accent-fill);
+  --color-accent-fill-hover: var(--moe-accent-fill-hover);
+  --color-on-accent: var(--moe-on-accent);
+  --color-accent-soft: var(--moe-accent-soft);
+  --color-accent-line: var(--moe-accent-line);
+  --color-warning: var(--moe-warning);
+  --color-warning-soft: var(--moe-warning-soft);
+  --color-warning-line: var(--moe-warning-line);
+  --color-warning-fill: var(--moe-warning-fill);
+  --color-warning-fill-hover: var(--moe-warning-fill-hover);
+  --color-on-warning: var(--moe-on-warning);
+  --color-danger: var(--moe-danger);
+  --color-danger-soft: var(--moe-danger-soft);
+  --color-danger-line: var(--moe-danger-line);
+  --color-success: var(--moe-success);
+  --color-focus: var(--moe-focus);
+  --color-bubble-user: var(--moe-bubble-user);
+}
+
+/* The radius ladder (ADR-0035 amendment): surfaces are concentric — the window corner (24px,
+   Siri-window proportions) minus its 8px inset gives the floating cards and list rows (16px),
+   minus 4px more the rows inside a card (12px); key blocks and badges keep their small 6px, and
+   controls are capsules/circles. */
+@theme {
+  --radius-window: 24px;
+}
+
+/* Light: near-white content material, zinc ink; contrast targets measured against the composed
+   surface (>=4.5:1 for every text step, including the worst case of the translucent panel over
+   black; faint is decorative-only). */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Figure/ground (ADR-0035 amendment): a pale-blue field with WHITE glass components — the
+     window is the tinted layer, every component (cards, capsules, bubbles, key caps) is white
+     glass floating on it, so figure and ground separate on any desktop, white included. Ink and
+     hairlines are cool blue-gray to sit on the blue field; the dim layer keeps text steps
+     ≥4.5:1 over a black backdrop. */
+  --moe-surface: rgb(224 239 252 / 0.8);
+  --moe-surface-overlay: rgb(255 255 255 / 0.85);
+  --moe-surface-float: rgb(255 255 255 / 0.78);
+  --moe-dim-layer: linear-gradient(rgb(255 255 255 / 0.28), rgb(255 255 255 / 0.28));
+  --moe-glass-bg:
+    linear-gradient(180deg, rgb(255 255 255 / 0.4), rgb(255 255 255 / 0) 42%),
+    linear-gradient(rgb(255 255 255 / 0.28), rgb(255 255 255 / 0.28));
+  --moe-glass-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.4), rgb(255 255 255 / 0) 42%);
+  --moe-bubble-user: rgb(255 255 255 / 0.7);
+  --moe-surface-hover: rgb(23 49 89 / 0.06);
+  --moe-surface-selected: rgb(2 132 199 / 0.12);
+
+  /* Hierarchy by contrast gap (ADR-0035 amendment): the body/title step is near-black so key
+     information pops at a glance; secondary and tertiary keep their lighter pre-change values. */
+  --moe-fg: #0b1220;
+  --moe-fg-muted: #4c5a6b;
+  --moe-fg-subtle: #556274;
+  --moe-fg-faint: #9fb0c2;
+
+  --moe-line: rgb(23 49 89 / 0.08);
+  --moe-line-strong: rgb(23 49 89 / 0.14);
+
+  --moe-accent: #0369a1;
+  --moe-accent-fill: #0369a1;
+  --moe-accent-fill-hover: #075985;
+  --moe-on-accent: #ffffff;
+  --moe-accent-soft: rgb(3 105 161 / 0.08);
+  --moe-accent-line: rgb(3 105 161 / 0.28);
+
+  --moe-warning: #92400e;
+  --moe-warning-soft: rgb(217 119 6 / 0.1);
+  --moe-warning-line: rgb(146 64 14 / 0.3);
+  --moe-warning-fill: #b45309;
+  --moe-warning-fill-hover: #92400e;
+  --moe-on-warning: #ffffff;
+
+  --moe-danger: #b91c1c;
+  --moe-danger-soft: rgb(185 28 28 / 0.07);
+  --moe-danger-line: rgb(185 28 28 / 0.28);
+
+  --moe-success: #046c50;
+
+  --moe-focus: rgb(3 105 161 / 0.55);
+
+  --moe-key-bg: #ffffff;
+  --moe-key-shadow: 0 1px 0 rgb(23 49 89 / 0.1);
+  --moe-code-bg: rgb(23 49 89 / 0.07);
+  --moe-codeblock-bg: rgb(23 49 89 / 0.05);
+
+  --moe-selection: rgb(2 132 199 / 0.25);
+
+  /* Glass optics (functional layer only): the specular top sheen over the vibrancy blur, and the
+     inset rim + top highlight + bottom shade that read as glass thickness. No hairline borders
+     anywhere: the edge is the rim (Siri-window style). */
+  /* Shadows stay CONTACT-only (a tight drop + the rim/specular insets): the window is just 12px
+     bigger than the card and the cards/chips sit 8px inside it, so any wide CSS shadow is clipped
+     by the window bounds and reads as a stray rectangle (ADR-0016: the lift is AppKit's). */
+  --moe-shadow-window:
+    0 1px 2px rgb(23 49 89 / 0.1), inset 0 0 0 0.5px rgb(23 49 89 / 0.07),
+    inset 0 1px 0 rgb(255 255 255 / 0.7), inset 0 -1px 0 rgb(23 49 89 / 0.03);
+  --moe-shadow-float:
+    0 2px 6px rgb(23 49 89 / 0.14), inset 0 0 0 1px rgb(23 49 89 / 0.07),
+    inset 0 1px 0 rgb(255 255 255 / 0.9), inset 0 -1px 0 rgb(23 49 89 / 0.04);
+  --moe-shadow-chip:
+    0 1px 3px rgb(23 49 89 / 0.16), inset 0 0 0 1px rgb(23 49 89 / 0.08),
+    inset 0 1px 0 rgb(255 255 255 / 0.9), inset 0 -1px 0 rgb(23 49 89 / 0.04);
+}
+
+/* Dark: deep neutral surfaces (never pure black — the transparent window keeps its blur), the same
+   token roles, brighter accent steps so every text step stays >=4.5:1 (including the worst case of
+   the translucent panel over a white app). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Same ladder, dark side: window → cards → controls each lighten a step, rims are light. */
+  --moe-surface: rgb(22 22 26 / 0.82);
+  --moe-surface-overlay: rgb(42 42 48 / 0.9);
+  --moe-surface-float: rgb(56 56 63 / 0.86);
+  --moe-dim-layer: linear-gradient(rgb(0 0 0 / 0.4), rgb(0 0 0 / 0.4));
+  --moe-glass-bg:
+    linear-gradient(180deg, rgb(255 255 255 / 0.07), rgb(255 255 255 / 0) 42%),
+    linear-gradient(rgb(0 0 0 / 0.4), rgb(0 0 0 / 0.4));
+  --moe-glass-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0) 42%);
+  --moe-bubble-user: rgb(56 189 248 / 0.2);
+  --moe-surface-hover: rgb(255 255 255 / 0.08);
+  --moe-surface-selected: rgb(56 189 248 / 0.16);
+
+  --moe-fg: #fbfbfd;
+  --moe-fg-muted: #a1a1aa;
+  --moe-fg-subtle: #9a9aa3;
+  --moe-fg-faint: #5b5b64;
+
+  --moe-line: rgb(255 255 255 / 0.08);
+  --moe-line-strong: rgb(255 255 255 / 0.14);
+
+  --moe-accent: #38bdf8;
+  --moe-accent-fill: #0ea5e9;
+  --moe-accent-fill-hover: #38bdf8;
+  --moe-on-accent: #082f49;
+  --moe-accent-soft: rgb(56 189 248 / 0.1);
+  --moe-accent-line: rgb(56 189 248 / 0.3);
+
+  --moe-warning: #fcd34d;
+  --moe-warning-soft: rgb(245 158 11 / 0.12);
+  --moe-warning-line: rgb(251 191 36 / 0.3);
+  --moe-warning-fill: #f59e0b;
+  --moe-warning-fill-hover: #fbbf24;
+  --moe-on-warning: #451a03;
+
+  --moe-danger: #fca5a5;
+  --moe-danger-soft: rgb(248 113 113 / 0.1);
+  --moe-danger-line: rgb(248 113 113 / 0.3);
+
+  --moe-success: #34d399;
+
+  --moe-focus: rgb(56 189 248 / 0.6);
+
+  --moe-key-bg: rgb(39 39 42 / 0.85);
+  --moe-key-shadow: 0 1px 0 rgb(0 0 0 / 0.22);
+  --moe-code-bg: rgb(255 255 255 / 0.08);
+  --moe-codeblock-bg: rgb(0 0 0 / 0.35);
+
+  --moe-selection: rgb(56 189 248 / 0.3);
+
+  --moe-glass-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.07), rgb(255 255 255 / 0) 42%);
+
+  --moe-shadow-window:
+    0 1px 2px rgb(0 0 0 / 0.4), inset 0 0 0 0.5px rgb(255 255 255 / 0.08),
+    inset 0 1px 0 rgb(255 255 255 / 0.12), inset 0 -1px 0 rgb(0 0 0 / 0.25);
+  --moe-shadow-float:
+    0 2px 6px rgb(0 0 0 / 0.4), inset 0 0 0 1px rgb(255 255 255 / 0.1),
+    inset 0 1px 0 rgb(255 255 255 / 0.12), inset 0 -1px 0 rgb(0 0 0 / 0.25);
+  --moe-shadow-chip:
+    0 1px 3px rgb(0 0 0 / 0.4), inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    inset 0 1px 0 rgb(255 255 255 / 0.14), inset 0 -1px 0 rgb(0 0 0 / 0.2);
+}
+
+/* Reduce Transparency / Increase Contrast (System Settings → Accessibility): the HIG requires the
+   glass to degrade to an opaque, higher-contrast surface rather than stay translucent. */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root[data-theme="light"] {
+    --moe-surface: #e2f0fd;
+    --moe-surface-overlay: #ffffff;
+    --moe-surface-float: #f6fbff;
+  }
+  :root[data-theme="dark"] {
+    --moe-surface: #202024;
+    --moe-surface-overlay: #2b2b31;
+    --moe-surface-float: #3a3a41;
+  }
+  .moe-window-card,
+  .moe-actions-card,
+  .moe-about-card,
+  .moe-avatar-chip,
+  .moe-action-bar,
+  .moe-glass-button,
+  .moe-bubble {
+    background-image: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  :root[data-theme="light"] {
+    --moe-line: rgb(9 9 11 / 0.28);
+    --moe-line-strong: rgb(9 9 11 / 0.45);
+    --moe-fg-subtle: #4b4b52;
+  }
+  :root[data-theme="dark"] {
+    --moe-line: rgb(255 255 255 / 0.24);
+    --moe-line-strong: rgb(255 255 255 / 0.4);
+    --moe-fg-subtle: #b4b4bd;
+  }
+}
+
 html,
 body {
   background: transparent;
+}
+
+::selection {
+  background: var(--moe-selection);
+}
+
+/* Keyboard focus (buttons opt in; the query input keeps its borderless look on purpose) */
+.moe-focus-ring:focus-visible,
+.moe-avatar-chip:focus-visible,
+.moe-action-bar button:focus-visible,
+.moe-glass-button:focus-visible {
+  outline: 2px solid var(--moe-focus);
+  outline-offset: 1px;
 }
 
 /* One row's height (ADR-0026): the single source is ROW_HEIGHT in layout.ts; main.ts writes it
@@ -12,24 +267,64 @@ body {
   /* Row secondary text size: the per-item type label (kind badge) and any future secondary row
      text read this token, so the row typography tunes in one place. */
   --moe-text-secondary: 13px;
-  /* Top input row text size (every panel page shares this one input row). */
-  --moe-text-input: 16px;
-  /* Input row leading glyph: bigger than the item-row icons, centered in their column. */
-  --moe-input-icon-size: 20px;
+  /* Top input row text size (every panel page shares this one input row): 18px, a clear step
+     above the 14px item rows — the bar is the panel's anchor. The panel height is measured from
+     the real bar (ADR-0026), so the ten-row grid self-corrects if this token changes. */
+  --moe-text-input: 18px;
+  /* Input row leading glyph: bigger than the item-row icons (16px), centered in their column.
+     24px: the mark and the 18px text form one anchor unit. */
+  --moe-input-icon-size: 24px;
   --moe-input-icon-stroke: 2;
 }
 
-/* Floating window card: the "lift" comes from the AppKit system window shadow (the window is truly
-   transparent; CSS shadows would be clipped by the window bounds); here we only add a contact shadow
-   hugging the edges, so the card edges read against any background (ADR-0016). */
+/* The two material layers (Apple HIG, Materials), Siri-window grade: Liquid Glass is clear-ish
+   here — a thin tint over a dimming scrim over a very heavy blur, so the backdrop survives as soft
+   forms — and it carries no hairline border: the edge is a specular rim in the shadow token.
+
+     content layer    → the window card: the clearest glass + the heaviest blur, because it floats
+                        over the desktop and must let it read through;
+     functional layer → the floating cards, the control capsules and the circular glass buttons:
+                        slightly thicker tint, same optics, used sparingly.
+
+   Where the engine has continuous corners (Safari 26 / macOS 26+), `corner-shape: squircle`
+   renders Apple's superellipse on those surfaces; older engines keep circular corners. */
 .moe-window-card {
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+  backdrop-filter: blur(64px) saturate(200%);
+  -webkit-backdrop-filter: blur(64px) saturate(200%);
+  background-image: var(--moe-glass-bg);
+  box-shadow: var(--moe-shadow-window);
 }
 
 /* Actions card (⌘K / ⌘⇧P) and About card: floating cards above the results (shadow stays within the 8px padding, unclipped by the window) */
 .moe-actions-card,
 .moe-about-card {
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+  backdrop-filter: blur(48px) saturate(200%);
+  -webkit-backdrop-filter: blur(48px) saturate(200%);
+  background-image: var(--moe-glass-bg);
+  box-shadow: var(--moe-shadow-float);
+}
+
+.moe-window-card,
+.moe-actions-card,
+.moe-about-card,
+.moe-avatar-chip,
+.moe-action-bar,
+.moe-glass-button,
+.moe-bubble {
+  corner-shape: squircle;
+}
+
+/* Scroll edge effect (HIG): content dissolves into the glass at the container edges instead of
+   being cut by them, which is what keeps the floating controls readable over a moving list. */
+.moe-scroll-fade {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 14px,
+    black calc(100% - 18px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 18px), transparent 100%);
 }
 
 /* Avatar chip (ADR-0026): one row tall (matching ROW_HEIGHT in layout.ts, via --moe-row-h).
@@ -48,37 +343,41 @@ body {
   min-width: var(--moe-row-h);
   /* 8px from the card edge puts the centered avatar's own center exactly on the item icons' x */
   padding: 0 7px;
-  border: 1px solid rgb(82 82 91 / 0.5);
+  border: 0;
   border-radius: 999px;
-  background: rgb(24 24 27 / 0.82);
-  backdrop-filter: blur(14px);
-  color: #e4e4e7;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  color: var(--moe-fg);
   font-size: 12px;
   line-height: 1;
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.25),
-    0 4px 12px rgb(0 0 0 / 0.22),
-    0 1px 0 rgb(255 255 255 / 0.04) inset;
+  box-shadow: var(--moe-shadow-chip);
+  transition: background-color 120ms ease;
 }
 .moe-avatar-chip:hover {
-  background: rgb(39 39 42 / 0.95);
+  background: var(--moe-surface-hover);
 }
-.moe-avatar-chip:focus-visible {
-  outline: none;
-}
-/* The app avatar (20px, circular): the nested fallback when an extension declares no icon. */
-.moe-avatar-img {
+/* The brand mark in the chip (extension-icon fallback): same 20px square slot as an extension
+   icon (the radiant-diamond mark is square once cropped). */
+.moe-avatar-logo {
   display: block;
   width: 20px;
   height: 20px;
-  border-radius: 999px;
 }
 .moe-avatar-label {
   max-width: 170px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #d4d4d8;
+  color: var(--moe-fg-muted);
+}
+/* A toast (not an extension name) carries a full message — errors must stay readable; the title
+   attribute carries the untruncated text for anything longer still. A toast is primary text, so
+   it reads at fg, while the extension name stays one step down. */
+.moe-avatar-chip[data-toast] .moe-avatar-label {
+  max-width: 360px;
+  color: var(--moe-fg);
 }
 
 /* Key blocks (shadcn Kbd style): one square per key, centered characters, inline baseline alignment.
@@ -95,7 +394,7 @@ body {
   margin: 0 1px;
   font-size: 9px;
   line-height: 1;
-  color: #52525b;
+  color: var(--moe-fg-faint);
 }
 .moe-kbd {
   display: inline-flex;
@@ -105,11 +404,11 @@ body {
   width: 18px;
   height: 18px;
   padding: 0;
-  border: 1px solid rgb(82 82 91 / 0.5);
+  border: 1px solid var(--moe-line-strong);
   border-radius: 5px;
-  background: rgb(39 39 42 / 0.85);
-  box-shadow: 0 1px 0 rgb(0 0 0 / 0.22);
-  color: #d4d4d8;
+  background: var(--moe-key-bg);
+  box-shadow: var(--moe-key-shadow);
+  color: var(--moe-fg-muted);
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;
@@ -140,15 +439,15 @@ body {
   align-items: center;
   flex: none;
   padding: 2px 6px;
-  border: 1px solid rgb(63 63 70 / 0.6);
+  border: 1px solid var(--moe-line-strong);
   border-radius: 6px;
   font-size: var(--moe-text-secondary);
   line-height: 1;
-  color: #71717a;
+  color: var(--moe-fg-subtle);
 }
 /* Hover brightens the badge (the rows' standing hover rule; focus never changes it) */
 .group:hover .moe-kind-badge {
-  color: #a1a1aa;
+  color: var(--moe-fg-muted);
 }
 
 /* Top input row (all panel pages): text from the shared token; the input sits in the same grid
@@ -180,7 +479,7 @@ body {
 }
 /* The svg carries its own color utility, so the hover targets the svg (unlayered rules win) */
 .moe-input-icon-back:hover svg {
-  color: #d4d4d8;
+  color: var(--moe-fg);
 }
 
 /* Avatar chip expanded with a label (inside an extension / a toast): the content inset matches
@@ -204,25 +503,49 @@ body {
   height: var(--moe-row-h);
 }
 
-/* Bottom floating pill (Raycast-style): primary action and actions in the same pill; buttons themselves have no border.
-   Height = one row: the pill overlays the list's last visible row band exactly (ADR-0026). */
+/* The glass control cluster and the circular glass buttons (Siri-style): capsules/circles of
+   borderless buttons floating on Liquid Glass — the edge is the rim, never a hairline border.
+   The pill overlays the list's last visible row band exactly (one row tall, ADR-0026). */
 .moe-action-bar {
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 2px;
   height: var(--moe-row-h);
-  /* Padding between the buttons and the pill edge */
+  /* Padding between the buttons and the capsule edge */
   padding: 3px;
-  border: 1px solid rgb(82 82 91 / 0.5);
+  border: 0;
   border-radius: 999px;
-  background: rgb(24 24 27 / 0.82);
-  backdrop-filter: blur(14px);
-  /* Soft shadow hugging the card: the pill floats above the list without leaving a dark block */
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.25),
-    0 4px 12px rgb(0 0 0 / 0.22),
-    0 1px 0 rgb(255 255 255 / 0.04) inset;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  box-shadow: var(--moe-shadow-chip);
+}
+/* Standalone circular glass button (the Side View's window controls) */
+.moe-glass-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  box-shadow: var(--moe-shadow-chip);
+  color: var(--moe-fg-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.moe-glass-button:hover {
+  background-color: var(--moe-surface-hover);
+  color: var(--moe-fg);
+}
+.moe-glass-button:active {
+  background-color: var(--moe-surface-selected);
 }
 .moe-action-bar button {
   display: inline-flex;
@@ -233,15 +556,34 @@ body {
   border-radius: 999px;
   background: transparent;
   padding: 3px 9px;
-  color: #e4e4e7;
+  color: var(--moe-fg);
   font-size: 12px;
   line-height: 1;
+  transition: background-color 120ms ease;
 }
+/* A hairline rendered as an inset ring, for the few tiny chips that are not glass (the edge reads
+   the same as the glass rim without paying for a blur). */
+.moe-rim {
+  box-shadow: inset 0 0 0 1px var(--moe-line-strong);
+}
+
 .moe-action-bar button:not(:disabled):hover {
-  background: rgb(63 63 70 / 0.95);
+  background: var(--moe-surface-hover);
+}
+.moe-action-bar button:not(:disabled):active {
+  background: var(--moe-surface-selected);
 }
 .moe-action-bar button:disabled {
   opacity: 0.45;
+}
+
+/* The user's question in the Side View: an accent-tinted glass bubble with a tail (Siri-style),
+   not a solid fill — the tint keeps the text on the panel's own contrast budget. */
+.moe-bubble {
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  background-image: var(--moe-glass-sheen);
+  box-shadow: var(--moe-shadow-chip);
 }
 
 /* Inline generating indicator: bouncing dots + label (shared by the panel and the Side View) */
@@ -251,7 +593,7 @@ body {
   gap: 6px;
   margin-top: 6px;
   font-size: 12px;
-  color: #a1a1aa;
+  color: var(--moe-fg-subtle);
 }
 /* Critical: Tailwind's .hidden lives in the utilities layer, and unlayered styles always beat layered
    ones — toggling .hidden alone does nothing (display:inline-flex overrides display:none).
@@ -290,13 +632,24 @@ body {
   }
 }
 
+/* Motion is decoration here: with reduced motion on, transitions and the dot bounce collapse. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Markdown styles for the detail card (no typography plugin, keeping it small) */
 .md h1,
 .md h2,
 .md h3 {
   margin: 0.6em 0 0.3em;
   font-weight: 600;
-  color: #f4f4f5;
+  color: var(--moe-fg);
 }
 .md h2 {
   font-size: 1.05em;
@@ -320,14 +673,14 @@ body {
 .md code {
   padding: 0.1em 0.3em;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--moe-code-bg);
   font-size: 0.9em;
 }
 .md pre {
   margin: 0.5em 0;
   padding: 0.6em 0.8em;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+  background: var(--moe-codeblock-bg);
   overflow-x: auto;
 }
 .md pre code {
@@ -337,11 +690,11 @@ body {
 .md blockquote {
   margin: 0.5em 0;
   padding-left: 0.7em;
-  border-left: 2px solid rgba(255, 255, 255, 0.2);
-  color: #a1a1aa;
+  border-left: 2px solid var(--moe-line-strong);
+  color: var(--moe-fg-subtle);
 }
 .md a {
-  color: #7dd3fc;
+  color: var(--moe-accent);
   text-decoration: underline;
 }
 .md table {
@@ -350,5 +703,5 @@ body {
 .md th,
 .md td {
   padding: 0.2em 0.5em;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--moe-line);
 }

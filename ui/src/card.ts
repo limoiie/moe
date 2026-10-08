@@ -74,7 +74,7 @@ export function createCard(options: CardOptions): Card {
   function headerEl(title: string): HTMLLIElement {
     const li = document.createElement("li");
     li.className =
-      "select-none px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500";
+      "select-none px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
     li.textContent = title;
     return li;
   }
@@ -83,16 +83,16 @@ export function createCard(options: CardOptions): Card {
     const li = document.createElement("li");
     const disabled = row.disabled === true;
     li.className =
-      "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm " +
+      "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
       (disabled
-        ? "text-zinc-500 opacity-45"
+        ? "text-fg-subtle opacity-45"
         : focused
-          ? "bg-zinc-700/70 text-zinc-50"
-          : "text-zinc-300 hover:bg-zinc-800/30 hover:text-zinc-100 hover:ring-1 hover:ring-zinc-600/60");
+          ? "bg-surface-selected text-fg"
+          : "text-fg hover:bg-surface-hover");
     li.append(
       iconEl(row.icon, {
         size: 15,
-        className: disabled ? "text-zinc-600" : focused ? "text-zinc-200" : "text-zinc-500",
+        className: disabled ? "text-fg-faint" : focused ? "text-fg" : "text-fg-subtle",
       }),
     );
     const title = document.createElement("span");
@@ -113,7 +113,7 @@ export function createCard(options: CardOptions): Card {
     focus = rows.length === 0 ? 0 : Math.min(focus, rows.length - 1);
     if (rows.length === 0 || rows.every((row) => row.disabled)) {
       const empty = document.createElement("li");
-      empty.className = "px-2 py-3 text-xs text-zinc-600";
+      empty.className = "px-2 py-3 text-xs text-fg-subtle";
       empty.textContent = inputEl.value.trim() ? "No matching actions" : emptyText;
       listEl.replaceChildren(empty);
       onFocusChange?.(undefined);

@@ -43,9 +43,9 @@ export const BOTTOM_PADDING = 8;
 /** `#root` is inset by `m-3` (12px) on every side for the window shadow (ADR-0016). */
 export const WINDOW_MARGIN = 12;
 
-/** `#root`'s 1px border on top and bottom: box-sizing eats it from the content box, so the
- *  grid must budget it or the last row is clipped and drifts out of the bar's band. */
-export const CARD_BORDER = 1;
+/** `#root`'s edge is the glass rim (an inset ring in the shadow token), not a CSS border, so the
+ *  grid budgets no border pixels (ADR-0035 amendment: Siri-window grade glass). */
+export const CARD_BORDER = 0;
 
 /**
  * Panel height for a measured input-bar height: exactly VISIBLE_ROWS rows fit under the input
@@ -64,8 +64,8 @@ export function panelHeightFor(inputBarHeight: number): number {
   );
 }
 
-/** First-frame fallback height (window logical px): 48 + 10×40 + 1×30 + 8 + 2 borders + 24 margins. */
-export const PANEL_HEIGHT = 512;
+/** First-frame fallback height (window logical px): 48 + 10×40 + 1×30 + 8 + 24 margins. */
+export const PANEL_HEIGHT = 510;
 
 // Layout classes for the three shapes: applied only in render; nowhere else may compose widths.
 
@@ -75,11 +75,11 @@ export const LIST_FULL_CLASS =
 
 /** Left list of the split page: **narrow column** (enough for a conversation title + time); detail takes the remaining width. */
 export const LIST_NARROW_CLASS =
-  "min-h-0 w-[280px] shrink-0 overflow-y-auto border-r border-zinc-800 px-2";
+  "min-h-0 w-[280px] shrink-0 overflow-y-auto border-r border-line px-2";
 
 /** Right detail of the split page (also the container for full-detail): takes the remaining width. */
 export const DETAIL_PANE_CLASS =
-  "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-zinc-200";
+  "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-fg";
 
 /**
  * Which shape should render right now.
