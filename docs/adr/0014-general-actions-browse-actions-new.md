@@ -38,3 +38,13 @@ AI 扩展声明：Browse → `ai.search-history`（历史会话），New → `ai
   平台不该替它编一个。
 - ⌘N/⌘P 覆盖了系统的「新窗口/打印」，但只在我们自己的非激活面板与侧栏窗口内生效，不劫持宿主应用。
 - 未来若要在 Linux 上把 ⌃ 当主修饰键，需要平台级的一次统一重映射，而不是在这三处各打补丁。
+
+## 修订：Actions 全平台统一 ⌘K；Materialize 改绑 ⌘J
+
+「一个语义两个键」（面板 ⌘K / 子应用 ⌘⇧P）在实践中是负担：Side View 的用户要额外记一个 ⌘⇧P，
+而 ⌘K 在 Side View 里空着。现合并为**全平台 ⌘K**——命令盘与 Side View 用同一个键打开同一张
+actions card（ADR-0028 的「一张卡两个窗口」连键位也统一）：键位表展示串由 `⌘K / ⌘⇧P` 收敛为
+`⌘K`，`generalActionOf` 中 ⌘K（无 shift）即 actions、⌘P（无 shift）即 browse，⌘⇧P 不再绑定。
+Materialize 由 ⌘M 改绑 **⌘J**（应用户要求；⌘M 亦与 macOS minimize 的肌肉记忆冲突）。AI 扩展
+answer item 声明的 keybinding、各处提示文案与 README 键位表同步更新；keymap 表仍是唯一事实源，
+Kbd 与 tooltip 不会漂移。

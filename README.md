@@ -6,6 +6,8 @@ search commands, and write results back to the selection or cursor. Product lang
 
 ## Install (macOS)
 
+Requires **macOS 15 or newer** (the glass material and its accessibility fallbacks target Safari 18+).
+
 1. Download `Moe_<version>_<arch>.dmg` from the GitHub Actions **Release** workflow
    (Actions → Release → the run → Artifacts; triggered by pushing a `v*` tag or manually).
 2. Open the dmg and drag **Moe.app** into Applications.
@@ -43,12 +45,12 @@ themselves stay listed in their own sections.
 | `↓` / `⌃N`, `↑` / `⌃P` | Navigate | Move the Focused Item |
 | `⏎` | Apply | Run the primary action on the Focused Item |
 | `⌥⏎` | Secondary | Default semantics: copy (e.g. copy the full AI answer to the clipboard) |
-| `⌘K` / `⌘⇧P` | Show All Actions | The current item's primary/secondary action list (`⌘K` only — `⌃K` stays the macOS kill-line, ADR-0031) |
+| `⌘K` | Show All Actions | The current item's primary/secondary action list, on every surface (`⌃K` stays the macOS kill-line, ADR-0031) |
 | `⌘P` | Browse | The current extension's record list (AI = chat history; a hint if the extension declares none) |
 | `⌘N` | New | Create a new record (AI = new chat; a hint if the extension declares none) |
 | `⌃X` | Delete | Delete the current record (AI = current conversation; results layer and Suggestions only, ADR-0022/0025) |
 | `⌃⇧X` | DeleteAll | Delete all records (AI = all conversations; also clears all suggestions, ADR-0022/0025) |
-| `⌘M` | Materialize | Move the current conversation into the extension's Side View |
+| `⌘J` | Materialize | Move the current conversation into the extension's Side View |
 | `⌘⇧A` | Attach | Type/paste a file path, inserted as `@"path"` (ADR-0010) |
 | `⌘⇧K` | About | Open the About card (Open Config File / Save AI Key / Send Feedback; the avatar chip's menu, ADR-0027) |
 | `⌘⇧F` | Favorite | Add/remove the current command from Favorites (root: the focused command; inside a command: the source command, ADR-0029) |
@@ -65,7 +67,7 @@ icons:
   extension's icon and name. It doubles as the **toast host**: toasts expand the
   chip into a pill (Raycast-style) instead of popping up anywhere else.
 - **Action pill (bottom-right)**: **primary action** (the focused item's main action; becomes
-  "Stop Generation" while generating) and **actions** (`⌘K` / `⌘⇧P`). `⌘K` pops up the **actions
+  "Stop Generation" while generating) and **actions** (`⌘K`). `⌘K` pops up the **actions
   card**: a floating overlay that never replaces the main body; its list groups the item's
   actions under **Actions** and the `⌘P`/`⌘N` entries the extension declared under **General**
   (Raycast-style sections; they flatten while the search input at the card's bottom filters),
@@ -79,8 +81,9 @@ icons:
   section appears after its **Actions**, without Open Command.
 - **About card**: clicking the avatar chip (or `⌘⇧K`, ADR-0027) opens the app's About menu — a
   card with the same UX as the actions card (search input at the bottom): **App** holds
-  **Open Config File** (`⌘,`) / **Save AI Key**, **Support** holds **Send Feedback**; rows show
-  their Kbd when a binding exists. `↑↓` / `⌃N` `⌃P` select,
+  **Open Config File** (`⌘,`) / **Save AI Key**, **Theme** holds **System** / **Light** / **Dark**
+  (applied immediately, persisted to config.toml, the active row checked, ADR-0035), **Support**
+  holds **Send Feedback**; rows show their Kbd when a binding exists. `↑↓` / `⌃N` `⌃P` select,
   `⏎` run, `Esc` or empty `⌫` dismiss, clicking outside closes it.
 
 Every shortcut is rendered as Kbd blocks, one key per block.
@@ -89,14 +92,14 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   right) / **full-screen detail** — laid out and window-sized by the platform (ADR-0018). An
   extension gets the split page for free by providing `item.detail` (left list fixed at 280px,
   detail fills the rest with the item's icon/title/time on top); the panel shows exactly ten rows
-  plus one section header (ADR-0026) and is measured to fit them (768×512 for the default input bar).
+  plus one section header (ADR-0026) and is measured to fit them (768×510 for the default input bar).
 - **Panel**: auto-dismisses on losing focus; input and results are kept across hide/show. The
   tray icon offers Show Panel / AI Chat / Launch at Login / Open Config File / Quit. The results
   layer has two shapes declared by the command (ADR-0013): full-screen detail (AI answers,
   notices) fills the panel and shows an inline three-dot indicator while generating; everything
   else (like AI history search) is a list on the left with a detail preview on the right.
 - **AI Chat**: type a question and press Enter (the fallback "Ask \"…\"" appears when nothing
-  matches); answers stream as Markdown cards; `⌥⏎` copies the full text, `⌘M` continues in the
+  matches); answers stream as Markdown cards; `⌥⏎` copies the full text, `⌘J` continues in the
   Side View. **Text selected before summoning automatically becomes question context** (not
   repeated when the question already contains it, truncated when overlong; history stores only
   the question itself). **Files selected in Finder before summoning automatically become
@@ -111,14 +114,14 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   text is used; Esc keeps what was generated so far and does not write back (⏎ writes back
   manually, ⌥⏎ copies).
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
-  buttons sit at the end of the header: **More Actions (⌘ icon / `⌘⇧P`)**, **History**, and
+  buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028): the same
   sections, filter input, `↑↓`/`⌃N` `⌃P`/`⏎` selection and `Esc` dismissal — with **New Chat** /
   **Open Config File** / **Hide Side View** under the **Chat** / **App** / **Window** sections —
   floating centered nearly at the top, its filter input on top. Clicking
   History (or `⌘P`) pops up a **floating history card** centered at the top: its top input
   filters titles, the list below highlights with `↑` `↓` (or `⌃N` `⌃P`),
-  `⏎` opens, `Esc` dismisses, and clicking outside also dismisses it. `⌘P` (Browse) / `⌘⇧P`
+  `⏎` opens, `Esc` dismisses, and clicking outside also dismisses it. `⌘P` (Browse) / `⌘K`
   (Actions) / `⌘N` (New) / `⌃X` (Delete) / `⌃⇧X` (DeleteAll) are the general actions spanning
   every command/sub-app (ADR-0014/0022); in the Side View they land on the history card / actions
   card / new chat / delete current conversation / delete all conversations (while the history card
@@ -137,6 +140,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   [summon]
   key = "double-cmd"   # double-cmd | double-option | double-ctrl | a combo such as cmd+shift+space
   double_tap_ms = 400  # 100..=1000
+
+  [ui]
+  theme = "system"     # system | light | dark (system follows the OS; also switchable from the About card, ADR-0035)
 
   [ai]
   base_url = "https://api.deepseek.com/v1"  # any OpenAI-compatible endpoint
@@ -192,9 +198,10 @@ Icon sources: `python3 crates/moe-app/icons/gen-app-icon.py` (app icon, then run
   text and write the result back automatically.
 - **Resident**: menu bar tray (with Launch at Login via LaunchAgent); no Dock icon on macOS,
   not in ⌘-Tab.
-- **UI**: one keybinding semantics set (`↓`/`⌃N`, `↑`/`⌃P`, `⏎`, `⌥⏎`, `⌘K`, `⌘M`, `Esc`)
+- **UI**: one keybinding semantics set (`↓`/`⌃N`, `↑`/`⌃P`, `⏎`, `⌥⏎`, `⌘K`, `⌘J`, `Esc`)
   spans every command; the results layer has two shapes declared by the command (full-screen
-  detail / list + detail, ADR-0013); icons are Lucide (ADR-0012).
+  detail / list + detail, ADR-0013); icons are Lucide (ADR-0012); two themes (light / dark) behind
+  one semantic token layer, following the OS appearance, overridable with `[ui] theme` (ADR-0035).
 
 ## FAQ
 

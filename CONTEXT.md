@@ -156,9 +156,9 @@ actions for their Commands (actions may carry their own shortcuts).
 _Avoid_: shortcut mapping, bindings
 
 **Show All Actions**:
-The layered behavior triggered by ⌘K (generic sub-app keybinding: ⌘⇧P): lists the Focused Item's
-primary/secondary actions as one layer for keyboard selection. One semantics, two keys: ⌘K is
-the palette convention, ⌘⇧P for sub-apps to reuse (ADR-0014).
+The layered behavior triggered by ⌘K on every surface (command panel and Side View alike): lists
+the Focused Item's primary/secondary actions as one layer for keyboard selection. One semantics,
+one key (ADR-0014 amendment).
 _Avoid_: command menu
 
 **Browse**:
@@ -195,8 +195,10 @@ _Avoid_: extension badge, logo
 **About Card**:
 The card opened from the avatar chip or ⌘⇧K (ADR-0027): the app's meta actions (Open Config File /
 Save AI Key / Send Feedback) with the search input at the bottom and rows grouped into App /
-Support sections; same UX as the actions card (ADR-0026). Rows show their Kbd when the action has
-one (Open Config File = ⌘,); unbound rows show none.
+Theme / Support sections; the Theme rows (System / Light / Dark, ADR-0035 amendment) apply
+immediately, persist to config.toml, and mark the active one with a trailing check; same UX as the
+actions card (ADR-0026). Rows show their Kbd when the action has one (Open Config File = ⌘,);
+unbound rows show none.
 _Avoid_: settings page, preferences window
 
 **Write Back**:

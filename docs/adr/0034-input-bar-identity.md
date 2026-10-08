@@ -41,3 +41,20 @@ Both numbers are tokens: `--moe-input-icon-size: 20px` and `--moe-input-icon-str
 element stays a 16px-wide flex box, so the glyph overflows its column symmetrically and the grid
 invariant above is untouched — icon center and label x still line up with the item rows. CSS drives
 size and stroke (presentation attributes lose to CSS), so tuning stays in `styles.css`.
+
+## Amendment: the root mark is the brand logo, not a Lucide glyph
+
+The square-m stand-in is retired: the root page's leading slot now carries **Moe's brand mark** —
+the radiant diamond, a rotated square (the launcher core) with twelve orbiting satellite wedges
+(`ui/src/moe.svg`, imported raw by `ui/src/logo.ts` and inlined) — so it inherits `currentColor`:
+one asset, per-theme color for free, per-scene color by choice (the input row paints it at
+`text-fg`, the strongest step, because the mark is the panel's anchor; the chip's avatar fallback —
+the deleted `moe.png` bitmap — is the same inline mark at `text-fg-muted`). The svg ships without
+a background (icons must be transparent), single-ink, and with the viewBox cropped to the artwork
+bbox; an uncropped box letterboxes the mark to half size, which is exactly how the first cut
+shipped. Square once cropped, it reuses the 22px slot token in the input row and the 20px chip
+slot. The menu bar gets the same mark as a **template raster** (`icons/gen-tray-icon.py`,
+alpha-only): macOS tints template images per menu bar appearance, and — the structural fix of
+this iteration — the generator parses the svg's path data directly, so the raster can never drift
+from the mark: edit the svg, rerun the script. `square-m` leaves the Lucide map (ADR-0012) with
+its only caller gone.
