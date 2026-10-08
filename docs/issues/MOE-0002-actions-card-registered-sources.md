@@ -1,12 +1,12 @@
 # M7j: the actions card is assembled from registered sources
 
 - **ID**: MOE-0002
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: bc3ebd6
 
 The ⌘K card was merged by hand at every call site: `openActionsCard` had one branch per layer
 (command layer / chat page / result page) and the Side View kept a third hard-coded list, so "which
@@ -73,3 +73,5 @@ which ⌃X already fires on every record page — was never listed at all.
 
 - 2026-10-09 (agent): filed and claimed; implemented in the working tree (UI-only change — no
   contract or Rust changes). `Commit` pending.
+- 2026-10-09 (agent): delivered in `bc3ebd6` (`pnpm build` green; no Rust changes since
+  MOE-0001's 146 tests); closing.
