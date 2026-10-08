@@ -96,8 +96,17 @@ _Avoid_: layout template, view mode
 **Live List**:
 A list semantics of a Command (`CommandMeta.live`): once entered, every Input Bar change re-runs
 the Command with the new query (e.g. "Search Chat History" filters titles as you type). For
-non-live Commands, input changes remain palette search.
+non-live Commands, input changes remain palette search. Entering a Live command clears the Input Bar:
+the text that found the command is never its parameter.
 _Avoid_: dynamic search, autocomplete
+
+**Capture (capturing row)**:
+The row an Extension offers when the search has no match (`Extension::fallback_command`); its Apply
+**consumes the Input Bar text** — the typed text is the command's parameter (AI: Ask "…", Moe:
+Save AI Key), and the page it opens may take the bar over (the Quick Ask page clears it). Matched
+command rows never treat the search text as content: the panel delivers the input only to rows
+declaring `InputKind::Query`, plus the Live List takeover above (ADR-0036).
+_Avoid_: fallback item (the formal term is the capturing row)
 
 **Focused Item**:
 The single item in the Result List currently receiving keyboard operations. Every primary /
@@ -126,7 +135,8 @@ _Avoid_: execute, open, enable
 **Stop (stop generation)**:
 An item still streaming is marked `pending`; while pending, Esc's first priority is requesting
 stop (platform-wide, stops all ongoing generations at once), keeping what was generated instead
-of rolling it back (ADR-0006 amendment).
+of rolling it back (ADR-0006 amendment). On the Quick Ask page the bindings differ (ADR-0036):
+Enter requests stop, and Back (Esc / empty ⌫) asks for confirmation first.
 _Avoid_: cancel, interrupt
 
 **Secondary Action**:
@@ -213,14 +223,24 @@ One continuous question-and-answer record inside the AI Chat Extension, owned by
 _Avoid_: chat
 
 **Quick Ask**:
-A single- or short-turn question asked directly inside the Command Panel, whose result can be
-written back.
+A conversation hosted in the Command Panel (ADR-0036): applying the Quick Ask row opens the page
+(the search text is never sent as its first question — only the capturing row does that); the Input
+Bar becomes the composer (Enter sends, answers stream), and the conversation continues until a New
+Chat (⌘N) or a step through history (⌃[ / ⌃]) replaces it. A record surface like the Side View:
+Remove Chat (⌃X) deletes it through the same delete slot, and ⌘J materializes it into the Side View.
+Declared by `ActionResult::Conversation` and continued by `Extension::panel_continue` (IPC `panel_send`).
 _Avoid_: quick mode
 
 **Materialize**:
 The action that turns the current conversation in the Command Panel into the Extension's
 Side View.
 _Avoid_: expand, pop out
+
+**Message stream**:
+The panel's Quick Ask page and the Side View render conversations through the same stream of
+bubbles (`ui/src/messages.ts`): user bubbles + Markdown answers updated in place while streaming,
+with the last answer as the copy / write-back target.
+_Avoid_: chat view, transcript
 
 **Attachment**:
 A local file carried with a question (v1: text and images). Expressed in the input bar as an

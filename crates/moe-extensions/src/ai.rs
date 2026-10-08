@@ -1,9 +1,10 @@
 //! AI Q&A: real streaming answers from an OpenAI-compatible endpoint (ADR-0005).
 //!
-//! - Quick ask: a question creates a conversation (Namespace `ai`), answers are persisted (IIE4AD-360).
+//! - Quick Ask: the Command Panel hosts the conversation (ADR-0036) — `ActionResult::Conversation`
+//!   opens the page, `Extension::panel_continue` sends and continues it, answers are persisted (IIE4AD-360).
 //! - Side view continuation: the whole history is the context; events use the `ai.side` command_id convention.
-//! - Streaming goes through `CommandEvent::ItemUpdated`: invoke immediately returns a placeholder item,
-//!   a worker thread reads SSE and emits chunk by chunk (re-rendered in place in the detail card/side view).
+//! - Streaming goes through `CommandEvent::ItemUpdated`: invoke immediately returns the page, a worker
+//!   thread reads SSE and emits chunk by chunk (rendered as the answer bubble's stream).
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -14,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
     Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, Extension, InputKind,
-    Item, MoeError, Selection,
+    Item, MoeError, NoopEmitter, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_platform::config::MoeConfig;
@@ -159,20 +160,6 @@ fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-/// Asking creates the conversation (history isolated by the `ai` Namespace, ADR-0003;
-/// attachments stored as references only, ADR-0010);
-/// degrades to no persistence when storage is unavailable.
-fn persist_question(display: &str, attachments: &[AttachmentRef]) -> Option<String> {
-    let db = Db::open_default().ok()?;
-    let now = SystemTime::now();
-    let id = db
-        .create_conversation("ai", &title_for(display, attachments), now)
-        .ok()?;
-    db.append_message(&id, Role::User, display, attachments, now)
-        .ok()?;
-    Some(id)
 }
 
 /// Persists the answer; failures are silent (panel interaction unaffected).
@@ -395,19 +382,13 @@ fn question_with_selection(question: &str, selection: Option<&str>) -> String {
     )
 }
 
-/// Request body sent to the model (extracted for testing): question (with optional selection context) + expanded attachments.
-fn ask_body(
-    model: &str,
-    question: &str,
-    selection: Option<&str>,
-    attachments: &[AttachmentRef],
-) -> serde_json::Value {
-    let message = Message {
-        role: Role::User,
-        content: question_with_selection(question, selection),
-        attachments: attachments.to_vec(),
-    };
-    chat_body_from_messages(model, vec![attachment::expand_message(&message)])
+/// Request body for a panel/side continuation: the stored history ends with the new question
+/// (attachments expanded, ADR-0010).
+fn chat_body_of(model: &str, messages: Vec<Message>) -> serde_json::Value {
+    chat_body_from_messages(
+        model,
+        messages.iter().map(attachment::expand_message).collect(),
+    )
 }
 
 impl AiShell {
@@ -451,87 +432,137 @@ impl AiShell {
         (display, attachments)
     }
 
-    fn start_ask(
-        &self,
-        question: &str,
+    /// One panel message → the model body (clean) + attachment references: `@path` mentions (ADR-0010)
+    /// merge with the files selected before opening (ADR-0021), deduplicated by path.
+    /// Attachments-only input gets a generic request sentence — the raw mention is never sent or
+    /// stored in history (IIE4AD-391); a message with neither text nor attachments is rejected.
+    fn panel_message(
+        message: &str,
         selection: Option<&Selection>,
-        emitter: Option<Arc<dyn Emitter>>,
-    ) -> ActionResult {
-        let question = question.trim().to_string();
-        // Attachments are expressed as `@path` mentions (ADR-0010): content is read on demand,
-        // references are persisted with the message.
-        // Files selected in Finder before opening the panel also become attachments (ADR-0021),
-        // deduplicated against mentions by path.
-        let (cleaned, paths) = attachment::parse_mentions(&question);
+    ) -> Result<(String, Vec<AttachmentRef>), MoeError> {
         let selected_files: Vec<String> = selection.map(|s| s.files.clone()).unwrap_or_default();
+        let (cleaned, paths) = attachment::parse_mentions(message);
         let attachments = Self::attachments_with(&paths, &selected_files);
-        let text = selection.and_then(|s| s.text());
-        // Attachments-only input (only @path) does not treat the raw mention as a question: it falls through to the empty-question guidance (consistent with selected files).
-        let display = if cleaned.is_empty() {
-            if paths.is_empty() {
-                question.clone()
-            } else {
-                String::new()
+        let display = if cleaned.trim().is_empty() {
+            if attachments.is_empty() {
+                return Err(MoeError::Internal("Message is empty".into()));
             }
+            "Please answer with these attachments.".to_string()
         } else {
             cleaned
         };
-        if display.trim().is_empty() {
-            let hint = if attachments.is_empty() {
-                "Type your question in the input box, then press Enter."
-            } else {
-                "Type your question in the input box, then press Enter (attachments included)."
-            };
-            return ActionResult::detail(vec![answer_item(hint, None, false)]);
-        }
+        Ok((display, attachments))
+    }
+
+    /// One ask on the panel's Quick Ask page (ADR-0036): an empty conversation id starts a new
+    /// conversation (the selected text becomes question context), a non-empty id continues it; the
+    /// whole history is the model context either way. Returns the conversation id; the answer streams
+    /// as `ai.quick-ask` events.
+    fn panel_ask(
+        &self,
+        conversation_id: &str,
+        message: &str,
+        selection: Option<&Selection>,
+        emitter: Arc<dyn Emitter>,
+    ) -> Result<String, MoeError> {
+        let starting = conversation_id.trim().is_empty();
+        // The captured context (selected text + Finder files) belongs to the conversation's first
+        // message only (ADR-0019/0021 amendments); follow-up messages must not repeat it.
+        let selection = if starting { selection } else { None };
+        let (display, attachments) = Self::panel_message(message, selection)?;
 
         let config = MoeConfig::load();
         if !config.ai.configured() {
-            return ActionResult::detail(vec![answer_item(SETUP_MD, None, false)]);
+            return Err(MoeError::Internal(
+                "AI endpoint not configured yet: run Open Config File (⌘,) and fill in [ai] base_url and model".into(),
+            ));
         }
         let Some(key) = keychain::ai_api_key() else {
-            return ActionResult::detail(vec![answer_item(KEY_MISSING_MD, None, false)]);
+            return Err(MoeError::Internal(
+                "API key missing: type `key <your-key>` in the panel and press Enter".into(),
+            ));
         };
 
-        // Asking creates the conversation; ⌘J then takes the same conversation into the side view.
-        // History stores only the question itself (clean title); what goes to the model includes the selected-text context.
-        let conversation_id = persist_question(&display, &attachments);
+        let db = Db::open_default().map_err(MoeError::Internal)?;
+        let conversation_id = if starting {
+            db.create_conversation("ai", &title_for(&display, &attachments), SystemTime::now())
+                .map_err(MoeError::Internal)?
+        } else {
+            conversation_id.trim().to_string()
+        };
+
+        // Fetch history first, then append this one: the endpoint receives messages ending with the new
+        // message. History stores the clean question; the selected text only enters the request body.
+        let mut messages = db.messages(&conversation_id).map_err(MoeError::Internal)?;
+        db.append_message(
+            &conversation_id,
+            Role::User,
+            &display,
+            &attachments,
+            SystemTime::now(),
+        )
+        .map_err(MoeError::Internal)?;
+        let content = question_with_selection(&display, selection.and_then(Selection::text));
+        messages.push(Message {
+            role: Role::User,
+            content,
+            attachments,
+        });
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
         let model = config.ai.model_or_default().to_string();
+        let body = chat_body_of(&model, messages);
+        let conversation = conversation_id.clone();
+        let stream_key = conversation.clone();
+        let item_of: FrameBuilder = {
+            let conversation = conversation.clone();
+            Arc::new(move |text, pending| answer_item(text, Some(&conversation), pending))
+        };
+        let persist: StreamFinish = {
+            let conversation = conversation.clone();
+            Arc::new(move |text| persist_assistant(Some(&conversation), text))
+        };
+        std::thread::spawn(move || {
+            run_stream(
+                StreamRequest {
+                    base_url,
+                    key,
+                    body,
+                    command_id: "ai.quick-ask".into(),
+                    stream_key,
+                    item_of,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                },
+                emitter,
+            );
+        });
+        Ok(conversation_id)
+    }
 
-        if let Some(emitter) = emitter {
-            let body = ask_body(&model, &display, text, &attachments);
-            let conversation_id_in_thread = conversation_id.clone();
-            let stream_key = conversation_id_in_thread.clone().unwrap_or_default();
-            let item_of: FrameBuilder = {
-                let conversation_id = conversation_id_in_thread.clone();
-                Arc::new(move |text, pending| {
-                    answer_item(text, conversation_id.as_deref(), pending)
-                })
-            };
-            let persist: StreamFinish = {
-                let conversation_id = conversation_id_in_thread.clone();
-                Arc::new(move |text| persist_assistant(conversation_id.as_deref(), text))
-            };
-            std::thread::spawn(move || {
-                run_stream(
-                    StreamRequest {
-                        base_url,
-                        key,
-                        body,
-                        command_id: "ai.quick-ask".into(),
-                        stream_key,
-                        item_of,
-                        persist,
-                        on_done: Arc::new(noop_sink),
-                    },
-                    emitter,
-                );
+    /// Quick Ask entry (ADR-0036): a query means the row captured the Input Bar text — the question is
+    /// asked and the result hands the platform the conversation page to open (None emitter = the reply
+    /// is only persisted, not delivered anywhere). No query = the page itself was applied: open it blank.
+    fn quick_ask(
+        &self,
+        query: Option<&str>,
+        selection: Option<&Selection>,
+        emitter: Option<Arc<dyn Emitter>>,
+    ) -> Result<ActionResult, MoeError> {
+        let Some(question) = query else {
+            return Ok(ActionResult::Conversation {
+                conversation_id: None,
             });
-        }
-        // Placeholder frame: body left empty — the "generating" inline indicator is already the only status feedback
-        ActionResult::detail(vec![answer_item("", conversation_id.as_deref(), true)])
+        };
+        let conversation_id = self.panel_ask(
+            "",
+            question,
+            selection,
+            emitter.unwrap_or_else(|| Arc::new(NoopEmitter)),
+        )?;
+        Ok(ActionResult::Conversation {
+            conversation_id: Some(conversation_id),
+        })
     }
 
     /// History search: the list re-runs as you type (CommandMeta.live), fuzzy title matching, most recent first.
@@ -598,13 +629,18 @@ impl Extension for AiShell {
                 id: "ai.quick-ask".into(),
                 extension_id: "ai".into(),
                 title: "Quick Ask".into(),
-                subtitle: Some("Or just type a question (an ask item appears automatically when nothing matches)".into()),
+                subtitle: Some(
+                    "Chat in the panel: Enter sends, answers stream; ⌘N new chat · ⌘P history"
+                        .into(),
+                ),
                 icon: Some("sparkles".into()),
-                input: InputKind::Query,
+                // Apply opens the page (ADR-0036); the capture row (fallback) declares Query and
+                // delivers the input text as the question.
+                input: InputKind::None,
                 live: false,
-            keybinding: None,
-            extension_title: None,
-            kind: None,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
             },
             CommandMeta {
                 id: "ai.search-history".into(),
@@ -614,21 +650,21 @@ impl Extension for AiShell {
                 icon: Some("history".into()),
                 input: InputKind::Query,
                 live: true,
-            keybinding: None,
-            extension_title: None,
-            kind: None,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
             },
             CommandMeta {
                 id: "ai.new-chat".into(),
                 extension_id: "ai".into(),
                 title: "New Chat".into(),
-                subtitle: Some("Clear the current Q&A and start a fresh conversation".into()),
+                subtitle: Some("Start a blank conversation in the panel".into()),
                 icon: Some("plus".into()),
                 input: InputKind::None,
                 live: false,
-            keybinding: None,
-            extension_title: None,
-            kind: None,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
             },
         ]
     }
@@ -640,15 +676,13 @@ impl Extension for AiShell {
         selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
-            "ai.quick-ask" => Ok(self.start_ask(query.unwrap_or_default(), selection, None)),
+            "ai.quick-ask" => self.quick_ask(query, selection, None),
             "ai.search-history" => Ok(self.search_history(query.unwrap_or_default())),
-            // Generic New action (⌘N, ADR-0014): the panel holds no conversation state
-            // (one question = one conversation); here we show an empty-state card —
-            // the next question naturally starts a new conversation.
-            "ai.new-chat" => Ok(ActionResult::detail(vec![notice_item(
-                "New Chat",
-                "Type a question into the input bar to start; ⌘J moves this conversation into the side view.",
-            )])),
+            // Generic New action (⌘N, ADR-0014) and the New Chat command: both open the blank Quick
+            // Ask page — the conversation lives in the panel now (ADR-0036).
+            "ai.new-chat" => Ok(ActionResult::Conversation {
+                conversation_id: None,
+            }),
             _ => Err(MoeError::NotFound),
         }
     }
@@ -678,9 +712,7 @@ impl Extension for AiShell {
         emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
-            "ai.quick-ask" => {
-                Ok(self.start_ask(query.unwrap_or_default(), selection, Some(emitter)))
-            }
+            "ai.quick-ask" => self.quick_ask(query, selection, Some(emitter)),
             _ => self.invoke(command_id, query, None),
         }
     }
@@ -707,9 +739,7 @@ impl Extension for AiShell {
             }
             (true, false) => format!("{total_files} attachment(s); Enter to send"),
             (false, true) => "Selected text attached as context; Enter to send".to_string(),
-            (false, false) => {
-                "Enter to send; answers can be written back (⌥⏎ copy · ⌘J side view)".to_string()
-            }
+            (false, false) => "Enter to ask in the panel (⌥⏎ copy · ⌘J side view)".to_string(),
         };
         Some(CommandMeta {
             id: "ai.quick-ask".into(),
@@ -804,10 +834,7 @@ impl Extension for AiShell {
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
         let model = config.ai.model_or_default().to_string();
-        let body = chat_body_from_messages(
-            &model,
-            messages.iter().map(attachment::expand_message).collect(),
-        );
+        let body = chat_body_of(&model, messages);
         let conversation = conversation_id.clone();
         let stream_key = conversation.clone();
         let item_of: FrameBuilder = {
@@ -834,6 +861,18 @@ impl Extension for AiShell {
             );
         });
         Ok(conversation_id)
+    }
+
+    /// Panel continuation (ADR-0036): the Quick Ask page's composer; the whole history is the model
+    /// context, replies stream as `ai.quick-ask` events.
+    fn panel_continue(
+        &self,
+        conversation_id: &str,
+        message: &str,
+        selection: Option<&Selection>,
+        emitter: Arc<dyn Emitter>,
+    ) -> Result<String, MoeError> {
+        self.panel_ask(conversation_id, message, selection, emitter)
     }
 
     /// Stops in-progress generation (IIE4AD-365): sets the cancellation flag; the worker finishes at the next SSE line and persists the generated part.
@@ -943,33 +982,40 @@ mod tests {
         assert_eq!(refs[1].name, "dup.md");
     }
 
-    /// File-only selection + empty question: no request is sent; prompt to type a question (the files are already in hand).
+    /// File-only selection + empty question: the captured files are the content — the message becomes
+    /// the generic request sentence (the Side View's rule, IIE4AD-391).
     #[test]
-    fn ask_with_only_files_guides_for_a_question() {
+    fn files_only_ask_uses_the_generic_sentence() {
         let selection = Selection {
             text: None,
             files: vec!["/tmp/a.md".into()],
         };
-        let ActionResult::List { items, .. } = AiShell.start_ask("   ", Some(&selection), None)
-        else {
-            panic!("expected list");
-        };
-        let detail = items[0].detail.as_deref().unwrap_or_default();
-        assert!(detail.contains("attachments included"), "{detail}");
+        let (display, attachments) = AiShell::panel_message("   ", Some(&selection)).unwrap();
+        assert_eq!(display, "Please answer with these attachments.");
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].path, "/tmp/a.md");
     }
 
-    /// A bare mention (only @path, no body) does not send the raw path to the model: it falls through to the empty-question guidance (IIE4AD-391).
+    /// A bare mention (only @path, no body) never sends the raw path to the model: the display becomes
+    /// the generic request sentence while the path rides along as an attachment (IIE4AD-391).
     #[test]
-    fn mention_only_ask_guides_instead_of_sending_raw_path() {
-        let ActionResult::List { items, .. } = AiShell.start_ask("@/tmp/a.md", None, None) else {
-            panic!("expected list");
-        };
-        let detail = items[0].detail.as_deref().unwrap_or_default();
-        assert!(detail.contains("attachments included"), "{detail}");
+    fn mention_only_ask_uses_the_generic_sentence() {
+        let (display, attachments) = AiShell::panel_message("@/tmp/a.md", None).unwrap();
+        assert_eq!(display, "Please answer with these attachments.");
         assert!(
-            !detail.contains("/tmp/a.md"),
-            "The raw path should not appear in the hint: {detail}"
+            !display.contains("/tmp/a.md"),
+            "The raw path must not be the question: {display}"
         );
+        assert_eq!(attachments.len(), 1);
+    }
+
+    /// Neither text nor attachments: the page refuses to send (the UI never gets here with an empty draft).
+    #[test]
+    fn empty_panel_message_is_rejected() {
+        assert!(matches!(
+            AiShell::panel_message("  ", None),
+            Err(MoeError::Internal(_))
+        ));
     }
 
     /// split_message: keeps the body when present; attachments-only input gets a generic request sentence, never leaking the raw mention.
@@ -1304,15 +1350,29 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// The answer/guidance is a full-screen detail (ADR-0013): in the panel it is the body, not something to split with a list.
+    /// Apply on the Quick Ask row (no query): the platform opens the blank panel page — no request is
+    /// fired and the search text is not a question (ADR-0036).
     #[test]
-    fn ask_placeholder_declares_detail_layout() {
-        let ActionResult::List { items, detail_full } = AiShell.start_ask("   ", None, None) else {
-            panic!("expected list");
-        };
-        assert!(detail_full, "the answer is a full-screen detail");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, "ai.answer");
+    fn quick_ask_without_a_query_opens_the_blank_page() {
+        let result = AiShell.quick_ask(None, None, None).unwrap();
+        assert_eq!(
+            result,
+            ActionResult::Conversation {
+                conversation_id: None
+            }
+        );
+        // The same shape through the command path (Apply from the command list)
+        assert_eq!(AiShell.invoke("ai.quick-ask", None, None).unwrap(), result);
+    }
+
+    /// Panel continuation (ADR-0036): the composer path refuses empty messages before touching the
+    /// model config (the UI never sends an empty draft).
+    #[test]
+    fn panel_continue_rejects_empty_messages() {
+        assert!(matches!(
+            AiShell.panel_continue("", "   ", None, Arc::new(NoopEmitter)),
+            Err(MoeError::Internal(_))
+        ));
     }
 
     /// History search always stays a list: even a single hit does not take the whole screen (the user wants to see that row) — ADR-0013.
@@ -1376,11 +1436,15 @@ mod tests {
         assert_eq!(ext.new_command().unwrap().id, "ai.new-chat");
     }
 
-    /// Request body assembly: selection and question both go into the body (selection_becomes_question_context only tests the concatenation; this tests the whole chain).
+    /// Request body assembly for the panel page: history + the new question (with selection context) both go into the body.
     #[test]
-    fn ask_body_carries_question_and_selection() {
-        let body = ask_body("m", "translate", Some("hello world"), &[]);
-        let text = body.to_string();
+    fn panel_body_carries_history_and_selection_context() {
+        let history = vec![Message {
+            role: Role::User,
+            content: question_with_selection("translate", Some("hello world")),
+            attachments: vec![],
+        }];
+        let text = chat_body_of("m", history).to_string();
         assert!(
             text.contains("translate"),
             "question is in the body: {text}"
@@ -1390,7 +1454,15 @@ mod tests {
             "selection is in the body: {text}"
         );
         // No selection → no context wrapper
-        let plain = ask_body("m", "translate", None, &[]).to_string();
+        let plain = chat_body_of(
+            "m",
+            vec![Message {
+                role: Role::User,
+                content: "translate".into(),
+                attachments: vec![],
+            }],
+        )
+        .to_string();
         assert!(
             !plain.contains("user's selection"),
             "no selection → no wrapper: {plain}"
@@ -1442,20 +1514,20 @@ mod tests {
         );
     }
 
-    /// New (⌘N) shows a full-screen detail empty-state card in the panel (conversation state untouched: one question = one conversation).
+    /// New (⌘N gives the New Chat command, ADR-0014): it opens the blank panel conversation page
+    /// instead of a notice card — the page is where a new conversation starts (ADR-0036).
     #[test]
-    fn new_chat_returns_a_detail_notice() {
-        let ActionResult::List { items, detail_full } = AiShell
+    fn new_chat_opens_the_blank_panel_page() {
+        let result = AiShell
             .invoke("ai.new-chat", None, None)
-            .expect("ai.new-chat is routable")
-        else {
-            panic!("expected list");
-        };
-        assert!(detail_full, "the empty-state card is a full-screen detail");
-        assert_eq!(items[0].id, "ai.notice");
-        assert!(
-            items[0].actions.is_empty(),
-            "the empty-state card has no executable actions"
+            .expect("ai.new-chat is routable");
+        assert_eq!(
+            result,
+            ActionResult::Conversation {
+                conversation_id: None
+            }
         );
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(json["conversation"]["conversationId"].is_null());
     }
 }

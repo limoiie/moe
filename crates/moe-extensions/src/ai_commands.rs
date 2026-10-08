@@ -2,8 +2,8 @@
 //! Grammar / Make Shorter / Make Longer / Simplify Language / Summarize / Translate / Tone /
 //! Extract Key Ideas / Continue Writing, with Raycast Pro-style semantics.
 //!
-//! Input = the text selected before opening the palette, or the text in the input box when
-//! there is no selection; when neither exists, a guidance card is shown.
+//! Input = the text selected before opening the palette (the panel never treats the search text as
+//! content, ADR-0036); when there is no selection, a guidance card is shown.
 //! Streaming output goes to a result card in the panel; **on natural completion the result is
 //! automatically written back to the selection and the panel closes** (`CommandEvent::WriteBack`,
 //! intercepted and executed by the platform layer). When stopped with Esc, only the generated
@@ -33,6 +33,9 @@ struct Spec {
     icon: &'static str,
     instruction: &'static str,
 }
+
+/// Guidance card when the command has neither a selection to transform (the search text is not content, ADR-0036).
+const NO_TEXT_HINT: &str = "First select the text to transform, then run this command again.";
 
 const SPECS: [Spec; 12] = [
     Spec {
@@ -280,9 +283,7 @@ impl Extension for AiCommands {
             return Err(MoeError::NotFound);
         };
         let Some(text) = resolve_text(query, selection) else {
-            return Ok(ActionResult::detail(vec![notice_item(
-                "First select the text to transform, or type it into the input box, then press Enter.",
-            )]));
+            return Ok(ActionResult::detail(vec![notice_item(NO_TEXT_HINT)]));
         };
         let config = MoeConfig::load();
         if !config.ai.configured() {
@@ -313,9 +314,7 @@ impl Extension for AiCommands {
             return Err(MoeError::NotFound);
         };
         let Some(text) = resolve_text(query, selection) else {
-            return Ok(ActionResult::detail(vec![notice_item(
-                "First select the text to transform, or type it into the input box, then press Enter.",
-            )]));
+            return Ok(ActionResult::detail(vec![notice_item(NO_TEXT_HINT)]));
         };
         let config = MoeConfig::load();
         if !config.ai.configured() {
@@ -417,7 +416,8 @@ mod tests {
         );
     }
 
-    /// Input resolution: selection first; no selection → input box text; neither → None (guidance card).
+    /// Input resolution: selection first; then a query passed by an invocation (the panel itself
+    /// sends none for these commands, ADR-0036); neither → None (guidance card).
     #[test]
     fn resolve_text_prefers_selection_then_query() {
         assert_eq!(

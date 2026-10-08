@@ -1,15 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import DOMPurify from "dompurify";
-import { marked } from "marked";
 import "./styles.css";
 import { appendMention, validatePath } from "./attachment";
 import { createCard, type CardSection } from "./card";
-import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
+import { conversationTitle, createConversationView } from "./messages";
 import { initPointerIntent } from "./pointer";
 import { initTheme } from "./theme";
 import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
@@ -17,9 +15,6 @@ import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from
 // ---- Appearance (ADR-0035): resolve the theme before the first render ----
 initTheme();
 initPointerIntent();
-
-/** Side View continue-chat event contract (moe-extensions::ai::SIDE_COMMAND_ID). */
-const SIDE_COMMAND_ID = "ai.side";
 
 const chatIconEl = document.querySelector<HTMLSpanElement>("#chat-icon")!;
 const titleEl = document.querySelector<HTMLSpanElement>("#chat-title")!;
@@ -48,19 +43,13 @@ const toastTextEl = document.querySelector<HTMLSpanElement>("#toast-text")!;
 
 /** Current conversation; null = empty state (a new one is created on first send). */
 let conversationId: string | null = null;
-/** The answer bubble being streamed into (created on the first event). */
-let streaming: StreamingBubble | null = null;
+/** The message stream (bubbles + streamed answers); the same renderer as the panel's Quick Ask page. */
+const log = createConversationView(messagesEl);
 let sending = false;
 /** The backend is still generating (ends on pending=false or an explicit stop). */
 let generating = false;
 /** The most recently loaded conversation list (shared by the history card and ⌃[/⌃] stepping). */
 let conversations: Conversation[] = [];
-
-interface StreamingBubble {
-  root: HTMLElement;
-  body: HTMLElement;
-  indicator: HTMLElement;
-}
 
 // ---- Fixed icons (three header buttons on the right: More Actions / History / New Chat) ----
 
@@ -411,7 +400,6 @@ async function selectConversation(id: string) {
 
 function newChat() {
   conversationId = null;
-  streaming = null;
   generating = false;
   updateSendUi();
   setError(null);
@@ -437,98 +425,17 @@ function setError(text: string | null) {
   errorEl.textContent = text ?? "";
 }
 
-function markdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }));
-}
-
-/** Title: the first line of the first user message (consistent with the history list's conversation title rule). */
-function titleFrom(messages: Message[]): string | null {
-  const first = messages.find((message) => message.role === "user" && message.content.trim());
-  if (!first) return null;
-  const line = first.content.trim().split("\n")[0];
-  return line.length > 24 ? `${line.slice(0, 24)}…` : line;
-}
-
 function setTitle(text: string) {
   titleEl.textContent = text;
 }
 
-function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-/**
- * Scroll to the bottom of the last line: markdown/code blocks/images expand asynchronously,
- * so a single assignment may not reach the bottom; correct once each via rAF + a short delay (IIE4AD-369).
- */
-function scrollToEnd() {
-  scrollToBottom();
-  requestAnimationFrame(scrollToBottom);
-  setTimeout(scrollToBottom, 120);
-}
-
 /** Append a finished local message (user bubble / answer from history). */
 function appendMessage(message: Message): HTMLElement {
-  const row = document.createElement("div");
-  if (message.role === "user") {
-    row.className = "flex flex-col items-end gap-1";
-    const card = document.createElement("div");
-    card.className =
-      "moe-bubble max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-bubble-user px-3 py-2 text-sm text-fg";
-    card.textContent = message.content;
-    row.append(card);
-    if (message.attachments?.length) {
-      const chips = document.createElement("div");
-      chips.className = "flex max-w-[85%] flex-wrap justify-end gap-1";
-      for (const reference of message.attachments) {
-        const chip = document.createElement("span");
-        chip.className =
-          "moe-rim max-w-full truncate rounded-full bg-surface-float px-2 py-0.5 text-[11px] text-fg-muted";
-        chip.textContent = `📎 ${reference.name}`;
-        chip.title = reference.path;
-        chips.append(chip);
-      }
-      row.append(chips);
-    }
-  } else {
-    row.className = "md text-sm text-fg";
-    row.innerHTML = markdown(message.content);
-  }
-  messagesEl.append(row);
-  return row;
-}
-
-/**
- * Streaming bubble: the body and the "Generating" indicator are separate;
- * each event only replaces the body, so the dot animation is never restarted (IIE4AD-36x feedback).
- */
-function ensureStreamingBubble(): StreamingBubble {
-  if (!streaming) {
-    const root = document.createElement("div");
-    root.className = "md text-sm text-fg";
-    const body = document.createElement("div");
-    const indicator = generatingEl();
-    root.append(body, indicator);
-    messagesEl.append(root);
-    streaming = { root, body, indicator };
-  }
-  return streaming;
-}
-
-function updateStreamingBubble(text: string, pending: boolean) {
-  const bubble = ensureStreamingBubble();
-  bubble.body.innerHTML = markdown(text);
-  bubble.indicator.classList.toggle("hidden", !pending);
-}
-
-/** Hide the current bubble's generation indicator (on the final frame or user stop). */
-function settleStreamingBubble() {
-  streaming?.indicator.classList.add("hidden");
+  return log.append(message);
 }
 
 async function loadHistory() {
-  messagesEl.replaceChildren();
-  streaming = null;
+  log.clear();
   // After switching conversations / a new chat, the previous generation state no longer belongs to this view
   generating = false;
   updateSendUi();
@@ -543,14 +450,14 @@ async function loadHistory() {
   emptyEl.classList.add("hidden");
   try {
     const messages = await invoke<Message[]>("side_messages", { conversationId });
-    setTitle(titleFrom(messages) ?? "AI Chat");
+    setTitle(conversationTitle(messages) ?? "AI Chat");
     for (const message of messages) {
       appendMessage(message);
     }
   } catch (err) {
     setError(`Failed to load history: ${String(err)}`);
   }
-  scrollToEnd();
+  log.scrollToEnd();
   composerEl.focus();
 }
 
@@ -563,16 +470,16 @@ async function send() {
   emptyEl.classList.add("hidden");
   const row = appendMessage({ role: "user", content: message });
   if (titleEl.textContent === "New Chat") {
-    setTitle(titleFrom([{ role: "user", content: message }]) ?? "AI Chat");
+    setTitle(conversationTitle([{ role: "user", content: message }]) ?? "AI Chat");
   }
-  streaming = null;
+  log.beginAnswer();
   try {
     conversationId = await invoke<string>("side_send", {
       conversationId: conversationId ?? "",
       message,
     });
-    updateStreamingBubble("", true);
-    scrollToEnd();
+    log.updateStreaming("", true);
+    log.scrollToEnd();
     generating = true;
     updateSendUi();
     // The new conversation appears in the history card immediately (title = first message)
@@ -602,21 +509,23 @@ void listen<SideOpenPayload>("side-open", (event) => {
   void loadConversations();
 });
 
-// Streamed answers of Side View continue-chat: adopt only when both commandId and conversation id match.
+// Streamed answers of the shown conversation, whichever surface started them: the Side View's own
+// continuation (`ai.side` frames) and the panel's Quick Ask page (`ai.quick-ask` frames) both carry
+// the conversation id, so both windows mirror the same answer (ADR-0036).
 void listen<CommandEventPayload>("command-event", (event) => {
   const update = event.payload?.itemUpdated;
-  if (!update || update.commandId !== SIDE_COMMAND_ID) return;
+  if (!update) return;
   const payload = update.item.payload as { conversationId?: string } | null;
   if (!payload || payload.conversationId !== conversationId) return;
   // The final frame (pending=false) marks the end of generation (IIE4AD-365)
   const pending = update.item.pending === true;
-  updateStreamingBubble(update.item.detail ?? "", pending);
-  scrollToEnd();
-  if (!pending && generating) {
-    generating = false;
+  log.updateStreaming(update.item.detail ?? "", pending);
+  log.scrollToEnd();
+  if (generating !== pending) {
+    generating = pending;
     updateSendUi();
-    void loadConversations();
   }
+  if (!pending) void loadConversations();
 });
 
 // ---- Attachments (📎 = same path as the panel's ⌘⇧A, ADR-0010) ----
@@ -706,7 +615,7 @@ async function stopGeneration() {
     setError(String(err));
   }
   generating = false;
-  settleStreamingBubble();
+  log.settleStreaming();
   updateSendUi();
 }
 

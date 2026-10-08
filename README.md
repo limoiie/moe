@@ -43,19 +43,20 @@ themselves stay listed in their own sections.
 | Keys | Semantics | Notes |
 |---|---|---|
 | `↓` / `⌃N`, `↑` / `⌃P` | Navigate | Move the Focused Item |
-| `⏎` | Apply | Run the primary action on the Focused Item |
+| `⏎` | Apply | Run the primary action on the Focused Item; on the Quick Ask page: send the draft, or stop while an answer streams (ADR-0036) |
 | `⌥⏎` | Secondary | Default semantics: copy (e.g. copy the full AI answer to the clipboard) |
 | `⌘K` | Show All Actions | The current item's primary/secondary action list, on every surface (`⌃K` stays the macOS kill-line, ADR-0031) |
 | `⌘P` | Browse | The current extension's record list (AI = chat history; a hint if the extension declares none) |
 | `⌘N` | New | Create a new record (AI = new chat; a hint if the extension declares none) |
-| `⌃X` | Delete | Delete the current record (AI = current conversation; results layer and Suggestions only, ADR-0022/0025) |
+| `⌃X` | Delete | Delete the current record (AI = current conversation; results layer, Quick Ask page and Suggestions only, ADR-0022/0025/0036) |
 | `⌃⇧X` | DeleteAll | Delete all records (AI = all conversations; also clears all suggestions, ADR-0022/0025) |
 | `⌘J` | Materialize | Move the current conversation into the extension's Side View |
+| `⌃[` / `⌃]` | Step conversations | Quick Ask page and Side View: previous / next conversation in the chat history (ADR-0036) |
 | `⌘⇧A` | Attach | Type/paste a file path, inserted as `@"path"` (ADR-0010) |
 | `⌘⇧K` | About | Open the About card (Open Config File / Save AI Key / Send Feedback; the avatar chip's menu, ADR-0027) |
 | `⌘⇧F` | Favorite | Add/remove the current command from Favorites (root: the focused command; inside a command: the source command, ADR-0029) |
 | `⌘,` | OpenConfig | Open the config file (the macOS Preferences convention; also the About card's first row, ADR-0027) |
-| `Esc` | Layered back | While generating → stop; otherwise actions card → (full-screen) detail → root → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
+| `Esc` | Layered back | While generating → stop (on the Quick Ask page: a confirmation dialog first, ADR-0036); otherwise actions card → (full-screen) detail → root → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
 | `⌫` | Layered back | Non-empty input = normal delete; **empty input steps back one layer** (like `Esc`, but the root layer never closes the panel, ADR-0017) |
 
 A **bottom bar** floats over the list, exactly one row tall (ADR-0026) — the left chip and the
@@ -98,21 +99,26 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   layer has two shapes declared by the command (ADR-0013): full-screen detail (AI answers,
   notices) fills the panel and shows an inline three-dot indicator while generating; everything
   else (like AI history search) is a list on the left with a detail preview on the right.
-- **AI Chat**: type a question and press Enter (the fallback "Ask \"…\"" appears when nothing
-  matches); answers stream as Markdown cards; `⌥⏎` copies the full text, `⌘J` continues in the
-  Side View. **Text selected before summoning automatically becomes question context** (not
-  repeated when the question already contains it, truncated when overlong; history stores only
-  the question itself). **Files selected in Finder before summoning automatically become
-  attachments** (deduplicated with `@path` by path; the first use asks for Automation permission,
-  ADR-0021).
+- **AI Chat (Quick Ask)**: typing a question with nothing matching offers the fallback **Ask "…"**
+  (`⏎` sends it); applying **Quick Ask** itself (e.g. typing `quick`) opens the **conversation page**
+  in the panel instead — the search text is never sent as a question (ADR-0036). On the page the
+  Input Bar is the composer: **`⏎` sends** (input cleared) and answers stream into the conversation;
+  **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
+  **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step through
+  history, **`⌘P`** opens the history list, **`⌘J`** continues in the Side View, `⌥⏎` copies the last
+  answer and `⌘K` also offers Write Back. **Text selected before summoning automatically becomes
+  context for the conversation's first message** (not repeated when the question already contains
+  it, truncated when overlong; history stores only the question itself). **Files selected in Finder
+  before summoning automatically become attachments** (deduplicated with `@path` by path; the first
+  use asks for Automation permission, ADR-0021).
 - **AI Commands (text transforms, ADR-0024)**: 12 one-shot transform commands — Improve Writing /
   Fix Spelling & Grammar / Make Shorter / Make Longer / Simplify Language / Summarize /
   Translate to English / Translate to Chinese / Tone: Professional / Tone: Friendly /
   Extract Key Ideas / Continue Writing. **Select text, summon, type the command name (e.g.
   "improve") and press Enter**: the result streams into a result card and **automatically
-  replaces the selection and dismisses the panel when done**; with no selection the input-bar
-  text is used; Esc keeps what was generated so far and does not write back (⏎ writes back
-  manually, ⌥⏎ copies).
+  replaces the selection and dismisses the panel when done**; with no selection the command guides
+  you to select the text first — the search text is never transformed (ADR-0036); Esc keeps what
+  was generated so far and does not write back (⏎ writes back manually, ⌥⏎ copies).
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
   buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028): the same
@@ -127,8 +133,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   card / new chat / delete current conversation / delete all conversations (while the history card
   is open they act on the focused row; deleting the current conversation returns to the empty
   state). In the panel they land on the extension's declared record list / actions layer / new
-  record / delete hooks (an error toast when the extension implements none). `⌃[` / `⌃]` step
-  through the current conversation list; opening/switching a conversation scrolls to the bottom
+  record / delete hooks (an error toast when the extension implements none; on the Quick Ask page
+  they land on history / chat actions / new chat / remove chat, ADR-0036). `⌃[` / `⌃]` step
+  through the current conversation list (Quick Ask page and Side View); opening/switching a conversation scrolls to the bottom
   of the last line; `⏎` sends / `⇧⏎` newline / `Esc` dismisses overlays first, stops while
   generating, otherwise hides; 📎 adds attachments; window position and size are remembered after
   dragging. Past conversations are also reachable from the command "Search Chat History" (AI)

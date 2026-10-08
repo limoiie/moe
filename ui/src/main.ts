@@ -11,6 +11,7 @@ import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, type EntryAction } from "./keymap";
 import { logoEl } from "./logo";
 import {
+  CONVERSATION_PANE_CLASS,
   DETAIL_PANE_CLASS,
   LIST_FULL_CLASS,
   LIST_NARROW_CLASS,
@@ -21,6 +22,7 @@ import {
   SECTION_HEADER_HEIGHT,
   type PageShape,
 } from "./layout";
+import { conversationTitle, createConversationView, type ConversationView } from "./messages";
 import { initPointerIntent } from "./pointer";
 import { store } from "./store";
 import { initTheme, themePreference, type ThemePreference } from "./theme";
@@ -30,7 +32,9 @@ import type {
   CommandEventPayload,
   CommandMeta,
   CommandSection,
+  Conversation,
   Item,
+  Message,
 } from "./types";
 
 // ---- Appearance (ADR-0035): the config theme override lands before the first render ----
@@ -50,7 +54,7 @@ interface ActionRow {
   disabled?: boolean;
 }
 
-type Mode = "commands" | "items";
+type Mode = "commands" | "items" | "chat";
 interface View {
   mode: Mode;
   focus: number;
@@ -88,6 +92,10 @@ const aboutSearchEl = document.querySelector<HTMLInputElement>("#about-search")!
 const aboutListEl = document.querySelector<HTMLUListElement>("#about-list")!;
 const inputIconEl = document.querySelector<HTMLSpanElement>("#input-icon")!;
 const bannerIconEl = document.querySelector<HTMLSpanElement>("#banner-icon")!;
+const confirmCardEl = document.querySelector<HTMLDivElement>("#confirm-card")!;
+const confirmTextEl = document.querySelector<HTMLDivElement>("#confirm-text")!;
+const confirmOkEl = document.querySelector<HTMLButtonElement>("#confirm-ok")!;
+const confirmCancelEl = document.querySelector<HTMLButtonElement>("#confirm-cancel")!;
 
 const view = store<View>({
   mode: "commands",
@@ -123,6 +131,29 @@ const actionsCard = createCard({
     q.focus();
   },
 });
+
+// ---- Quick Ask page (the panel's conversation, ADR-0036) ----
+
+/** The conversation the page shows; null = blank new chat (the first send creates one). */
+let chatConversationId: string | null = null;
+/** An answer is streaming: Enter stops it instead of sending (ADR-0036). */
+let chatGenerating = false;
+/** The conversation title (first user message): the Input Bar's placeholder. */
+let chatTitle: string | null = null;
+/** Chat history, most recent first (⌃[ / ⌃] stepping; refreshed on entry, send and delete). */
+let chatConversations: Conversation[] = [];
+
+/** The page's DOM: message log + state hint + error line (rebuilt with the detail pane, like the detail parts). */
+interface ChatParts {
+  log: HTMLElement;
+  hint: HTMLElement;
+  error: HTMLElement;
+  view: ConversationView;
+}
+let chatParts: ChatParts | null = null;
+
+/** Back on the page while generating asks first (ADR-0036): the dialog owns the keys while it is up. */
+let confirmOpen = false;
 
 // ---- Avatar chip (ADR-0026): the bottom-left card ----
 
@@ -180,7 +211,8 @@ function renderChip() {
     return;
   }
   const v = view.get();
-  if (v.mode === "items" && extensionMeta) {
+  // Inside a command (items) or on the Quick Ask page (chat): the extension's own icon + name (ADR-0026/0036)
+  if (v.mode !== "commands" && extensionMeta) {
     chipEl.dataset.labeled = "true";
     chipEl.append(
       extensionMeta.icon
@@ -259,6 +291,23 @@ function primaryActionOf(): { title: string; keys: string; run: () => void; disa
       keys: row?.keys ?? applyKeys,
       run: () => actionsCard.runFocused(),
       disabled: !row,
+    };
+  }
+  if (v.mode === "chat") {
+    // Quick Ask page (ADR-0036): Enter sends the draft — or stops the stream while one is running.
+    if (chatGenerating) {
+      return {
+        title: "Stop Generation",
+        keys: applyKeys,
+        run: () => void stopChatGeneration(),
+        disabled: false,
+      };
+    }
+    return {
+      title: "Send",
+      keys: applyKeys,
+      run: () => void sendChatMessage(),
+      disabled: q.value.trim() === "",
     };
   }
   if (v.mode === "items") {
@@ -482,14 +531,19 @@ function render() {
       }
     }
     listEl.replaceChildren(...lis);
-  } else {
+  } else if (v.mode === "items") {
     const rows = currentEntries().map((e, i) => rowEl(e, i, i === v.focus));
     focusedLi = rows[v.focus] ?? null;
     listEl.replaceChildren(...rows);
+  } else {
+    // Quick Ask page (ADR-0036): the detail pane is the conversation, the list is away
+    listEl.classList.add("hidden");
+    detailEl.className = CONVERSATION_PANE_CLASS;
+    syncChatHint();
   }
   // Keyboard navigation: the focused row always stays in the viewport (long lists)
   focusedLi?.scrollIntoView({ block: "nearest" });
-  renderDetail();
+  if (v.mode !== "chat") renderDetail();
   renderActionBar();
   renderChip();
   updatePlaceholder();
@@ -501,6 +555,8 @@ function updatePlaceholder() {
   const v = view.get();
   if (v.mode === "commands") {
     q.placeholder = QUERY_PLACEHOLDER;
+  } else if (v.mode === "chat") {
+    q.placeholder = chatTitle ?? "Ask anything…";
   } else {
     const command = v.commands.find((c) => c.id === v.sourceCommandId);
     q.placeholder = v.sourceTitle ?? command?.title ?? "Results…";
@@ -643,6 +699,311 @@ function dismissDetail(): boolean {
 
 view.subscribe(render);
 
+// ---- Quick Ask page (the panel's conversation, ADR-0036) ----
+// A `Conversation` result opens this page: the detail pane holds the message stream, the Input Bar is
+// the composer (Enter sends, ⌘N blanks it, ⌃X removes it, ⌃[ / ⌃] step through history), and replies
+// stream into the last bubble. The side view shows the same conversations through its own surfaces.
+
+/** The page's DOM (same lazy-rebuild pattern as the detail parts: `clearDetail` detaches it). */
+function ensureChatParts(): ChatParts {
+  if (!chatParts || !detailEl.contains(chatParts.log)) {
+    const log = document.createElement("div");
+    log.className = "space-y-4";
+    const error = document.createElement("div");
+    error.className =
+      "hidden rounded-xl border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger";
+    const hint = document.createElement("div");
+    hint.className = "px-1 py-2 text-xs text-fg-subtle";
+    hint.textContent =
+      "New chat — type a question and press ⏎; ⌃[ / ⌃] step through chat history.";
+    detailEl.replaceChildren(log, error, hint);
+    chatParts = { log, hint, error, view: createConversationView(log) };
+  }
+  return chatParts;
+}
+
+/** The blank-state hint follows the log: visible while the page shows no message. */
+function syncChatHint() {
+  const parts = ensureChatParts();
+  parts.hint.classList.toggle("hidden", !parts.view.isEmpty());
+}
+
+/** Chat state changed outside render(): hint + Input Bar placeholder + action pill. */
+function refreshChatChrome() {
+  syncChatHint();
+  updatePlaceholder();
+  renderActionBar();
+}
+
+/** Inline error line of the page (failed send, load, delete): never a modal, the page stays usable. */
+function setChatError(text: string | null) {
+  const parts = ensureChatParts();
+  parts.error.classList.toggle("hidden", !text);
+  parts.error.textContent = text ?? "";
+}
+
+/** The last answer's text (the ⌥⏎ copy / write-back target); null while the page has none. */
+function lastAnswerText(): string | null {
+  return chatParts?.view.lastAnswer() ?? null;
+}
+
+/** A synthesized history item for the delete / materialize / write-back hooks (the Side View does the same). */
+function chatItem(conversationId: string) {
+  return {
+    id: `ai.conversation.${conversationId}`,
+    title: chatTitle ?? "",
+    actions: [],
+    payload: { conversationId },
+    pending: false,
+  };
+}
+
+/** Load the shown conversation into the page; null = the blank new-chat state. */
+async function loadChatMessages() {
+  const parts = ensureChatParts();
+  parts.view.clear();
+  setChatError(null);
+  chatTitle = null;
+  const id = chatConversationId;
+  if (!id) {
+    refreshChatChrome();
+    return;
+  }
+  try {
+    const messages = await invoke<Message[]>("side_messages", { conversationId: id });
+    if (chatConversationId !== id) return; // stepped away while loading
+    chatTitle = conversationTitle(messages);
+    for (const message of messages) parts.view.append(message);
+    // An unanswered question means a reply is on its way (the ask that opened the page) — or was
+    // interrupted: the page waits in generating mode, so Enter stops instead of stacking a question.
+    chatGenerating = messages[messages.length - 1]?.role === "user";
+    if (chatGenerating) parts.view.updateStreaming("", true);
+    parts.view.scrollToEnd();
+  } catch (err) {
+    setChatError(`Failed to load the chat: ${String(err)}`);
+  }
+  refreshChatChrome();
+}
+
+/** The chat history list (⌃[ / ⌃] stepping); failures leave stepping empty, the page keeps working. */
+async function loadChatConversations() {
+  try {
+    chatConversations = await invoke<Conversation[]>("side_conversations", { query: null });
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * Enter the Quick Ask page: `conversationId` null = blank new chat; `commandId` = the command whose
+ * Apply produced the page (it routes New/Browse/delete/materialize back to its extension).
+ */
+async function enterChat(conversationId: string | null, commandId?: string) {
+  closeConfirm();
+  closeActionsCard();
+  clearDetail(); // resets the detail pane; the chat parts rebuild on the next render
+  previewDismissed = false;
+  chatConversationId = conversationId;
+  chatGenerating = false;
+  view.update((v) => ({
+    ...v,
+    mode: "chat",
+    items: [],
+    focus: 0,
+    detailFull: false,
+    sourceCommandId: commandId ?? v.sourceCommandId,
+  }));
+  if (commandId) void refreshExtensionMeta(commandId);
+  void loadChatMessages();
+  void loadChatConversations();
+  q.focus();
+}
+
+/** Enter on the page (ADR-0036): send the draft into the conversation and clear the input. */
+async function sendChatMessage() {
+  const message = q.value.trim();
+  const commandId = view.get().sourceCommandId;
+  if (!message || chatGenerating || !commandId) return;
+  const parts = ensureChatParts();
+  setChatError(null);
+  q.value = "";
+  const row = parts.view.append({ role: "user", content: message });
+  chatTitle = chatTitle ?? conversationTitle([{ role: "user", content: message }]);
+  parts.view.beginAnswer();
+  try {
+    chatConversationId = await invoke<string>("panel_send", {
+      commandId,
+      conversationId: chatConversationId ?? "",
+      message,
+    });
+    chatGenerating = true;
+    parts.view.updateStreaming("", true);
+    parts.view.scrollToEnd();
+    refreshChatChrome();
+    // The conversation appears in the history list (and in side_conversations) right away
+    void loadChatConversations();
+  } catch (err) {
+    // Rollback: the message was not persisted; restore the draft so the user does not retype it.
+    row.remove();
+    q.value = message;
+    setChatError(String(err));
+    chatGenerating = false;
+    refreshChatChrome();
+  }
+}
+
+/** Stop the stream (Enter while generating, or the dialog): the generated part is kept (IIE4AD-365). */
+async function stopChatGeneration() {
+  try {
+    await invoke<number>("stop_generation");
+  } catch (err) {
+    setChatError(String(err));
+  }
+  chatGenerating = false;
+  ensureChatParts().view.settleStreaming();
+  refreshChatChrome();
+}
+
+/** ⌃[ / ⌃] on the page: step through chat history, like the Side View. */
+async function stepChat(delta: number) {
+  if (chatConversations.length === 0) await loadChatConversations();
+  if (chatConversations.length === 0) return;
+  const index = chatConversations.findIndex((c) => c.id === chatConversationId);
+  const next =
+    index === -1
+      ? delta > 0
+        ? 0
+        : chatConversations.length - 1
+      : Math.min(Math.max(index + delta, 0), chatConversations.length - 1);
+  const target = chatConversations[next];
+  if (!target || target.id === chatConversationId) return;
+  await enterChat(target.id);
+}
+
+/** Remove Chat (⌃X on the page / the actions card): the same deletion as the chat history page (ADR-0022). */
+async function removeCurrentChat() {
+  const id = chatConversationId;
+  if (!id) {
+    toast("This is already a new chat", "alert");
+    return;
+  }
+  try {
+    const count = await invoke<number>("delete_item", {
+      commandId: "ai.search-history",
+      item: chatItem(id),
+    });
+    if (!count) {
+      toast("No chat to remove", "alert");
+      return;
+    }
+    toast("Removed chat");
+    await enterChat(null);
+  } catch (err) {
+    setChatError(String(err));
+  }
+}
+
+/** ⌃⇧X on the page: remove every conversation (the platform's DeleteAll slot, ADR-0022). */
+async function deleteAllChats() {
+  try {
+    const count = await invoke<number>("delete_all", { commandId: "ai.search-history" });
+    if (!count) {
+      toast("No chats to remove", "alert");
+      return;
+    }
+    toast(`Removed ${count} chats`);
+    await enterChat(null);
+  } catch (err) {
+    setChatError(String(err));
+  }
+}
+
+/** ⌘J / the actions card: open the shown conversation in the Side View. */
+async function materializeChat() {
+  const id = chatConversationId;
+  const commandId = view.get().sourceCommandId;
+  if (!id || !commandId) return;
+  try {
+    const res = await invoke<ActionResult>("run_item_action", {
+      commandId,
+      item: chatItem(id),
+      action: { id: "materialize", title: "Open in Side View", kind: "secondary" },
+    });
+    applyResult(res, commandId, false, view.get().sourceIcon, view.get().sourceTitle);
+  } catch (err) {
+    setChatError(String(err));
+  }
+}
+
+/** Run one answer action (⌥⏎ copy / write back) on the last answer, through the Extension's hook. */
+async function runChatAnswerAction(actionId: "copy" | "write-back", title: string) {
+  const commandId = view.get().sourceCommandId;
+  const text = lastAnswerText();
+  if (!text || !commandId) return;
+  const item = {
+    id: "ai.answer",
+    title: "AI Answer",
+    actions: [],
+    payload: { conversationId: chatConversationId },
+    detail: text,
+    pending: false,
+  };
+  try {
+    const res = await invoke<ActionResult>("run_item_action", {
+      commandId,
+      item,
+      action: { id: actionId, title, kind: actionId === "copy" ? "secondary" : "primary" },
+    });
+    if (actionId === "copy") toast("Copied");
+    applyResult(res, commandId, false, view.get().sourceIcon, view.get().sourceTitle);
+  } catch (err) {
+    setChatError(String(err));
+  }
+}
+
+/** ⌥⏎: copy the last answer (clipboard only, never the host app — ADR-0002 amendment). */
+async function copyLastAnswer() {
+  await runChatAnswerAction("copy", "Copy");
+}
+
+/** Write the last answer back into the host app (the actions card row; the page's Enter sends instead). */
+async function writeBackLastAnswer() {
+  await runChatAnswerAction("write-back", "Write Back");
+}
+
+/** Back on the page while an answer streams: confirm before stopping (ADR-0036). */
+function openConfirm() {
+  if (confirmOpen) return;
+  confirmOpen = true;
+  confirmTextEl.textContent = "Stop generating? The answer so far is kept.";
+  confirmOkEl.replaceChildren(
+    document.createTextNode("Stop Generation"),
+    kbdEl("⏎", { firstOnly: true }),
+  );
+  confirmCancelEl.replaceChildren(
+    document.createTextNode("Keep Generating"),
+    kbdEl("Esc", { firstOnly: true }),
+  );
+  confirmCardEl.classList.remove("hidden");
+}
+
+function closeConfirm() {
+  if (!confirmOpen) return;
+  confirmOpen = false;
+  confirmCardEl.classList.add("hidden");
+  q.focus();
+}
+
+confirmOkEl.addEventListener("click", () => {
+  closeConfirm();
+  void stopChatGeneration();
+});
+confirmCancelEl.addEventListener("click", () => closeConfirm());
+// The dialog buttons must not steal the input focus (the same rule as the action pill)
+for (const button of [confirmOkEl, confirmCancelEl]) {
+  button.addEventListener("mousedown", (e) => e.preventDefault());
+}
+
 // ---- Semantic actions ----
 
 function primaryOf(item: Item) {
@@ -669,6 +1030,13 @@ function applyResult(
   }
   if ("openSideView" in res) {
     // The side view window is shown by the backend and receives the payload; the panel is already hidden
+    return;
+  }
+  if ("conversation" in res) {
+    // The panel's conversation page (Quick Ask, ADR-0036). The text that found this command is never
+    // a message: the page owns the Input Bar from here (the capturing row's text already went out).
+    q.value = "";
+    void enterChat(res.conversation.conversationId ?? null, commandId);
     return;
   }
   if ("list" in res) {
@@ -734,11 +1102,14 @@ async function openEntry(kind: "browse" | "new") {
  * including frecency recording and live-command input takeover).
  */
 async function applyCommand(cmd: CommandMeta) {
+  // The Input Bar text is a command's parameter only when the row declares Query (ADR-0036): the
+  // capturing row (the no-match fallback) consumes it; a Live row takes the input over (cleared on
+  // entry); every other row is applied without it — text used to search is never content.
+  const query = cmd.live || cmd.input !== "query" ? null : q.value;
   try {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: cmd.id,
-      // Live commands take over input with their own view: clear the input on entry; subsequent input is that command's query
-      query: cmd.live ? null : q.value || null,
+      query,
     });
     if (cmd.live) {
       q.value = "";
@@ -808,6 +1179,48 @@ async function openActionsCard() {
     });
     if (commandRows.length > 0) sections.push({ title: "Command", rows: commandRows });
     actionsCard.open(sections);
+    return;
+  }
+
+  // Quick Ask page (ADR-0036): the conversation's own actions — new / remove / side view / answer actions.
+  if (v.mode === "chat") {
+    const hasAnswer = lastAnswerText() !== null;
+    const rows: CardRow[] = [
+      {
+        title: "New Chat",
+        icon: "plus",
+        keys: GENERAL_KEY_LABELS.new,
+        run: () => void openEntry("new"),
+      },
+      {
+        title: "Remove Chat",
+        icon: "trash-2",
+        keys: GENERAL_KEY_LABELS.delete,
+        disabled: !chatConversationId,
+        run: () => void removeCurrentChat(),
+      },
+      {
+        title: "Open in Side View",
+        icon: "panel-right",
+        keys: keyDisplay.get("materialize") ?? "⌘J",
+        disabled: !chatConversationId,
+        run: () => void materializeChat(),
+      },
+      {
+        title: "Copy Last Answer",
+        icon: "copy",
+        keys: keyDisplay.get("secondaryCopy") ?? "⌥⏎",
+        disabled: !hasAnswer,
+        run: () => void copyLastAnswer(),
+      },
+      {
+        title: "Write Back Last Answer",
+        icon: "corner-down-left",
+        disabled: !hasAnswer,
+        run: () => void writeBackLastAnswer(),
+      },
+    ];
+    actionsCard.open([{ title: "Chat", rows }]);
     return;
   }
 
@@ -996,6 +1409,10 @@ async function runActionRow(row: ActionRow | undefined) {
 
 async function materialize() {
   const v = view.get();
+  if (v.mode === "chat") {
+    await materializeChat();
+    return;
+  }
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
   const action = item?.actions.find((a) => a.id === "materialize" || a.keybinding === "⌘J");
   if (item && action && v.sourceCommandId) {
@@ -1361,11 +1778,34 @@ async function clearSuggestions() {
   }
 }
 
-// Esc / empty-input Backspace layered back: stop generation → actions card → preview/detail → results layer → clear input → (may close panel)
+// Esc / empty-input Backspace layered back: confirm dialog → stop generation → actions card → preview/detail → results layer → clear input → (may close panel)
 // Empty Backspace passes quit:false: the root layer stays in place and does not close the panel (closing the panel belongs to Esc alone)
 async function back(options: { quit?: boolean } = {}) {
   const { quit = true } = options;
   const v = view.get();
+  // The stop-confirmation dialog is the front-most layer (ADR-0036; its own keys are handled above)
+  if (confirmOpen) {
+    closeConfirm();
+    return;
+  }
+  // The Quick Ask page (ADR-0036): back while generating asks first (Enter stops directly); a draft
+  // clears first (the platform-wide input layering); otherwise back to the command layer.
+  if (v.mode === "chat") {
+    if (chatGenerating) {
+      openConfirm();
+      return;
+    }
+    if (q.value) {
+      q.value = "";
+      renderActionBar();
+      return;
+    }
+    clearDetail(); // the chat parts detach with the pane (they rebuild on the next entry)
+    view.update((s) => ({ ...s, mode: "commands", items: [], focus: 0 }));
+    // The page cleared the input when it took over: the root page (empty query) matches it now.
+    void refresh("");
+    return;
+  }
   // While streaming: Esc's first priority is stop (IIE4AD-365)
   if (v.mode === "items" && v.items[v.focus]?.pending) {
     await stopGeneration();
@@ -1454,9 +1894,9 @@ let inputIconKind: "attach" | "back" | "logo" | null = null;
 function renderInputIcon() {
   const kind: "attach" | "back" | "logo" = attaching
     ? "attach"
-    : view.get().mode === "items"
-      ? "back"
-      : "logo";
+    : view.get().mode === "commands"
+      ? "logo"
+      : "back";
   if (kind === inputIconKind) return;
   inputIconKind = kind;
   inputIconEl.classList.toggle("moe-input-icon-back", kind === "back");
@@ -1473,7 +1913,7 @@ function renderInputIcon() {
 
 // The leading slot doubles as Back on nested pages (click; the keyboard paths are Esc / empty ⌫)
 inputIconEl.addEventListener("click", () => {
-  if (!attaching && view.get().mode === "items") void back({ quit: false });
+  if (!attaching && view.get().mode !== "commands") void back({ quit: false });
 });
 
 function setAttachBar(kind: "hint" | "error", text: string) {
@@ -1535,8 +1975,10 @@ async function submitAttach() {
     window.setTimeout(() => {
       if (!attaching && token === attachBarToken) hideAttachBar();
     }, 3000);
-    // The list follows the new query (an attachment-only query surfaces the "AI: Ask with Attachment" entry, avoiding an accidental run of the first command)
-    void refresh(q.value);
+    // The list follows the new query (an attachment-only query surfaces the "Ask with Attachment" entry, avoiding an accidental run of the first command);
+    // on the Quick Ask page the draft is a message, so only the pill follows the mention.
+    if (view.get().mode === "chat") renderActionBar();
+    else void refresh(q.value);
     q.focus();
   } catch (err) {
     setAttachBar("error", `Failed to add attachment: ${String(err)}`);
@@ -1546,6 +1988,18 @@ async function submitAttach() {
 // ---- Global keyboard events (keyboard-first: every capability is reachable, the mouse is only redundant) ----
 
 window.addEventListener("keydown", (e) => {
+  // Back while an answer streams asks first (ADR-0036): the dialog is the front-most layer and owns
+  // every key — including the attachment toggle below (a modal must not open another mode).
+  if (confirmOpen) {
+    e.preventDefault();
+    if (e.key === "Enter") {
+      closeConfirm();
+      void stopChatGeneration();
+    } else if (e.key === "Escape" || e.key === "Backspace") {
+      closeConfirm();
+    }
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "a") {
     e.preventDefault();
     if (attaching) cancelAttach();
@@ -1589,6 +2043,13 @@ window.addEventListener("keydown", (e) => {
     }
     if (general === "delete" || general === "deleteAll") {
       const v = view.get();
+      // On the Quick Ask page the slot acts on the conversation (ADR-0036, the chat history's deletion)
+      if (v.mode === "chat") {
+        e.preventDefault();
+        if (general === "deleteAll") void deleteAllChats();
+        else void removeCurrentChat();
+        return;
+      }
       // The delete slot works on the results layer (ADR-0022)…
       if (v.mode === "items" && v.sourceCommandId) {
         e.preventDefault();
@@ -1622,14 +2083,37 @@ window.addEventListener("keydown", (e) => {
     void back({ quit: false });
     return;
   }
-  if (!cardOpen && (e.key === "ArrowDown" || (e.ctrlKey && !e.metaKey && e.key === "n"))) {
+  // The Quick Ask page steps through chat history with ⌃[ / ⌃] (ADR-0036, the Side View's binding)
+  if (
+    !cardOpen &&
+    view.get().mode === "chat" &&
+    e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    (e.key === "[" || e.key === "]")
+  ) {
+    e.preventDefault();
+    void stepChat(e.key === "]" ? 1 : -1);
+    return;
+  }
+  // On the Quick Ask page ↑↓/⌃N/⌃P keep their native input meaning (nothing to navigate)
+  const navigating = !cardOpen && view.get().mode !== "chat";
+  if (navigating && (e.key === "ArrowDown" || (e.ctrlKey && !e.metaKey && e.key === "n"))) {
     e.preventDefault();
     move(1);
-  } else if (!cardOpen && (e.key === "ArrowUp" || (e.ctrlKey && !e.metaKey && e.key === "p"))) {
+  } else if (navigating && (e.key === "ArrowUp" || (e.ctrlKey && !e.metaKey && e.key === "p"))) {
     e.preventDefault();
     move(-1);
   } else if (e.key === "Enter") {
+    if (view.get().mode === "chat" && e.isComposing) return; // an IME commit is not a send
     e.preventDefault();
+    // On the Quick Ask page Enter sends the draft (⌥⏎ copies the last answer) — or stops the stream (ADR-0036)
+    if (view.get().mode === "chat") {
+      if (e.altKey) void copyLastAnswer();
+      else if (chatGenerating) void stopChatGeneration();
+      else void sendChatMessage();
+      return;
+    }
     void applyFocused(e.altKey);
   } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "k") {
     // About (⌘⇧K, ADR-0027): the chip's card, with a platform binding
@@ -1655,6 +2139,8 @@ function toggleActionsCard() {
 // Click outside the card/pill to close (the pill is excluded, otherwise it would cancel the "Actions" button's click)
 document.addEventListener("mousedown", (e) => {
   const target = e.target as Node;
+  // Clicking away from the stop-confirmation dialog keeps generating (a click is a cancel, like Esc)
+  if (confirmOpen && !confirmCardEl.contains(target)) closeConfirm();
   if (actionsCard.isOpen() && !actionsCardEl.contains(target) && !actionBarEl.contains(target)) {
     closeActionsCard();
   }
@@ -1666,6 +2152,11 @@ document.addEventListener("mousedown", (e) => {
 
 let debounce: ReturnType<typeof setTimeout> | undefined;
 q.addEventListener("input", () => {
+  // On the Quick Ask page the input is a message draft, not a search: only the pill follows it.
+  if (view.get().mode === "chat") {
+    renderActionBar();
+    return;
+  }
   clearTimeout(debounce);
   debounce = setTimeout(() => {
     if (attaching) return;
@@ -1752,11 +2243,26 @@ bannerActionEl.addEventListener("click", () => {
   );
 });
 
-// Streaming command events: update in place by item id (e.g. AI answers arriving word by word)
+// Streaming command events: the items layer updates in place by item id; the Quick Ask page adopts
+// frames of its own conversation (the capture's ask and the page's sends both carry the id).
 void listen<CommandEventPayload>("command-event", (event) => {
   const payload = event.payload?.itemUpdated;
   if (!payload) return;
   const v = view.get();
+  if (v.mode === "chat") {
+    const conversationId = (payload.item.payload as { conversationId?: string } | null)
+      ?.conversationId;
+    if (!conversationId || conversationId !== chatConversationId) return;
+    const pending = payload.item.pending === true;
+    const parts = ensureChatParts();
+    parts.view.updateStreaming(payload.item.detail ?? "", pending);
+    parts.view.scrollToEnd();
+    chatGenerating = pending;
+    refreshChatChrome();
+    // The final frame (pending=false) marks the end of generation (IIE4AD-365)
+    if (!pending) void loadChatConversations();
+    return;
+  }
   if (v.mode !== "items" || v.sourceCommandId !== payload.commandId) return;
   const idx = v.items.findIndex((i) => i.id === payload.item.id);
   if (idx === -1) return;

@@ -707,6 +707,34 @@ fn side_send(
         .map_err(|e| e.to_string())
 }
 
+/// Panel Quick Ask send (ADR-0036): continue (empty id = start) the conversation hosted in the
+/// Command Panel. Routed by the page's command, so the captured selection (question context for the
+/// first message) travels with it; replies stream as that command's `command-event`s.
+#[tauri::command]
+fn panel_send(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    command_id: String,
+    conversation_id: String,
+    message: String,
+) -> Result<String, String> {
+    let selection = state.selection.lock().expect("selection poisoned").clone();
+    let emitter: std::sync::Arc<dyn CommandEmitter> =
+        std::sync::Arc::new(TauriEventEmitter(app.clone()));
+    state
+        .registry
+        .lock()
+        .expect("registry poisoned")
+        .panel_continue(
+            &command_id,
+            &conversation_id,
+            &message,
+            selection.as_ref(),
+            emitter,
+        )
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn summon_status(state: State<'_, AppState>) -> SummonStatusPayload {
     let status = match state.listener.lock().expect("listener poisoned").status() {
@@ -1100,6 +1128,7 @@ fn main() {
             side_messages,
             side_conversations,
             side_send,
+            panel_send,
             summon_status,
             ui_theme,
             set_theme,

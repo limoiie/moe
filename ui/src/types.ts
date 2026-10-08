@@ -57,6 +57,7 @@ export type ActionResult =
   | string
   | { writeBack: { text: string } }
   | { list: { items: Item[]; detailFull?: boolean } }
+  | { conversation: { conversationId: string | null } }
   | { openSideView: { payload: unknown } };
 
 /** Streaming increment: updates the item in place by item id. */

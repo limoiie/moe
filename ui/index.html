@@ -79,6 +79,25 @@
         />
       </div>
 
+      <!-- Stop-generation confirmation (ADR-0036): back on the Quick Ask page while an answer is
+           streaming — ⏎ stops, Esc keeps generating. -->
+      <div
+        id="confirm-card"
+        class="moe-actions-card absolute left-1/2 top-1/2 z-30 hidden w-80 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl bg-surface-overlay"
+      >
+        <div id="confirm-text" class="px-4 pt-3.5 pb-3 text-sm text-fg"></div>
+        <div class="flex justify-end gap-2 px-3 pb-3">
+          <button
+            id="confirm-cancel"
+            class="moe-focus-ring flex items-center gap-1.5 rounded-full px-3 py-1 text-xs text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg active:bg-surface-selected"
+          ></button>
+          <button
+            id="confirm-ok"
+            class="moe-focus-ring flex items-center gap-1.5 rounded-full bg-warning-fill px-3 py-1 text-xs text-on-warning transition-colors hover:bg-warning-fill-hover"
+          ></button>
+        </div>
+      </div>
+
       <!-- Actions card (⌘K / ⌘⇧P): floating card that never replaces the body — grouped action list
            (sections), the filter input at the bottom, same card language as the About card -->
       <div

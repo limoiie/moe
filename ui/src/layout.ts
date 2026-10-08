@@ -82,6 +82,12 @@ export const DETAIL_PANE_CLASS =
   "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-fg";
 
 /**
+ * The Quick Ask page's conversation pane (ADR-0036): same insets as the detail pane, but no prose
+ * styles on the container — each answer bubble carries its own `.md` (the Side View's arrangement).
+ */
+export const CONVERSATION_PANE_CLASS = "min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3";
+
+/**
  * Which shape should render right now.
  * @param item      the focused item (undefined in list shape)
  * @param detailFull whether the result declared full-screen detail (ADR-0013, decided by the Extension)

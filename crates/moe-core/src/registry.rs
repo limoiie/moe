@@ -311,6 +311,21 @@ impl Registry {
             .side_continue(conversation_id, message, emitter)
     }
 
+    /// Panel conversation continuation (Quick Ask, ADR-0036): routed by the command owning the page,
+    /// so a second conversational Extension needs no platform change.
+    pub fn panel_continue(
+        &self,
+        command_id: &str,
+        conversation_id: &str,
+        message: &str,
+        selection: Option<&Selection>,
+        emitter: Arc<dyn Emitter>,
+    ) -> Result<String, MoeError> {
+        self.find(command_id)
+            .ok_or(MoeError::NotFound)?
+            .panel_continue(conversation_id, message, selection, emitter)
+    }
+
     /// Stop generation in progress across all extensions; returns the number aborted (IIE4AD-365).
     pub fn stop_generation(&self) -> usize {
         self.extensions
@@ -641,6 +656,80 @@ mod tests {
         assert!(matches!(
             r.side_continue("nope", "1", "x", Arc::new(NoopEmitter)),
             Err(MoeError::NotFound)
+        ));
+    }
+
+    /// Panel conversation continuation (ADR-0036): routed by the command owning the page (not by
+    /// extension id), and the captured selection reaches the extension (question context).
+    #[test]
+    fn panel_continue_routes_to_the_page_command_or_not_found() {
+        struct PanelToy;
+        impl Extension for PanelToy {
+            fn id(&self) -> &str {
+                "panel"
+            }
+            fn title(&self) -> &str {
+                "Panel"
+            }
+            fn commands(&self) -> Vec<CommandMeta> {
+                vec![CommandMeta {
+                    id: "panel.ask".into(),
+                    extension_id: "panel".into(),
+                    title: "Ask".into(),
+                    subtitle: None,
+                    icon: None,
+                    input: InputKind::None,
+                    live: false,
+                    keybinding: None,
+                    extension_title: None,
+                    kind: None,
+                }]
+            }
+            fn invoke(
+                &self,
+                _command_id: &str,
+                _query: Option<&str>,
+                _selection: Option<&Selection>,
+            ) -> Result<ActionResult, MoeError> {
+                Err(MoeError::NotFound)
+            }
+            fn panel_continue(
+                &self,
+                conversation_id: &str,
+                message: &str,
+                selection: Option<&Selection>,
+                _emitter: Arc<dyn Emitter>,
+            ) -> Result<String, MoeError> {
+                let selected_text = selection.and_then(Selection::text).unwrap_or("none");
+                Ok(format!("{conversation_id}:{message}:{selected_text}"))
+            }
+        }
+
+        let mut r = Registry::new();
+        r.register(Box::new(PanelToy));
+        r.register(Box::new(Toy));
+        let selection = Selection {
+            text: Some("selected".into()),
+            files: vec![],
+        };
+        assert_eq!(
+            r.panel_continue(
+                "panel.ask",
+                "",
+                "hello",
+                Some(&selection),
+                Arc::new(NoopEmitter)
+            )
+            .unwrap(),
+            ":hello:selected"
+        );
+        assert!(matches!(
+            r.panel_continue("toy.list", "1", "x", None, Arc::new(NoopEmitter)),
+            Err(MoeError::NotFound),
+        ));
+        assert!(matches!(
+            r.panel_continue("nope", "1", "x", None, Arc::new(NoopEmitter)),
+            Err(MoeError::NotFound),
         ));
     }
 

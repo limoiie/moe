@@ -77,6 +77,13 @@ pub enum ActionResult {
         #[serde(default, skip_serializing_if = "is_false")]
         detail_full: bool,
     },
+    /// A conversation page hosted in the Command Panel (Quick Ask, ADR-0036): the platform renders
+    /// the message stream and the Input Bar becomes the composer (Enter sends, ⌘N starts a new chat,
+    /// ⌃X removes the current one, ⌃[ / ⌃] step through history). The Extension owns the storage and
+    /// the continuation entry (`Extension::panel_continue`); `conversation_id` None = blank new chat.
+    Conversation {
+        conversation_id: Option<String>,
+    },
     /// Triggers Materialize: opens the Extension's Side View, carrying the payload needed to open it.
     OpenSideView {
         payload: serde_json::Value,
@@ -324,6 +331,20 @@ pub trait Extension: Send + Sync {
         Err(MoeError::NotFound)
     }
 
+    /// Continue (or start, with an empty id) a conversation hosted in the Command Panel
+    /// (`ActionResult::Conversation`, ADR-0036): returns the conversation id; replies stream via
+    /// `CommandEvent` carrying the page's command id. `selection` is the panel's captured context
+    /// (the selected text becomes question context when the conversation starts, ADR-0019 amendment).
+    fn panel_continue(
+        &self,
+        _conversation_id: &str,
+        _message: &str,
+        _selection: Option<&Selection>,
+        _emitter: Arc<dyn Emitter>,
+    ) -> Result<String, MoeError> {
+        Err(MoeError::NotFound)
+    }
+
     /// Request stopping this Extension's in-flight generation; returns the number of generations aborted (not available by default).
     /// The platform-level Esc prioritizes calling it when the Focused Item is `pending` (IIE4AD-365).
     fn stop_generation(&self) -> usize {
@@ -411,5 +432,21 @@ mod tests {
         assert!(list["list"].get("detailFull").is_none());
         let legacy: ActionResult = serde_json::from_value(list).unwrap();
         assert_eq!(legacy, ActionResult::list(vec![answer()]));
+    }
+
+    /// The panel conversation page (ADR-0036): the UI reads `conversation.conversationId` (null = blank new chat).
+    #[test]
+    fn conversation_result_serializes_camel_case() {
+        let blank = serde_json::to_value(ActionResult::Conversation {
+            conversation_id: None,
+        })
+        .unwrap();
+        assert!(blank["conversation"]["conversationId"].is_null());
+
+        let open = serde_json::to_value(ActionResult::Conversation {
+            conversation_id: Some("7".into()),
+        })
+        .unwrap();
+        assert_eq!(open["conversation"]["conversationId"], "7");
     }
 }
