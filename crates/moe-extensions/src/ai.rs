@@ -58,7 +58,7 @@ fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> It
                 id: "materialize".into(),
                 title: "Open in Side View".into(),
                 kind: ActionKind::Secondary,
-                keybinding: Some("⌘M".into()),
+                keybinding: Some("⌘J".into()),
             },
         ],
         payload: conversation_payload(conversation_id),
@@ -67,7 +67,7 @@ fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> It
     }
 }
 
-/// Item payload carries the conversation id, passed back as-is on Apply/⌘M (the UI does not interpret it).
+/// Item payload carries the conversation id, passed back as-is on Apply/⌘J (the UI does not interpret it).
 fn conversation_payload(conversation_id: Option<&str>) -> serde_json::Value {
     match conversation_id {
         Some(id) => serde_json::json!({ "conversationId": id }),
@@ -493,7 +493,7 @@ impl AiShell {
             return ActionResult::detail(vec![answer_item(KEY_MISSING_MD, None, false)]);
         };
 
-        // Asking creates the conversation; ⌘M then takes the same conversation into the side view.
+        // Asking creates the conversation; ⌘J then takes the same conversation into the side view.
         // History stores only the question itself (clean title); what goes to the model includes the selected-text context.
         let conversation_id = persist_question(&display, &attachments);
 
@@ -647,7 +647,7 @@ impl Extension for AiShell {
             // the next question naturally starts a new conversation.
             "ai.new-chat" => Ok(ActionResult::detail(vec![notice_item(
                 "New Chat",
-                "Type a question into the input bar to start; ⌘M moves this conversation into the side view.",
+                "Type a question into the input bar to start; ⌘J moves this conversation into the side view.",
             )])),
             _ => Err(MoeError::NotFound),
         }
@@ -708,7 +708,7 @@ impl Extension for AiShell {
             (true, false) => format!("{total_files} attachment(s); Enter to send"),
             (false, true) => "Selected text attached as context; Enter to send".to_string(),
             (false, false) => {
-                "Enter to send; answers can be written back (⌥⏎ copy · ⌘M side view)".to_string()
+                "Enter to send; answers can be written back (⌥⏎ copy · ⌘J side view)".to_string()
             }
         };
         Some(CommandMeta {
@@ -1204,7 +1204,7 @@ mod tests {
         let _ = server.join();
     }
 
-    /// The answer item's ⌘M (materialize) also carries the conversation id back, so the side view locates the same conversation.
+    /// The answer item's ⌘J (materialize) also carries the conversation id back, so the side view locates the same conversation.
     #[test]
     fn answer_item_carries_conversation_id_on_materialize() {
         let item = answer_item("body", Some("9"), false);

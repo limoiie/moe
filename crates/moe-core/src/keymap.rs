@@ -1,7 +1,7 @@
 //! Platform-level unified keymap (Keymap). Extensions must not override it; they can only attach shortcuts to their own actions.
 //!
 //! General actions share one set of keybinding semantics across all Commands / sub-apps (ADR-0014/0022/0029):
-//! Browse (⌘P, record list), Actions (⌘⇧P, action list), New (⌘N, new record),
+//! Browse (⌘P, record list), Actions (⌘K, action list), New (⌘N, new record),
 //! Delete (⌃X, delete current record), DeleteAll (⌃⇧X, delete all records),
 //! Favorite (⌘⇧F, add/remove the current command from Favorites).
 //! The platform only fixes keybindings and routing; concrete entries are declared by Extensions.
@@ -17,7 +17,7 @@ pub enum SystemKey {
     Apply,
     /// First secondary action (default semantic: copy plain text).
     SecondaryCopy,
-    /// Show All Actions: expand the current context's primary/secondary action list (panel ⌘K, sub-app ⌘⇧P).
+    /// Show All Actions: expand the current context's primary/secondary action list (⌘K on every surface, ADR-0014 amendment).
     ShowAllActions,
     /// Browse: open the current Extension's record list (AI = conversation history). General action, default ⌘P.
     Browse,
@@ -35,7 +35,7 @@ pub enum SystemKey {
     OpenConfig,
     /// Esc: layered back (with input → clear; on a result layer → back up one layer; otherwise close the panel).
     Back,
-    /// Materialize: turn into the Extension's Side View.
+    /// Materialize: turn into the Extension's Side View. Default ⌘J (ADR-0014 amendment).
     Materialize,
     /// Attach: add attachments to the current question (AI semantic: `@path` mention, ADR-0010).
     Attach,
@@ -49,8 +49,8 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("↑ / ⌃P", K::NavUp),
         ("⏎", K::Apply),
         ("⌥⏎", K::SecondaryCopy),
-        // Two keybindings for one semantic: ⌘K is the command palette convention, ⌘⇧P the sub-app general key (ADR-0014)
-        ("⌘K / ⌘⇧P", K::ShowAllActions),
+        // One key on every surface: ⌘K (ADR-0014 amendment: the sub-app's ⌘⇧P alias is gone)
+        ("⌘K", K::ShowAllActions),
         ("⌘P", K::Browse),
         ("⌘N", K::New),
         ("⌃X", K::Delete),
@@ -59,7 +59,7 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("⌘⇧F", K::Favorite),
         ("⌘,", K::OpenConfig),
         ("Esc", K::Back),
-        ("⌘M", K::Materialize),
+        ("⌘J", K::Materialize),
         ("⌘⇧A", K::Attach),
     ]
 }
@@ -78,7 +78,7 @@ pub fn display_of(key: SystemKey) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// Each semantic appears exactly once in the keymap (a display string may hold multiple keybindings, e.g. "⌘K / ⌘⇧P").
+    /// Each semantic appears exactly once in the keymap (a display string may hold multiple keybindings, e.g. "↓ / ⌃N").
     #[test]
     fn every_semantic_has_exactly_one_row() {
         let table = default_keymap();
@@ -111,7 +111,8 @@ mod tests {
         };
         assert_eq!(display(SystemKey::Browse), "⌘P");
         assert_eq!(display(SystemKey::New), "⌘N");
-        assert_eq!(display(SystemKey::ShowAllActions), "⌘K / ⌘⇧P");
+        assert_eq!(display(SystemKey::ShowAllActions), "⌘K");
+        assert_eq!(display(SystemKey::Materialize), "⌘J");
         assert_eq!(display(SystemKey::Delete), "⌃X");
         assert_eq!(display(SystemKey::DeleteAll), "⌃⇧X");
     }
