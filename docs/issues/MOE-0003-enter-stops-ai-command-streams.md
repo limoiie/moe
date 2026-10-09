@@ -1,12 +1,12 @@
 # M7k: Enter stops generation on streaming result cards (AI Commands)
 
 - **ID**: MOE-0003
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: cbdf378
 
 An AI Command (Improve Writing / Make Shorter / …) streams its transform into a result card whose
 declared primary action is **Write Back Result** — so pressing Enter mid-stream wrote the
@@ -48,4 +48,4 @@ and any future streaming `Item`), not just on the Quick Ask page.
 
 ## Comments
 
-- 2026-10-09 (agent): filed and implemented; `Commit` pending.
+- 2026-10-09 (agent): filed and implemented; shipped in cbdf378 (`pnpm build` + `cargo test --workspace` green).
