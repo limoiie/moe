@@ -133,10 +133,11 @@ represents.
 _Avoid_: execute, open, enable
 
 **Stop (stop generation)**:
-An item still streaming is marked `pending`; while pending, Esc's first priority is requesting
-stop (platform-wide, stops all ongoing generations at once), keeping what was generated instead
-of rolling it back (ADR-0006 amendment). On the Quick Ask page the bindings differ (ADR-0036):
-Enter requests stop, and Back (Esc / empty ⌫) asks for confirmation first.
+An item still streaming is marked `pending`; while pending, **Enter requests stop** (the primary
+action yields to Stop Generation — result cards and the Quick Ask page alike) and Back keeps its
+first-priority stop on result cards, while on the Quick Ask page Back asks for confirmation first
+(ADR-0036 amendments). Stopping is platform-wide (all ongoing generations at once) and keeps what
+was generated instead of rolling it back (ADR-0006 amendment).
 _Avoid_: cancel, interrupt
 
 **Secondary Action**:

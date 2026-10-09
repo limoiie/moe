@@ -303,11 +303,12 @@ function primaryActionOf(): { title: string; keys: string; run: () => void; disa
   }
   if (v.mode === "items") {
     const item = v.items[v.focus];
-    // While generating: the primary action yields to Stop (IIE4AD-365, Esc's first priority)
+    // While generating the primary action yields to Stop: Enter is the stop binding (⏎), Esc keeps its
+    // first-priority stop on this layer (IIE4AD-365, ADR-0036 amendment)
     if (item?.pending) {
       return {
         title: "Stop Generation",
-        keys: keyDisplay.get("back") ?? "Esc",
+        keys: applyKeys,
         run: () => void stopGeneration(),
         disabled: false,
       };
@@ -2074,13 +2075,22 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     move(-1);
   } else if (e.key === "Enter") {
-    if (view.get().mode === "chat" && e.isComposing) return; // an IME commit is not a send
+    const v = view.get();
+    if (v.mode === "chat" && e.isComposing) return; // an IME commit is not a send
     e.preventDefault();
     // On the Quick Ask page Enter sends the draft (⌥⏎ copies the last answer) — or stops the stream (ADR-0036)
-    if (view.get().mode === "chat") {
+    if (v.mode === "chat") {
       if (e.altKey) void copyLastAnswer();
       else if (chatGenerating) void stopChatGeneration();
       else void sendChatMessage();
+      return;
+    }
+    // A pending result (e.g. AI Commands streaming a transform) yields its primary to Stop: Enter stops
+    // the generation instead of writing back the partial text — the pill already reads Stop Generation
+    // (ADR-0036 amendment). ⌥⏎ keeps the secondary action (copy the partial text); after the stream
+    // ends, Enter is the item's primary again (write back).
+    if (v.mode === "items" && !e.altKey && v.items[v.focus]?.pending) {
+      void stopGeneration();
       return;
     }
     void applyFocused(e.altKey);

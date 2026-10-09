@@ -43,7 +43,7 @@ themselves stay listed in their own sections.
 | Keys | Semantics | Notes |
 |---|---|---|
 | `↓` / `⌃N`, `↑` / `⌃P` | Navigate | Move the Focused Item |
-| `⏎` | Apply | Run the primary action on the Focused Item; on the Quick Ask page: send the draft, or stop while an answer streams (ADR-0036) |
+| `⏎` | Apply | Run the primary action on the Focused Item; **while an answer streams the primary yields to Stop Generation, so `⏎` stops it** (every surface — result cards and the Quick Ask page alike); on the Quick Ask page it sends the draft when no stream is running (ADR-0036 amendment) |
 | `⌥⏎` | Secondary | Default semantics: copy (e.g. copy the full AI answer to the clipboard) |
 | `⌘K` | Show All Actions | The current item's primary/secondary action list, on every surface (`⌃K` stays the macOS kill-line, ADR-0031) |
 | `⌘P` | Browse | The current extension's record list (AI = chat history; a hint if the extension declares none) |
@@ -125,8 +125,10 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   Extract Key Ideas / Continue Writing. **Select text, summon, type the command name (e.g.
   "improve") and press Enter**: the result streams into a result card and **automatically
   replaces the selection and dismisses the panel when done**; with no selection the command guides
-  you to select the text first — the search text is never transformed (ADR-0036); Esc keeps what
-  was generated so far and does not write back (⏎ writes back manually, ⌥⏎ copies).
+  you to select the text first — the search text is never transformed (ADR-0036). **While the result
+  streams, `⏎` stops the generation** (the primary action yields to Stop, ADR-0036 amendment); after
+  it has stopped or finished, `⏎` writes back manually and `⌥⏎` copies — Esc keeps what was
+  generated so far and does not write back by itself.
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
   buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same

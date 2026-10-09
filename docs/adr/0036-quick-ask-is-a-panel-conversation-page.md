@@ -63,3 +63,14 @@ nowhere to live once Enter meant *send*.
   (the panel's `ai.quick-ask` ask and the Side View's `ai.side` continuation alike), so the panel and
   the Side View mirror the same streaming answer while it runs; the stream state (Send vs Stop)
   follows the frames.
+
+## Amendment: Enter is the stop binding on every surface
+
+The page's rule generalizes to the result cards. A pending `Item` (AI Commands streaming a
+transform, IIE4AD-365) already yielded its primary action to **Stop Generation** in the action
+pill, but the Enter key still ran the item's declared primary — writing back the half-generated
+text while the pill said Stop. Now Enter stops on the results layer too: the same path as the pill
+and Esc (`stop_generation`, platform-wide), and the pill carries the `⏎` Kbd it always meant. Esc
+keeps its first-priority stop on result cards; only the Quick Ask page keeps the confirmation
+dialog on Back — an accidental Back there must not kill an answer mid-sentence. Once the stream
+stops or finishes, Enter is the item's primary again (write back for AI Commands, ADR-0024).
