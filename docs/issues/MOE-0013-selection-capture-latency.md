@@ -1,11 +1,12 @@
 # M7u: the selection capture stops stalling the summon — double-tap ⌘ no longer pays ~250 ms before the panel shows
 
 - **ID**: MOE-0013
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, perf
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: cfb690a
 
 User report: "I can feel very slight delay before moe pops up after I pressed cmd+cmd every time."
 
@@ -166,3 +167,8 @@ clipboard content (pre-existing, fallback path only, left in Remaining).
   clipboard content when the pasteboard data is served lazily by its owner (the user's clipboard had
   4 types) — pre-existing (the old code materialized via `dataForType` too), fallback-path only, left
   in Remaining. 52/52 tests, fmt + workspace checks clean; moe-app rebuilt — restart to pick it up.
+- 2026-10-09 (agent): committed in `cfb690a` on the user's request. Workspace verification before
+  the commit: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo test --workspace` (159) green after two trivial lint cleanups folded into the commit (a
+  `-> ()` return on the text_target test stub, a collapsible `if` in the finisher). E2E
+  re-confirmation on the user's own summons is still pending (see Remaining).
