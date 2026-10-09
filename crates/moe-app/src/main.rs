@@ -1268,6 +1268,12 @@ fn main() {
                 install_side_view_material(&window);
             }
 
+            // AppKit's click-to-key for non-activating panels is not reliable (a click can land
+            // while the panel stays non-key — no caret, no typing); a local mouse-down monitor
+            // keys whichever of our panels was clicked before the click dispatches.
+            #[cfg(target_os = "macos")]
+            moe_platform::mac::install_panel_click_to_key();
+
             // Menu bar resident (IIE4AD-347): no Dock icon, not in ⌘-Tab (Raycast-style)
             #[cfg(target_os = "macos")]
             {

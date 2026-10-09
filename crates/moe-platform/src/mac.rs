@@ -6,7 +6,7 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use core_foundation::base::TCFType;
@@ -22,12 +22,13 @@ use core_graphics::event::{
 use objc2::MainThreadMarker;
 use objc2::runtime::{AnyClass, NSObjectProtocol};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSEvent, NSScreen, NSView, NSVisualEffectBlendingMode,
+    NSAutoresizingMaskOptions, NSEvent, NSEventMask, NSScreen, NSView, NSVisualEffectBlendingMode,
     NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
     NSWindowOrderingMode,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::cell::RefCell;
+use std::ptr::NonNull;
 
 use crate::summon::{
     DoubleTapDetector, Input, Modifier, SummonEvent, SummonListener, SummonStatus,
@@ -161,6 +162,45 @@ pub unsafe fn install_side_view_material(ns_view: *mut std::ffi::c_void) {
             NSWindowOrderingMode::Below,
             Some(webview),
         );
+    }
+}
+
+/// Make our panels key on the first click — a local mouse-down monitor.
+///
+/// AppKit's click-to-key path for a non-activating panel is not reliable: every so often a click
+/// delivered to the Side View leaves the panel non-key, so the click lands (hover states, buttons)
+/// but no caret appears and typing goes nowhere until the outside/inside ritual is repeated. The
+/// show path proves `makeKeyWindow` always works; the monitor runs before dispatch, keys the
+/// clicked window, and the click is then handled like a normal click in a key window.
+///
+/// A local monitor only sees events bound for this app, so this cannot touch other apps' windows,
+/// and `makeKeyWindow` does not activate the app — the panels stay non-activating.
+pub fn install_panel_click_to_key() {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let handler = block2::RcBlock::new(|event: NonNull<NSEvent>| {
+        // SAFETY: AppKit hands the monitor a valid event for the duration of the call.
+        let event = unsafe { event.as_ref() };
+        if let Some(mtm) = MainThreadMarker::new()
+            && let Some(window) = event.window(mtm)
+            && !window.isKeyWindow()
+        {
+            window.makeKeyWindow();
+        }
+        event as *const NSEvent as *mut NSEvent
+    });
+    unsafe {
+        let monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(
+            NSEventMask::LeftMouseDown,
+            &handler,
+        );
+        // The monitor and its block live for the process (there is nothing to uninstall them for).
+        std::mem::forget(handler);
+        if let Some(monitor) = monitor {
+            std::mem::forget(monitor);
+        }
     }
 }
 
