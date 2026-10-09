@@ -188,6 +188,7 @@ function rowClass(highlighted: boolean): string {
 function paintHistoryHighlight() {
   for (const child of Array.from(historyListEl.children)) {
     const row = child as HTMLElement;
+    if (row.dataset.index === undefined) continue; // group headers are not rows
     const on = Number(row.dataset.index) === historyIndex;
     row.className = rowClass(on);
     if (on) row.dataset.focused = "true";
@@ -199,7 +200,32 @@ function moveHistory(delta: number) {
   if (conversations.length === 0) return;
   historyIndex = Math.min(Math.max(historyIndex + delta, 0), conversations.length - 1);
   paintHistoryHighlight();
-  historyListEl.children[historyIndex]?.scrollIntoView({ block: "nearest" });
+  historyListEl
+    .querySelector<HTMLElement>(`[data-index="${historyIndex}"]`)
+    ?.scrollIntoView({ block: "nearest" });
+}
+
+/**
+ * Recency buckets for the history card — the same labels the panel's history page groups by
+ * (`moe-extensions::recency`; mirrored here because the card cannot call into Rust for a label).
+ */
+function recencyGroup(updatedUnix: number, nowUnix: number): string {
+  const day = 86_400;
+  const age = Math.max(0, nowUnix - updatedUnix);
+  if (age < day) return "Today";
+  if (age < 2 * day) return "Yesterday";
+  if (age < 8 * day) return "Previous 7 Days";
+  if (age < 31 * day) return "Previous 30 Days";
+  return "Older";
+}
+
+/** Group header inside the card's list: not focusable, never part of the highlight (ADR-0018 amendment). */
+function groupHeaderRow(title: string): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className =
+    "select-none px-2.5 pb-0.5 pt-2 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
+  li.textContent = title;
+  return li;
 }
 
 function conversationRow(conversation: Conversation, index: number): HTMLLIElement {
@@ -244,9 +270,18 @@ function renderConversations() {
     return;
   }
   historyIndex = Math.min(historyIndex, conversations.length - 1);
-  historyListEl.replaceChildren(
-    ...conversations.map((conversation, index) => conversationRow(conversation, index)),
-  );
+  // Grouped by recency (ADR-0018 amendment): headers are visual only — the highlight, ↑↓/⌃N/⌃P
+  // navigation and Enter keep counting the conversations.
+  const now = Math.floor(Date.now() / 1000);
+  const lis: HTMLLIElement[] = [];
+  let lastGroup: string | undefined;
+  conversations.forEach((conversation, index) => {
+    const group = recencyGroup(conversation.updatedUnix, now);
+    if (group !== lastGroup) lis.push(groupHeaderRow(group));
+    lastGroup = group;
+    lis.push(conversationRow(conversation, index));
+  });
+  historyListEl.replaceChildren(...lis);
   paintHistoryHighlight();
 }
 

@@ -20,6 +20,9 @@ export interface Item {
   /** The first action is the Apply semantics; ⌘K expands all actions. */
   actions: Action[];
   payload: unknown;
+  /** Optional group label (ADR-0018 amendment): the list–detail template renders a non-focusable
+   *  header before the first item of each group; navigation and actions count items only. */
+  group?: string;
   /** Detail content (Markdown); the split page renders it in the right pane (ADR-0018). */
   detail?: string | null;
   /** Still producing (streaming placeholder): Esc prioritizes stopping the generation. */

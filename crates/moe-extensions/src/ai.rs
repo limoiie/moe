@@ -25,6 +25,7 @@ use moe_platform::keychain;
 
 use crate::ai_client::{SseLine, chat_body_from_messages, chat_completions_url, sse_delta};
 use crate::attachment;
+use crate::recency;
 
 pub struct AiShell;
 
@@ -47,6 +48,7 @@ fn answer_item(
         id: "ai.answer".into(),
         title: "AI Answer".into(),
         subtitle: None,
+        group: None,
         icon: Some("sparkles".into()),
         actions: vec![
             Action {
@@ -91,6 +93,8 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
         subtitle: Some(relative_time(conversation.updated_unix, now_unix)),
+        // Recency buckets shared with the Side View's history card (ADR-0018 amendment).
+        group: Some(recency::group_label(conversation.updated_unix, now_unix).to_string()),
         icon: Some("message-square".into()),
         actions: vec![Action {
             id: "materialize".into(),
@@ -122,6 +126,7 @@ fn notice_item(title: &str, detail: &str) -> Item {
         id: "ai.notice".into(),
         title: title.into(),
         subtitle: None,
+        group: None,
         icon: Some("info".into()),
         actions: vec![],
         payload: serde_json::Value::Null,

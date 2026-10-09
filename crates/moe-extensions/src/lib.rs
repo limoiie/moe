@@ -8,6 +8,7 @@ pub mod ai_commands;
 pub mod attachment;
 pub mod echo;
 pub mod moe;
+pub mod recency;
 
 pub fn install(registry: &mut Registry) {
     // Registration order decides fallback capture precedence (e.g. `key …` must reach Moe's save

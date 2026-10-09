@@ -529,9 +529,20 @@ function render() {
     }
     listEl.replaceChildren(...lis);
   } else if (v.mode === "items") {
-    const rows = currentEntries().map((e, i) => rowEl(e, i, i === v.focus));
-    focusedLi = rows[v.focus] ?? null;
-    listEl.replaceChildren(...rows);
+    // Grouped list page (ADR-0018 amendment): `Item.group` labels render as non-focusable headers
+    // and the flat item index (focus, navigation, actions, delete) never counts them — the same
+    // rule as the command layer's source sections (ADR-0020).
+    const entries = currentEntries();
+    const lis: HTMLLIElement[] = [];
+    let lastGroup: string | undefined;
+    v.items.forEach((item, i) => {
+      if (item.group && item.group !== lastGroup) lis.push(sectionHeaderEl(item.group));
+      lastGroup = item.group;
+      const li = rowEl(entries[i], i, i === v.focus);
+      if (i === v.focus) focusedLi = li;
+      lis.push(li);
+    });
+    listEl.replaceChildren(...lis);
   } else {
     // Quick Ask page (ADR-0036): the detail pane is the conversation, the list is away
     listEl.classList.add("hidden");

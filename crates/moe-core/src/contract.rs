@@ -46,6 +46,11 @@ pub struct Item {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
+    /// Optional group label for list pages (e.g. recency buckets in a history list): the platform
+    /// renders a non-focusable header before the first item of each group and keeps navigation,
+    /// actions and delete counting the items only (ADR-0018 amendment). None = one unlabeled group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Semantic icon name (platform icon set, e.g. Lucide's "sparkles"; ADR-0012). The UI picks the actual glyph; unknown names fall back to a default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -224,6 +229,9 @@ impl std::error::Error for MoeError {}
 
 /// Incremental events during command execution (streaming answers follow Item semantics: updated in place by id).
 /// Note: `rename_all` on the enum only renames variant names; struct variant fields need `rename_all_fields`.
+// The lint suggests boxing `Item`; a streaming event is rebuilt per model delta, so the allocation
+// would ride every chunk for a few dozen bytes of size difference. Accepted here by design.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum CommandEvent {
@@ -372,6 +380,7 @@ mod tests {
                 id: "ai.answer".into(),
                 title: "AI Answer".into(),
                 subtitle: None,
+                group: None,
                 actions: vec![],
                 payload: serde_json::Value::Null,
                 detail: None,
@@ -428,12 +437,25 @@ mod tests {
             id: "ai.answer".into(),
             title: "AI Answer".into(),
             subtitle: None,
+            group: None,
             icon: None,
             actions: vec![],
             payload: serde_json::Value::Null,
             detail: Some("Answer body".into()),
             pending: false,
         }
+    }
+
+    /// `Item.group` rides the wire for the list–detail template (ADR-0018 amendment): camelCase,
+    /// omitted while None so ungrouped lists keep the old payload shape.
+    #[test]
+    fn item_group_serializes_only_when_set() {
+        let mut item = answer();
+        let json = serde_json::to_value(&item).unwrap();
+        assert!(json.get("group").is_none(), "None is omitted");
+        item.group = Some("Today".into());
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["group"], "Today");
     }
 
     /// View layout is declared by the Extension (ADR-0013): the UI uses `list.detailFull` to decide

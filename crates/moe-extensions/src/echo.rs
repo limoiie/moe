@@ -87,6 +87,7 @@ impl Extension for Echo {
                         id: format!("echo.word.{word}"),
                         title: (*word).to_string(),
                         subtitle: Some("Sample word".into()),
+                        group: None,
                         icon: Some("quote".into()),
                         actions: vec![
                             action(

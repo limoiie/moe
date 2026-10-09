@@ -92,6 +92,14 @@ in Suggestions or in its source group. The root actions card's **Command** secti
 then **Configure Extension** (a disabled placeholder).
 _Avoid_: bookmarks, pinned, starred (the star is the icon, not the term)
 
+**List–detail page template**:
+The platform's split result page (`ActionResult::list` with `Item.detail`, ADR-0018): a list column
+plus a preview pane with one set of keyboard semantics (navigation, Apply, copy, ⌘K actions, the
+delete slots, Back). An Extension adopts it by returning Items — optionally grouped with
+`Item.group`, whose labels render as non-focusable headers — and by implementing the hooks its
+actions route to; it never lays out the page or binds keys.
+_Avoid_: custom list view, table page
+
 **Page Shape**:
 Result pages have exactly three shapes: **list** (single column), **split** (list on the left +
 detail on the right), and **detail** (a single result filling the panel). The platform decides

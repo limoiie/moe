@@ -36,3 +36,23 @@ Raycast 之所以看起来一致，是因为它的结果视图只有几种固定
 - 列表栏宽（280px）、面板宽高（768×540）是全局常量：要调就改 `ui/src/layout.ts` 一处（好处是全局一致）。
   左侧列表是固定窄栏而不是百分比：详情才是需要宽度的那一半，列表只要放得下标题与时间。
 - 窗口尺寸随形态变化会有一次跳变；只在形态切换时发生（不是每次渲染），且面板本来就居中展示。
+
+## Amendment: the template is named, and lists group by `Item.group` (MOE-0019)
+
+The split page was always the platform's (扩展写的是内容，不是版式), but two gaps kept list–detail
+commands from being a pure data fill:
+
+- **Grouping is contract, not layout.** `Item.group` (optional) is a free-form label; the platform
+  renders it as a non-focusable header before the first item of each group, and navigation, focus,
+  the ⌘K card's Actions section and the delete slots keep counting the items only — the command
+  layer's source-section rule (ADR-0020) applied inside a list. `None` = one unlabeled group, so
+  ungrouped pages are unchanged. Chat history uses it today (`moe-extensions::recency`: Today /
+  Yesterday / Previous 7 Days / Previous 30 Days / Older); the Side View's history card mirrors the
+  same labels for its own copy of the list.
+- **The template's contract, written down.** A command that returns `ActionResult::list(items)`
+  inherits, by construction: the layout and window size (the table above), ↑↓/⌃N/⌃P navigation over
+  the items, ⏎ Apply → the focused item's primary action through `run_item_action`, ⌥⏎ copy, ⌘K's
+  actions card (the item's own actions plus the page's Command/General rows), ⌃X/⌃⇧X routed to the
+  extension's delete hooks, Esc/⌫ layered back, and the streaming update path. Adopting it is
+  filling `Item`s — group, title, subtitle, icon, actions, payload, detail — and implementing the
+  hooks its actions route to; no command renders its own list or binds its own keys.

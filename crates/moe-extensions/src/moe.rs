@@ -18,6 +18,7 @@ fn info_item(text: &str) -> Item {
         id: "moe.info".into(),
         title: text.into(),
         subtitle: None,
+        group: None,
         actions: vec![],
         payload: serde_json::Value::Null,
         detail: None,
