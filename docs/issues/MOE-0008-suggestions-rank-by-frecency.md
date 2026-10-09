@@ -1,11 +1,12 @@
 # M7p: Suggestions rank by frecency, not raw recency
 
 - **ID**: MOE-0008
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: d16b8a3
 
 The root page's Suggestions section (ADR-0023) is ordered by `last_used_unix` — pure LRU.
 User report: after heavily using Improve Writing (1000 runs) and Quick Ask only 10 times, one
@@ -64,3 +65,6 @@ Redis both fade each entry individually.
   `cargo test --workspace` — all green (150 tests, 0 failures).
 - 2026-10-09 (agent): renumbered MOE-0003 → MOE-0008 — that id was allocated on `main`
   (enter-stops-ai-command-streams) while this work sat in its worktree; branch rebased onto main.
+- 2026-10-09 (agent): delivered via PR limoiie/moe#1 (rebase-merged as `d16b8a3`; CI green: rust
+  macOS/Ubuntu + ui). Review (Standards/Spec axes) surfaced only vocabulary/doc items — fixed in
+  the two follow-up commits before merge.
