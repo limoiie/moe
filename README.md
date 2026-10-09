@@ -147,8 +147,11 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   `<thinking>`-style wrappers, e.g. minimax-M3) get it stripped from the result — body, copy and
   write-back are the answer only — and shown in a ChatGPT-style folding row above it: **Thinking**
   while it reasons, **Thought for N seconds** once done.
-- **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
-  buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
+- **Side View (AI chat)**: a standard-looking window on the right (460 pt wide by default, full
+  height; resizable, and its size and position are remembered across launches — drag it, or use the
+  titlebar's width steps). The titlebar carries the **traffic-light trio** on the left (**Hide**,
+  **shrink width**, **expand width**), the conversation title **centered**, and the icon actions in
+  a glass capsule at the right end: **More Actions (⌘ icon / `⌘K`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same
   registered sections, filter input, `↑↓`/`⌃N` `⌃P`/`⏎` selection and `Esc` dismissal — with the
   **Chat** section (Chat History / New Chat / Remove Conversation / Remove All Conversations),
@@ -167,8 +170,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   backward / forward through the current conversation list (older / newer; Quick Ask page and Side
   View); opening/switching a conversation scrolls to the bottom
   of the last line; `⏎` sends / `⇧⏎` newline / `Esc` dismisses overlays first, stops while
-  generating, otherwise hides; 📎 adds attachments; window position and size are remembered after
-  dragging. Past conversations are also reachable from the command "Search Chat History" (AI)
+  generating, otherwise hides; 📎 adds attachments (the composer is one rounded field with the
+  attachment and send buttons on a row inside it). Past conversations are also reachable from the
+  command "Search Chat History" (AI)
   (narrow list on the left + detail on the right, showing the last answer).
 - **Config**: run "Open Config File" or edit
   `~/Library/Application Support/moe/config.toml` directly:

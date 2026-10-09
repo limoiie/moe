@@ -11,30 +11,54 @@
         "(prefers-color-scheme: dark)",
       )?.matches
         ? "dark"
-        : "light";
-    </script>
+        : "light";    </script>
   </head>
   <body class="bg-transparent">
     <div
       id="root"
-      class="moe-window-card relative m-2 flex h-[calc(100vh-1rem)] flex-col overflow-hidden rounded-window bg-surface"
+      class="moe-window-card relative m-2 flex h-[calc(100vh-1rem)] flex-col overflow-hidden rounded-2xl bg-surface"
     >
+      <!-- Titlebar: the traffic-light trio on the left, the title centered in the bar, the icon
+           actions in a glass capsule on the right (the whole strip is draggable). The chrome follows
+           the pointer and the window's focus (styles.css, body.moe-pointer-inside / .moe-window-focused). -->
       <header
         data-tauri-drag-region
-        class="flex items-center justify-between gap-2 border-b border-line px-4 py-1.5 text-sm text-fg-muted"
+        class="moe-titlebar relative flex h-10 shrink-0 items-center justify-between gap-2 pl-4 pr-1.5 text-sm text-fg-muted"
       >
-        <span data-tauri-drag-region class="flex min-w-0 flex-1 items-center gap-2">
-          <span id="chat-icon" class="text-fg-subtle"></span>
-          <span id="chat-title" data-tauri-drag-region class="min-w-0 truncate font-medium">
-            AI Chat
-          </span>
+        <div class="moe-traffic-lights moe-titlebar-reveal shrink-0">
+          <button
+            id="win-hide"
+            class="moe-traffic-light moe-focus-ring"
+            data-tone="close"
+            title="Hide (Esc)"
+            aria-label="Hide"
+          ></button>
+          <button
+            id="win-compact"
+            class="moe-traffic-light moe-focus-ring"
+            data-tone="compact"
+            title="Shrink width"
+            aria-label="Shrink width"
+          ></button>
+          <button
+            id="win-expand"
+            class="moe-traffic-light moe-focus-ring"
+            data-tone="expand"
+            title="Expand width"
+            aria-label="Expand width"
+          ></button>
+        </div>
+        <span
+          id="chat-title"
+          data-tauri-drag-region
+          class="moe-titlebar-title absolute left-1/2 max-w-[45%] -translate-x-1/2 truncate font-medium"
+        >
+          AI Chat
         </span>
-        <!-- Window controls: standalone circular glass buttons, Siri-style -->
-        <div class="flex shrink-0 items-center gap-1.5">
-          <button id="actions-button" class="moe-glass-button" title="More Actions"></button>
-          <button id="history-button" class="moe-glass-button" title="Chat History"></button>
-          <button id="new-chat" class="moe-glass-button" title="New Chat"></button>
-          <button id="close" class="moe-glass-button" title="Hide (Esc)"></button>
+        <div class="moe-window-actions moe-titlebar-reveal shrink-0">
+          <button id="actions-button" class="moe-focus-ring" title="More Actions"></button>
+          <button id="history-button" class="moe-focus-ring" title="Chat History"></button>
+          <button id="new-chat" class="moe-focus-ring" title="New Chat"></button>
         </div>
       </header>
 
@@ -44,57 +68,62 @@
         id="error"
         class="hidden border-t border-danger-line bg-danger-soft px-4 py-2 text-xs text-danger"
       ></div>
-      <div id="attach-row" class="hidden">
-        <input
-          id="attach-path"
-          class="min-w-0 flex-1 bg-transparent text-fg caret-accent placeholder-fg-subtle outline-none"
-          placeholder="Paste a file path, Enter to attach (Esc cancels; ~ and paths with spaces supported)"
-          spellcheck="false"
-        />
-        <span id="attach-msg" class="shrink-0"></span>
-      </div>
-      <footer class="border-t border-line p-2">
-        <textarea
-          id="composer"
-          rows="3"
-          placeholder="Continue the conversation… (Enter to send, Shift+Enter for a new line)"
-          spellcheck="false"
-          class="w-full resize-none rounded-xl border border-line bg-transparent px-2.5 py-1.5 text-sm text-fg caret-accent placeholder-fg-subtle outline-none transition-colors focus:border-accent-line"
-        ></textarea>
-        <div class="flex items-center justify-between px-1">
-          <button
-            id="attach"
-            class="moe-focus-ring flex items-center gap-1 rounded-full px-2.5 py-1 text-xs text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg active:bg-surface-selected"
-            title="Add attachment (path input)"
-          ></button>
-          <button id="send" class="flex items-center gap-1 rounded-md px-3 py-1 text-xs"></button>
+
+      <!-- Composer (ChatGPT-style): one rounded field with the draft on top and the attachment /
+           send buttons on a bottom row inside the same field. -->
+      <footer class="shrink-0 px-3 pb-3 pt-1">
+        <div class="moe-composer p-2">
+          <div id="attach-row" class="hidden">
+            <input
+              id="attach-path"
+              class="min-w-0 flex-1 bg-transparent text-fg caret-accent placeholder-fg-subtle outline-none"
+              placeholder="Paste a file path, Enter to attach (Esc cancels; ~ and paths with spaces supported)"
+              spellcheck="false"
+            />
+            <span id="attach-msg" class="shrink-0"></span>
+          </div>
+          <textarea
+            id="composer"
+            rows="1"
+            placeholder="Ask anything"
+            spellcheck="false"
+            class="max-h-40 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-relaxed text-fg caret-accent placeholder-fg-subtle outline-none"
+          ></textarea>
+          <div class="mt-1 flex items-center justify-between">
+            <button
+              id="attach"
+              class="moe-composer-action moe-focus-ring text-fg-muted hover:bg-surface-hover hover:text-fg"
+              title="Add attachment (path input)"
+            ></button>
+            <button id="send" class="moe-composer-action moe-focus-ring" title="Send (⏎)"></button>
+          </div>
         </div>
       </footer>
 
       <!-- Floating history card (centered at the top; open via the history button / ⌘P) -->
       <div
         id="history-card"
-        class="moe-actions-card absolute left-1/2 top-12 z-30 hidden w-96 -translate-x-1/2 overflow-hidden rounded-2xl bg-surface-overlay"
+        class="moe-actions-card absolute left-1/2 top-12 z-30 hidden w-[min(24rem,calc(100%-2.5rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-surface-overlay"
       >
         <input
           id="history-search"
-          class="w-full border-b border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
+          class="w-full border-b border-line bg-transparent px-3 py-2.5 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Search chat history…"
           spellcheck="false"
         />
         <ul id="history-list" class="moe-scroll-fade max-h-80 overflow-y-auto p-1"></ul>
       </div>
 
-      <!-- More Actions card (the ⌘ button / ⌘⇧P): the same card as the panel's actions card —
+      <!-- More Actions card (the ⌘ button / ⌘K): the same card as the panel's actions card —
            sections + filter input (ADR-0028). The Side View anchors it horizontally centered, near
            the top (like the history card), with the input at the top edge. -->
       <div
         id="actions-card"
-        class="moe-actions-card absolute left-1/2 top-12 z-30 hidden w-80 -translate-x-1/2 overflow-hidden rounded-2xl bg-surface-overlay"
+        class="moe-actions-card absolute left-1/2 top-12 z-30 hidden w-[min(20rem,calc(100%-2.5rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-surface-overlay"
       >
         <input
           id="action-search"
-          class="w-full border-b border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
+          class="w-full border-b border-line bg-transparent px-3 py-2.5 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Filter actions…"
           spellcheck="false"
         />

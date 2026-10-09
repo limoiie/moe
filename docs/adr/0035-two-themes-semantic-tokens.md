@@ -192,3 +192,24 @@ goes near-black in light (`#0b1220`) and near-white in dark (`#fbfbfd`), while s
 (`--moe-fg-muted`) and tertiary (`--moe-fg-subtle`) return to their pre-change values
 (`#4c5a6b / #556274` and `#a1a1aa / #9a9aa3`). Glanceability comes from the ink gap between the
 primary step and everything below it.
+
+## Amendment: the Side View's own corner ladder, re-anchored on Raycast (MOE-0018)
+
+The Side View is a Raycast-style utility window, and its chrome read as a lozenge next to Raycast's:
+the 24 px window token is sized for the 768 pt launcher, not for a 460 pt side panel. The Side View
+now carries its own ladder, still anchored on the capsules (which stay fully rounded — the topbar
+action capsule, the composer's round buttons):
+
+- **Window card 16 px** (`rounded-2xl`), down from the 24 px `--radius-window` token; the topbar
+  band tightens to 40 px — the traffic-light trio sits 16 px in from the left, the action capsule
+  8 px in from the right (matching its 6 px top/bottom gaps, so the pill reads square in the
+  corner's air) — and the trio clears the smaller corner.
+- **Composer 12 px** (`rounded-xl`) — the nesting step for its 12 px inset (ADR-0035's rule: each
+  step subtracts its inset), with the attachment strip one step further in (8 px).
+- The panel keeps `--radius-window` (24 px): the launcher's geometry is out of this amendment's
+  scope.
+- The titlebar chrome (traffic lights + action capsule + title) now follows the pointer and the
+  window's focus: the pointer decides *whether* it shows — over the window the trio and capsule
+  appear muted (opacity .55) and the title lights up; out they hide and the title dims, even while
+  the composer keeps keyboard focus — while focus decides the *weight* (clicked into the window →
+  fully lit).

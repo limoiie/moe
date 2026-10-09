@@ -4,6 +4,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   Briefcase,
   Check,
   ChevronRight,
@@ -23,6 +24,7 @@ import {
   MessageCircleWarning,
   MessageSquare,
   MessagesSquare,
+  Minus,
   Monitor,
   Moon,
   PanelLeft,
@@ -76,6 +78,7 @@ const ICONS: Record<string, IconNode> = {
   smile: Smile,
   lightbulb: Lightbulb,
   "arrow-right": ArrowRight,
+  "arrow-up": ArrowUp,
   // Favorites (ADR-0029)
   star: Star,
   // Appearance (the About card's theme rows, ADR-0035 amendment)
@@ -93,6 +96,7 @@ const ICONS: Record<string, IconNode> = {
   "panel-right": PanelRight,
   "panel-left": PanelLeft,
   plus: Plus,
+  minus: Minus,
   paperclip: Paperclip,
   send: Send,
   stop: Square,
@@ -104,6 +108,8 @@ const ICONS: Record<string, IconNode> = {
 export interface IconOptions {
   size?: number;
   className?: string;
+  /** Stroke width in the 24-unit viewBox (default 1.75); scales with `size`. */
+  strokeWidth?: number;
 }
 
 /** Whether the icon name is known (used when the UI must tell "extension-provided icon" from "fallback shape"). */
@@ -115,7 +121,11 @@ export function hasIcon(name: string | null | undefined): boolean {
 export function iconEl(name: string | null | undefined, options: IconOptions = {}): SVGElement {
   const node = (name && ICONS[name]) || Circle;
   const size = options.size ?? 16;
-  const svg = createElement(node, { width: size, height: size, "stroke-width": 1.75 });
+  const svg = createElement(node, {
+    width: size,
+    height: size,
+    "stroke-width": options.strokeWidth ?? 1.75,
+  });
   svg.setAttribute("aria-hidden", "true");
   svg.classList.add("shrink-0");
   for (const cls of (options.className ?? "").split(/\s+/).filter(Boolean)) {

@@ -220,6 +220,7 @@
   .moe-about-card,
   .moe-avatar-chip,
   .moe-action-bar,
+  .moe-window-actions,
   .moe-glass-button,
   .moe-bubble {
     background-image: none;
@@ -309,6 +310,7 @@ body {
 .moe-about-card,
 .moe-avatar-chip,
 .moe-action-bar,
+.moe-window-actions,
 .moe-glass-button,
 .moe-bubble {
   corner-shape: squircle;
@@ -551,6 +553,137 @@ body {
 }
 .moe-glass-button:active {
   background-color: var(--moe-surface-selected);
+}
+
+/* ---- Side View window chrome (MOE-0018): traffic lights · centered title · action capsule ---- */
+
+/* Titlebar chrome states (Raycast-like): the pointer decides *whether* it shows, the window's focus
+   decides its *weight*. Pointer over the window → the trio and the capsule appear muted; clicked
+   into the window → they light up; pointer out → they hide and the title dims, even while the
+   composer keeps keyboard focus. Opacity alone would leave invisible hit targets behind, so the
+   reveal also gates pointer events. */
+.moe-titlebar-reveal {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+body.moe-pointer-inside .moe-titlebar-reveal {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+body.moe-pointer-inside.moe-window-focused .moe-titlebar-reveal {
+  opacity: 1;
+}
+/* The title shares the pointer rule but brightens with it: muted by default, lit while the pointer
+   is over the window (the focus click keeps the chrome above at full weight). */
+.moe-titlebar-title {
+  transition: color 140ms ease;
+}
+body.moe-pointer-inside .moe-titlebar-title {
+  color: var(--moe-fg);
+}
+
+/* The traffic-light trio: the system colors, the glyph (a stroked icon, revealed while the pointer
+   is over the trio — one hover target, as on macOS). Hide / shrink width / expand width: the last
+   two are real size steps for this docked window (a titlebar "minimize" has no Dock to land in). */
+.moe-traffic-lights {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.moe-traffic-light {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  cursor: default;
+  color: rgb(0 0 0 / 0.55);
+  box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.14);
+}
+.moe-traffic-light[data-tone="close"] {
+  background: #ff5f57;
+}
+.moe-traffic-light[data-tone="compact"] {
+  background: #febc2e;
+}
+.moe-traffic-light[data-tone="expand"] {
+  background: #28c840;
+}
+.moe-traffic-light:disabled {
+  opacity: 0.4;
+}
+.moe-traffic-light svg {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.moe-traffic-lights:hover .moe-traffic-light:not(:disabled) svg,
+.moe-traffic-light:focus-visible svg {
+  opacity: 1;
+}
+
+/* The topbar's action capsule: the panel pill's glass rim, one size down (24px icon buttons). */
+.moe-window-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  box-shadow: var(--moe-shadow-chip);
+}
+.moe-window-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--moe-fg-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.moe-window-actions button:hover {
+  background: var(--moe-surface-hover);
+  color: var(--moe-fg);
+}
+.moe-window-actions button:active {
+  background: var(--moe-surface-selected);
+}
+
+/* The Side View composer (ChatGPT-style): one rounded field holding the draft and, on a bottom row
+   inside it, the attachment and send buttons; the border brightens while the field has focus. The
+   radius is the nesting step for its 12px inset (ladder: window 16 → field 12, ADR-0035 amendment). */
+.moe-composer {
+  border: 1px solid var(--moe-line);
+  border-radius: 12px;
+  background: var(--moe-surface-overlay);
+  box-shadow: var(--moe-shadow-chip);
+  transition: border-color 140ms ease;
+}
+.moe-composer:focus-within {
+  border-color: var(--moe-accent-line);
+}
+/* The composer's round action buttons; the send button's fill comes from its own state utilities
+   (accent / warning / disabled), so this class carries layout only. */
+.moe-composer-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 .moe-action-bar button {
   display: inline-flex;

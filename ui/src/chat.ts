@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 import { createActionPlan } from "./actions";
 import { appendMention, validatePath } from "./attachment";
 import { createCard } from "./card";
 import { iconEl } from "./icons";
-import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
 import { conversationTitle, createConversationView } from "./messages";
 import { initPointerIntent } from "./pointer";
@@ -18,12 +18,13 @@ import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from
 initTheme();
 initPointerIntent();
 
-const chatIconEl = document.querySelector<HTMLSpanElement>("#chat-icon")!;
 const titleEl = document.querySelector<HTMLSpanElement>("#chat-title")!;
+const winHideEl = document.querySelector<HTMLButtonElement>("#win-hide")!;
+const winCompactEl = document.querySelector<HTMLButtonElement>("#win-compact")!;
+const winExpandEl = document.querySelector<HTMLButtonElement>("#win-expand")!;
 const actionsButtonEl = document.querySelector<HTMLButtonElement>("#actions-button")!;
 const historyButtonEl = document.querySelector<HTMLButtonElement>("#history-button")!;
 const newChatEl = document.querySelector<HTMLButtonElement>("#new-chat")!;
-const closeEl = document.querySelector<HTMLButtonElement>("#close")!;
 const historyCardEl = document.querySelector<HTMLDivElement>("#history-card")!;
 const historySearchEl = document.querySelector<HTMLInputElement>("#history-search")!;
 const historyListEl = document.querySelector<HTMLUListElement>("#history-list")!;
@@ -53,18 +54,83 @@ let generating = false;
 /** The most recently loaded conversation list (shared by the history card and ⌃[/⌃] stepping). */
 let conversations: Conversation[] = [];
 
-// ---- Fixed icons (three header buttons on the right: More Actions / History / New Chat) ----
+// ---- Fixed icons (the action capsule: More Actions / History / New Chat) ----
 
-chatIconEl.replaceChildren(iconEl("sparkles", { size: 15 }));
-actionsButtonEl.replaceChildren(iconEl("command", { size: 16 }));
-historyButtonEl.replaceChildren(iconEl("history", { size: 16 }));
-newChatEl.replaceChildren(iconEl("plus", { size: 16 }));
-closeEl.replaceChildren(iconEl("close", { size: 16 }));
-attachEl.replaceChildren(iconEl("paperclip", { size: 14 }), document.createTextNode("Attachment"));
+actionsButtonEl.replaceChildren(iconEl("command", { size: 15 }));
+historyButtonEl.replaceChildren(iconEl("history", { size: 15 }));
+newChatEl.replaceChildren(iconEl("plus", { size: 15 }));
+attachEl.replaceChildren(iconEl("paperclip", { size: 16 }));
 // The three generic-action tooltips also come from the shared keymap (ADR-0014), so they can't drift from the keymap table
 actionsButtonEl.title = `More Actions (${GENERAL_KEY_LABELS.actions})`;
 historyButtonEl.title = `Chat History (${GENERAL_KEY_LABELS.browse})`;
 newChatEl.title = `New Chat (${GENERAL_KEY_LABELS.new})`;
+
+// ---- Window controls (the traffic-light trio): hide / shrink width / expand width ----
+
+/** Width presets for the window controls (logical px; the config's minWidth is the floor). */
+const COMPACT_WIDTH = 360;
+const EXPANDED_WIDTH = 720;
+
+// The macOS glyphs as strokes (revealed on trio hover): an 8px square inside a 12px dot, so all
+// three read the same weight — text glyphs (✕/−/+) render unevenly at this size.
+winHideEl?.replaceChildren(iconEl("close", { size: 8, strokeWidth: 3 }));
+winCompactEl?.replaceChildren(iconEl("minus", { size: 8, strokeWidth: 3 }));
+winExpandEl?.replaceChildren(iconEl("plus", { size: 8, strokeWidth: 3 }));
+
+/**
+ * Resize the window keeping its docked right edge fixed: `setSize` anchors the top-left, which
+ * would slide a right-docked window off the screen edge.
+ */
+async function setWindowWidth(width: number) {
+  const win = getCurrentWindow();
+  const scale = await win.scaleFactor();
+  const target = Math.round(width * scale);
+  const [pos, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
+  if (target === size.width) return;
+  await win.setSize(new PhysicalSize(target, size.height));
+  await win.setPosition(new PhysicalPosition(pos.x + size.width - target, pos.y));
+}
+
+/** Dim a preset button once the window is already at that size. */
+async function syncSizeButtons() {
+  const win = getCurrentWindow();
+  const scale = await win.scaleFactor();
+  const width = (await win.outerSize()).width / scale;
+  if (winCompactEl) winCompactEl.disabled = width <= COMPACT_WIDTH + 1;
+  if (winExpandEl) winExpandEl.disabled = width >= EXPANDED_WIDTH - 1;
+}
+
+// Optional lookups: a cached script can pair with markup it does not match during a dev reload, and
+// a missing control must not abort the module (that would take the composer down with it).
+winHideEl?.addEventListener("click", () => void getCurrentWindow().hide());
+winCompactEl?.addEventListener("click", () => void setWindowWidth(COMPACT_WIDTH));
+winExpandEl?.addEventListener("click", () => void setWindowWidth(EXPANDED_WIDTH));
+void getCurrentWindow().onResized(() => void syncSizeButtons());
+void syncSizeButtons();
+
+// The titlebar chrome states (Raycast-like; the cascade lives in styles.css): the pointer decides
+// *whether* it shows — over the window the trio and capsule appear muted and the title lights up,
+// out they hide and the title dims, even while the composer keeps keyboard focus — and the window's
+// focus decides the weight (clicked into the window → fully lit).
+function setPointerInside(inside: boolean) {
+  document.body.classList.toggle("moe-pointer-inside", inside);
+}
+function setWindowFocused(focused: boolean) {
+  document.body.classList.toggle("moe-window-focused", focused);
+}
+document.documentElement.addEventListener("mouseenter", () => setPointerInside(true));
+document.documentElement.addEventListener("mouseleave", () => setPointerInside(false));
+// A window hidden under a stationary cursor must not keep a stale hover state.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") setPointerInside(false);
+});
+void getCurrentWindow().isFocused().then(setWindowFocused);
+void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+  setWindowFocused(focused);
+  // The cached AppKit shadow samples content alpha and can go stale across a key-status change
+  // (ADR-0016), reading as a rectangular block around the rounded card; recompute it now.
+  void invoke("refresh_shadow");
+});
 
 // ---- Lightweight toast (instant feedback for menu actions, e.g. "Config file opened") ----
 
@@ -111,11 +177,11 @@ function toggleHistoryCard() {
 }
 
 function rowClass(highlighted: boolean): string {
+  // The panel's own row metrics (text-sm, 2.5 gap, 2.5/1.5 padding): the card must not shrink its
+  // rows into a second, smaller type scale.
   return (
-    "moe-row flex cursor-default items-center gap-2 rounded-xl px-2 py-1.5 text-xs transition-colors duration-100 " +
-    (highlighted
-      ? "bg-surface-selected text-fg"
-      : "text-fg")
+    "moe-row flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
+    (highlighted ? "bg-surface-selected text-fg" : "text-fg")
   );
 }
 
@@ -140,7 +206,7 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
   const li = document.createElement("li");
   li.dataset.index = String(index);
   li.className = rowClass(false);
-  li.append(iconEl("message-square", { size: 14, className: "text-fg-subtle" }));
+  li.append(iconEl("message-square", { size: 15, className: "text-fg-subtle" }));
   const label = document.createElement("span");
   label.className = "min-w-0 flex-1 truncate";
   label.textContent = conversation.title;
@@ -148,10 +214,10 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
   li.append(label);
   const time = document.createElement("span");
   if (conversation.id === conversationId) {
-    time.className = "shrink-0 text-[10px] text-accent";
+    time.className = "shrink-0 text-xs text-accent";
     time.textContent = "Current";
   } else {
-    time.className = "shrink-0 text-[10px] text-fg-subtle";
+    time.className = "shrink-0 text-xs text-fg-subtle";
     time.textContent = relativeTime(conversation.updatedUnix);
   }
   li.append(time);
@@ -164,7 +230,7 @@ function conversationRow(conversation: Conversation, index: number): HTMLLIEleme
 
 function emptyRow(text: string): HTMLLIElement {
   const li = document.createElement("li");
-  li.className = "px-2 py-3 text-xs text-fg-subtle";
+  li.className = "px-2.5 py-3 text-sm text-fg-subtle";
   li.textContent = text;
   return li;
 }
@@ -482,7 +548,7 @@ async function loadHistory() {
   if (!conversationId) {
     setTitle("New Chat");
     emptyEl.textContent =
-      "This is a new chat: type below to get started; use ⌘P or the history button at the top right to view chat history.";
+      "This is a new chat: type below and press ⏎ to send; ⌘P opens chat history.";
     emptyEl.classList.remove("hidden");
     composerEl.focus();
     return;
@@ -507,6 +573,7 @@ async function send() {
   sending = true;
   setError(null);
   composerEl.value = "";
+  autoGrowComposer();
   emptyEl.classList.add("hidden");
   const row = appendMessage({ role: "user", content: message });
   if (titleEl.textContent === "New Chat") {
@@ -528,6 +595,7 @@ async function send() {
     // Rollback on failure: this message was not persisted; restore the input so the user doesn't retype it.
     row.remove();
     composerEl.value = message;
+    autoGrowComposer();
     setError(String(err));
     generating = false;
     updateSendUi();
@@ -538,16 +606,30 @@ async function send() {
 
 // ---- Events ----
 
+/**
+ * (Re)entered the window: clear the overlays, reload the shown conversation and refocus the
+ * composer. The conversation itself (null = the blank state) is untouched.
+ */
+function refreshWindow() {
+  closeHistoryCard();
+  closeActionsCard();
+  setError(null);
+  setPointerInside(false); // a re-shown window starts with the chrome hidden, whatever was hovered before
+  autoGrowComposer();
+  void loadHistory();
+  void loadConversations();
+}
+
 // Entered with a conversation from the command panel ⌘M / tray (empty payload.conversationId = new chat).
 void listen<SideOpenPayload>("side-open", (event) => {
   const raw = event.payload?.conversationId;
   conversationId = typeof raw === "string" && raw.length > 0 ? raw : null;
-  closeHistoryCard();
-  closeActionsCard();
-  setError(null);
-  void loadHistory();
-  void loadConversations();
+  refreshWindow();
 });
+
+// Global ⌘⇧' re-show (ADR-0036 amendment): the window is a toggle, so coming back keeps the
+// conversation that was on screen — only the overlays and the loaded list refresh.
+void listen("side-show", () => refreshWindow());
 
 // Streamed answers of the shown conversation, whichever surface started them: the Side View's own
 // continuation (`ai.side` frames) and the panel's Quick Ask page (`ai.quick-ask` frames) both carry
@@ -585,7 +667,7 @@ void listen<CommandEventPayload>("command-event", (event) => {
 // ---- Attachments (📎 = same path as the panel's ⌘⇧A, ADR-0010) ----
 
 const ATTACH_ROW_BASE =
-  "flex items-center gap-2 border-t border-accent-line bg-accent-soft px-3 py-2 text-xs";
+  "mb-1 flex items-center gap-2 rounded-lg bg-accent-soft px-2.5 py-1.5 text-xs";
 
 function openAttachRow() {
   attachRowEl.className = `${ATTACH_ROW_BASE} text-accent`;
@@ -609,6 +691,7 @@ async function submitAttachPath() {
   try {
     const info = await validatePath(raw);
     composerEl.value = appendMention(composerEl.value, info.path);
+    autoGrowComposer();
     closeAttachRow();
     composerEl.focus();
   } catch (err) {
@@ -643,15 +726,43 @@ attachEl.addEventListener("click", () => {
 
 // ---- Keyboard: Enter sends / Shift+Enter newlines / Esc stops or closes / ⌘N new chat ----
 
+/** The composer field grows with the draft (ChatGPT-style), capped at the CSS max-height (160px). */
+function autoGrowComposer() {
+  composerEl.style.height = "auto";
+  const content = composerEl.scrollHeight;
+  // A hidden window measures 0: keep the CSS height instead of collapsing the field, and let the
+  // re-show path (refreshWindow) grow it once the window is on screen.
+  if (content <= 0) {
+    composerEl.style.removeProperty("height");
+    composerEl.style.removeProperty("overflow-y");
+    return;
+  }
+  composerEl.style.height = `${Math.min(content, 160)}px`;
+  composerEl.style.overflowY = content > 160 ? "auto" : "hidden";
+}
+
+/**
+ * The send button: a circular icon button (↥ send / ■ stop) that greys out while the draft is
+ * empty, the ChatGPT composer's bottom-right affordance (the shortcut stays in its tooltip).
+ */
+const COMPOSER_ACTION = "moe-composer-action moe-focus-ring";
 function updateSendUi() {
-  sendEl.className = generating
-    ? "moe-focus-ring flex items-center gap-1.5 rounded-full bg-warning-fill px-3 py-1 text-xs text-on-warning transition-colors hover:bg-warning-fill-hover"
-    : "moe-focus-ring flex items-center gap-1.5 rounded-full bg-accent-fill px-3 py-1 text-xs text-on-accent transition-colors hover:bg-accent-fill-hover";
-  sendEl.replaceChildren(
-    iconEl(generating ? "stop" : "send", { size: 13 }),
-    document.createTextNode(generating ? "Stop" : "Send"),
-    kbdEl(generating ? "Esc" : "⏎", { firstOnly: true }),
-  );
+  const empty = composerEl.value.trim().length === 0;
+  if (generating) {
+    sendEl.className = `${COMPOSER_ACTION} bg-warning-fill text-on-warning enabled:hover:bg-warning-fill-hover`;
+    sendEl.title = "Stop generating (Esc)";
+    sendEl.disabled = false;
+    sendEl.replaceChildren(iconEl("stop", { size: 14 }));
+    return;
+  }
+  sendEl.className = `${COMPOSER_ACTION} ${
+    empty
+      ? "bg-surface-hover text-fg-subtle"
+      : "bg-accent-fill text-on-accent enabled:hover:bg-accent-fill-hover"
+  }`;
+  sendEl.title = empty ? "Type a message" : "Send (⏎)";
+  sendEl.disabled = empty;
+  sendEl.replaceChildren(iconEl("arrow-up", { size: 16 }));
 }
 
 composerEl.addEventListener("keydown", (e) => {
@@ -659,6 +770,11 @@ composerEl.addEventListener("keydown", (e) => {
     e.preventDefault();
     void send();
   }
+});
+
+composerEl.addEventListener("input", () => {
+  autoGrowComposer();
+  updateSendUi();
 });
 
 /** Stop generation (platform-wide: stops all in-progress generation, IIE4AD-365). */
@@ -767,10 +883,9 @@ sendEl.addEventListener("click", () => {
   else void send();
 });
 
-closeEl.addEventListener("click", () => void getCurrentWindow().hide());
-
 // ---- Startup ----
 
+autoGrowComposer();
 updateSendUi();
 void loadConversations();
 void loadHistory();

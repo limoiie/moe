@@ -835,6 +835,17 @@ fn toggle_side_chat(app: AppHandle) {
     toggle_side_view(&app);
 }
 
+/// Force AppKit to recompute this window's shadow (ADR-0016): the shadow is cached from the content
+/// alpha, and a key-status change can leave it stale — reading as a rectangular block around the
+/// rounded card until the next recompute. The Side View pings this on focus changes.
+#[tauri::command]
+fn refresh_shadow(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    refresh_window_shadow(&window);
+    #[cfg(not(target_os = "macos"))]
+    let _ = &window;
+}
+
 /// Stop in-progress generation (IIE4AD-365): called by the panel/side view on Esc; returns the number of generations aborted.
 #[tauri::command]
 fn stop_generation(state: State<'_, AppState>) -> usize {
@@ -1322,6 +1333,7 @@ fn main() {
             open_external,
             hide_panel,
             toggle_side_chat,
+            refresh_shadow,
             stop_generation,
             resolve_attachment,
             side_messages,
