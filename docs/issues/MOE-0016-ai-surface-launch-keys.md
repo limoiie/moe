@@ -62,7 +62,12 @@ either opens the blank Quick Ask page. `ai.new-chat` is removed.
 
 - 2026-10-09 (agent): filed from user feedback; verification, design and delivery in one pass.
   Delivered in the working tree (uncommitted; the user commits on main). GUI check pending.
-- 2026-10-09 (agent): committed in `631495b`; closed with this note. GUI check pending: double-tap
-  ⌘ — ⌘/ opens the blank Quick Ask page from any panel layer; ⌘⇧/ opens the side chat directly;
-  ⌘N on AI surfaces still opens the blank page; the Quick Ask root row shows the ⌘/ Kbd; "New Chat"
-  no longer appears as a command row.
+- 2026-10-09 (agent): committed in `631495b`; closed with this note. GUI check: double-tap ⌘ —
+  ⌘/ opens the blank Quick Ask page from any panel layer; ⌘⇧/ opens the side chat directly; ⌘N on AI
+  surfaces still opens the blank page; "New Chat" no longer appears as a command row.
+- 2026-10-09 (agent): the GUI check caught one defect: the Quick Ask root row rendered only "⌘" and
+  the Open Side Chat row "⌘⇧". The shared Kbd tokenizer (`ui/src/kbd.ts`) split display strings on
+  any "/" — it separates alternatives like "↓ / ⌃N" — so the new trailing key of "⌘/" / "⌘⇧/" was
+  filtered away. Fixed in `8b47a68`: both `kbdEl` and `kbdText` split on the documented " / "
+  separator, so a bare "/" tokenizes as a key of its own. `pnpm -C ui build` green; visual re-check
+  pending.
