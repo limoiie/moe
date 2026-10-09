@@ -1,11 +1,12 @@
 # M7w: the row's kind label reads as plain text, not a chip
 
 - **ID**: MOE-0015
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: 5fc168f
 
 User feedback: "currently, the type of each item is shown as chip at the right end of each item row.
 I want them to be shown as text directly."
@@ -31,3 +32,5 @@ I want them to be shown as text directly."
 - 2026-10-09 (agent): filed from user feedback.
 - 2026-10-09 (agent): delivered in the working tree (uncommitted; the user commits on main).
   `pnpm build` green. GUI check pending: double-tap ⌘ and read a root row's trailing end.
+- 2026-10-09 (agent): committed in `5fc168f`; closed with this note. GUI check pending: double-tap ⌘
+  — the root rows' trailing kind reads as plain text (no chip box); hover brightens it.
