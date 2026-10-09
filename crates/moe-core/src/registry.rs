@@ -1136,9 +1136,9 @@ mod tests {
     }
 
     /// Fake frecency with score + last_used (for suggestions tests).
-    struct RecentFrecency(std::collections::HashMap<String, (f64, u64)>);
+    struct ScoredFrecency(std::collections::HashMap<String, (f64, u64)>);
 
-    impl FrecencyLookup for RecentFrecency {
+    impl FrecencyLookup for ScoredFrecency {
         fn frecency(&self, command_id: &str) -> f64 {
             self.0
                 .get(command_id)
@@ -1151,8 +1151,8 @@ mod tests {
         }
     }
 
-    fn recent(pairs: &[(&str, f64, u64)]) -> RecentFrecency {
-        RecentFrecency(
+    fn scored(pairs: &[(&str, f64, u64)]) -> ScoredFrecency {
+        ScoredFrecency(
             pairs
                 .iter()
                 .map(|(id, score, used)| ((*id).to_string(), (*score, *used)))
@@ -1197,12 +1197,12 @@ mod tests {
     /// Suggestions (IIE4AD-395): empty query pins the frecency-ranked used commands on top; the
     /// rest group as usual without repeats.
     #[test]
-    fn empty_query_prepends_recent_suggestions() {
+    fn empty_query_prepends_frecency_suggestions() {
         // Toy has two commands; only toy.list has a use record
         let hits = registry().search(
             "",
             None,
-            &recent(&[("toy.list", 1.0, 100)]),
+            &scored(&[("toy.list", 1.0, 100)]),
             &Favorites::default(),
         );
         assert_eq!(
@@ -1235,7 +1235,7 @@ mod tests {
                 .search(
                     "toy",
                     None,
-                    &recent(&[("toy.list", 1.0, 100)]),
+                    &scored(&[("toy.list", 1.0, 100)]),
                     &Favorites::default()
                 )
                 .iter()
@@ -1266,7 +1266,7 @@ mod tests {
         let hits = r.search(
             "",
             None,
-            &RecentFrecency(used.into_iter().collect()),
+            &ScoredFrecency(used.into_iter().collect()),
             &Favorites::default(),
         );
         assert_eq!(hits[0].title, "Suggestions");
@@ -1297,9 +1297,9 @@ mod tests {
         for name in ["heavy", "light", "twin"] {
             r.register(Box::new(OneCommand(name)));
         }
-        // heavy: 1000 uses, last one older; light: 11 uses, last use newest; twin: same score as
-        // light but used earlier, so the tie-break puts light first.
-        let frecency = recent(&[
+        // heavy: a long steady usage history (score 1000), last use older; light: 11 uses, last use
+        // newest; twin: same score as light but used earlier, so the tie-break puts light first.
+        let frecency = scored(&[
             ("heavy.run", 1000.0, 50),
             ("light.run", 11.0, 100),
             ("twin.run", 11.0, 90),
@@ -1356,7 +1356,7 @@ mod tests {
         let mut favorites = Favorites::default();
         favorites.toggle("toy.hello");
         favorites.toggle("missing.command");
-        let hits = registry().search("", None, &recent(&[("toy.list", 1.0, 100)]), &favorites);
+        let hits = registry().search("", None, &scored(&[("toy.list", 1.0, 100)]), &favorites);
         assert_eq!(
             hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
             ["Favorites", "Suggestions"],
@@ -1376,7 +1376,7 @@ mod tests {
         let hits = registry().search(
             "",
             None,
-            &recent(&[("toy.list", 1.0, 100)]),
+            &scored(&[("toy.list", 1.0, 100)]),
             &Favorites::default(),
         );
         assert_eq!(hits[0].title, "Suggestions");
