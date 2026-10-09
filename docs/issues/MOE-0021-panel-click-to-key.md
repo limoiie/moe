@@ -1,11 +1,12 @@
 # M8c: the Side View keys itself on the first click
 
 - **ID**: MOE-0021
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: 1d0b245
 
 User feedback: "sometimes I clicked outside, a few seconds later, I clicked inside the window, but
 it is possible that the cursor is missing no matter how many times I clicked in the composer or
@@ -50,3 +51,4 @@ process, and a `static` guard keeps the install idempotent.
 
 - 2026-10-09 (agent): filed from user feedback; delivered in the working tree (uncommitted).
   Milestone prefix guessed as M8c — rename if the milestone series differs.
+- 2026-10-09 (agent): closed — the user confirmed the fix ("solved"); commit 1d0b245.
