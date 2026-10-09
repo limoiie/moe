@@ -1,12 +1,12 @@
 # M7r: the Thinking block adopts ChatGPT's language
 
 - **ID**: MOE-0011
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: e31a3f5
 
 User request: "optimize the ui&ux of these in-chat blocks, I prefer chat-gpt's style — please research
 their ui&ux design, and apply to ours."
@@ -62,3 +62,6 @@ default and **not** auto-expanded; inline expansion, no inner scroll.
 ## Comments
 
 - 2026-10-09 (agent): researched (docs/research/chatgpt-thinking-block.md) and implementing.
+- 2026-10-09 (agent): delivered in `e31a3f5`; `pnpm build` green. GUI check pending: a minimax-M3
+  transform should show the collapsed "Thinking" row shimmering, then "Thought for N seconds";
+  clicking expands the muted markdown inline; nothing auto-opens or snaps shut.
