@@ -1,11 +1,12 @@
 # M8b: the Side View's frost is a native, active-pinned material
 
 - **ID**: MOE-0020
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: a6c4198
 
 User feedback: "when the side-chat window losts focusing (I clicked outside the window), its bg
 will turns into transparent a few seconds later. is it by design or by mistakes?" — then, after
@@ -64,3 +65,5 @@ bring it back".
 
 - 2026-10-09 (agent): filed from user feedback; delivered in the working tree (uncommitted).
   Milestone prefix guessed as M8b — rename if the milestone series differs.
+- 2026-10-09 (agent): closed as part of the stack commit at the user's request ("solved");
+  commit a6c4198.
