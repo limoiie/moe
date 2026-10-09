@@ -35,7 +35,8 @@ name) · **extension name** · the command's declared shortcut as a Kbd (e.g. Op
 ("Command" / "AI Command"). On an empty query two pinned
 sections sit on top: **Favorites** (ADR-0029 — the
 commands you starred via the root actions card, in the order you added them) and then
-**Suggestions** (ADR-0023 — the most recently used commands, at most 5, most recent first);
+**Suggestions** (ADR-0023 amendment — the commands with the highest frecency: at most 5,
+frequency weighted by recency, not raw recency);
 nothing pinned is repeated in the sections below, and both are hidden while empty.
 **⌃X forgets the focused suggestion, ⌃⇧X clears all recent usage** (ADR-0025) — the commands
 themselves stay listed in their own sections.
@@ -217,7 +218,7 @@ Icon sources: `python3 crates/moe-app/icons/gen-app-icon.py` (app icon, then run
   inserts at the cursor via AX, falling back to "clipboard snapshot → synthesize ⌘V → restore"
   when denied (demo command `Echo: Shout`).
 - **Search**: nucleo fuzzy matching (exact prefix > match position) with frecency breaking ties;
-  the empty query lists everything by frecency with a recent-commands Suggestions section on top.
+  the empty query lists everything by frecency with a frecency-ranked Suggestions section on top.
 - **AI**: streaming chat against any OpenAI-compatible endpoint; conversations and messages live
   in local SQLite (`data_dir/moe/moe.db`, `ai` namespace); attachments (text inlined / images
   multimodal); Side View continuation uses the whole history as context; AI Commands transform

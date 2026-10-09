@@ -70,9 +70,16 @@ and never participate in keyboard navigation. A future source (e.g. file search)
 extension with a new section.
 _Avoid_: category
 
+**Frecency**:
+The platform-level usage weight behind Suggestions ordering and search tie-breaks: each use adds 1
+to an accumulated score that decays exponentially over time, so frequency and recency are one
+number and abandoned commands fade away (ADR-0023 amendment).
+_Avoid_: popularity, hit count
+
 **Suggestions**:
-The section on an empty input listing the most recently used commands (at most 5, most recent
-first, ADR-0023). Hidden when nothing has been used yet; typing switches back to normal matching
+The section on an empty input listing the commands with the highest frecency (at most 5, highest
+score first — frequency weighted by recency, not raw recency; ties by most recent use — ADR-0023
+amendment). Hidden when nothing has been used yet; typing switches back to normal matching
 (Raycast-style). ⌃X forgets one, ⌃⇧X clears all (ADR-0025).
 _Avoid_: recents, favorites (favorites are a separate, user-curated section — see Favorites)
 
