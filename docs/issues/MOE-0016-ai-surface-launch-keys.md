@@ -1,11 +1,12 @@
 # M7x: Quick Ask owns ⌘/; ⌘⇧/ opens the side chat directly; New Chat folds into Quick Ask
 
 - **ID**: MOE-0016
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: 631495b
 
 User feedback, three asks:
 
@@ -61,3 +62,7 @@ either opens the blank Quick Ask page. `ai.new-chat` is removed.
 
 - 2026-10-09 (agent): filed from user feedback; verification, design and delivery in one pass.
   Delivered in the working tree (uncommitted; the user commits on main). GUI check pending.
+- 2026-10-09 (agent): committed in `631495b`; closed with this note. GUI check pending: double-tap
+  ⌘ — ⌘/ opens the blank Quick Ask page from any panel layer; ⌘⇧/ opens the side chat directly;
+  ⌘N on AI surfaces still opens the blank page; the Quick Ask root row shows the ⌘/ Kbd; "New Chat"
+  no longer appears as a command row.
