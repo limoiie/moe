@@ -1,11 +1,12 @@
 # M8d: the Side View reveals its chrome on hover even when unfocused
 
 - **ID**: MOE-0022
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: de6ea50
 
 User feedback: "the three buttons and capsule shows up only if I clicked inner the window and hover
 the window. I want that even if I clicked outside the window, hover the window will show the three
@@ -58,3 +59,4 @@ wouldn't show the three buttons and capsule".
   variant) and did not fix the missing hover — WebKit delivers no pointer events to a non-key
   window's webview; the native tracking path followed. Delivered in the working tree (uncommitted).
   Milestone prefix guessed as M8d — rename if the milestone series differs.
+- 2026-10-09 (agent): closed — the user confirmed the fix in the GUI ("it works"); commit de6ea50.
