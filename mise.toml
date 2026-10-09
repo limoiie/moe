@@ -1,0 +1,17 @@
+# Repo toolchain pins. One-time setup: `mise install` (or `just setup`).
+# Commands live in the justfile: `just --list`.
+
+[settings]
+# Install explicitly; never fetch tools in the middle of a command or on cd.
+auto_install = false
+
+[tools]
+# Workspace uses edition 2024 (needs >= 1.85); matches the local stable toolchain.
+rust = "1.96"
+# Matches the node-version used by .github/workflows/ci.yml.
+node = "22"
+# Matches packageManager in ui/package.json. (`npm:` backend: aqua has no
+# macos asset mapping for pnpm releases.)
+"npm:pnpm" = "11.22.0"
+# `cargo tauri dev` / `cargo tauri build` (binary name is cargo-tauri).
+"cargo:tauri-cli" = "2"
