@@ -76,7 +76,7 @@ function reasoningParts(): {
   });
   summary.append(label, chevron);
   const body = document.createElement("div");
-  body.className = "moe-thinking-body md mt-1";
+  body.className = "moe-thinking-body md mt-1.5 pl-4 text-sm";
   details.append(summary, body);
   return { details, label, body };
 }

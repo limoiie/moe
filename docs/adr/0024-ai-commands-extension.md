@@ -79,7 +79,7 @@ tag-like token：`<` [`/`] 名字 [空白] `>`，名字为 ASCII 字母、不接
   思考到收尾帧；文案形状是已验证的 ChatGPT 形状（"Thought for 5 seconds"/"Thought for 1m 19s"）。
 - **默认折叠、不自动展开也不自动收起**：整行是点击目标；chevron 在行尾，展开时右→下旋转。结果卡
   每帧重建，因此跨帧保留用户的手动展开状态（rerun 时计时重新起算）。
-- **视觉**：无边框无底色，`text-xs` 弱化灰（hover 整行浅底）；内容按 Markdown 渲染（与 ChatGPT 的
-  摘要一致）；内联展开、无内部滚动。
+- **视觉**：无边框无底色；标签 `text-xs` 弱化灰（hover 整行浅底），内容与正文同号（`text-sm`）并
+  缩进一级（`pl-4`，MOE-0014）；内容按 Markdown 渲染（与 ChatGPT 的摘要一致）；内联展开、无内部滚动。
 - **无障碍**：保留原生 `<details>/<summary>`——调研笔记建议的 button + `aria-expanded` 本身是推断性
   建议，原生语义已覆盖同样的能力，不值得为此手写开关。
