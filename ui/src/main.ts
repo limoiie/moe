@@ -596,13 +596,26 @@ function paintDetail(
 ) {
   const nearBottom =
     detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
+  // The card re-renders per stream frame: carry the user's expand toggle and the thinking timer
+  // across the rebuild (MOE-0011; the row never auto-opens).
+  const reasoningWasOpen =
+    detailEl.querySelector<HTMLDetailsElement>("details.moe-thinking")?.open ?? false;
+  if (itemId !== detailItemId) detailThinkingStartedAt = null;
+  // A fresh run of the same item (a rerun) starts with a reasoning-less placeholder: re-arm the timer
+  if (pending && !reasoning?.trim()) detailThinkingStartedAt = null;
   const parts = ensureDetailParts();
   const body = parts.body;
   body.replaceChildren();
   if (headerItem) body.append(detailHeaderEl(headerItem));
-  // The model's thinking (reasoning blocks, MOE-0008) renders as its own collapsible block above the
-  // answer — open while streaming, folded once settled; the body only ever holds the answer text
-  if (reasoning?.trim()) body.append(reasoningEl(reasoning, pending));
+  // The model's thinking (reasoning blocks, MOE-0008) renders as the muted ChatGPT-style row above
+  // the answer; the body only ever holds the answer text
+  if (reasoning?.trim()) {
+    detailThinkingStartedAt ??= Date.now();
+    const seconds = pending ? 0 : Math.round((Date.now() - detailThinkingStartedAt) / 1000);
+    const block = reasoningEl(reasoning, pending, seconds);
+    block.open = reasoningWasOpen;
+    body.append(block);
+  }
   const prose = document.createElement("div");
   prose.className = "md";
   prose.innerHTML = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
@@ -620,6 +633,9 @@ interface DetailParts {
 }
 let detailParts: DetailParts | null = null;
 
+/** When the shown detail's reasoning first appeared (the "Thought for N seconds" timer, MOE-0011). */
+let detailThinkingStartedAt: number | null = null;
+
 /** Detail body container + fixed inline generating indicator (rebuilt after clearDetail). */
 function ensureDetailParts(): DetailParts {
   if (!detailParts || !detailEl.contains(detailParts.body)) {
@@ -634,6 +650,7 @@ function ensureDetailParts(): DetailParts {
 function clearDetail() {
   detailMode = "none";
   detailItemId = null;
+  detailThinkingStartedAt = null;
   detailParts = null;
   detailEl.className = "md hidden";
   detailEl.replaceChildren();

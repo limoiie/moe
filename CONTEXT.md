@@ -132,10 +132,10 @@ generation writes back nothing (ADR-0024 amendments).
 _Avoid_: quick ask (that is AI Chat), prompt
 
 **Thinking (reasoning block)**:
-The chain of thought some models stream inline (`…` / `<thinking>` blocks): never the answer — the
-platform strips it from the streamed, persisted, copied and written-back text, carries it in the item
-payload, and the UI folds it into a collapsible "Thinking" block above the answer (ADR-0024
-amendment).
+The chain of thought some models stream inline (`…` / `<thinking>`-style wrappers): never the answer —
+the platform strips it from the streamed, persisted, copied and written-back text, carries it in the
+item payload, and the UI folds it into a ChatGPT-style row above the answer (`Thinking` while it
+streams, `Thought for N seconds` once settled; collapsed by default — ADR-0024 amendments).
 _Avoid_: reasoning text, chain of thought as content
 
 **Detail Full**:

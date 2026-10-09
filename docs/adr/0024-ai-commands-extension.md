@@ -51,8 +51,9 @@ Raycast Pro 的 AI Commands（Improve Writing / Make Shorter / Translate…）�
 有些模型（如 minimax-M3）把思维链直接流进正文（`…`…`…` 或 `…`…`…`，有的服务端还会把开标签
 吞掉只留闭标签），旧实现把它当成结果：卡片正文、复制、回写里全是思考。现在 `ai::run_stream` 把
 每一帧拆成 (reasoning, answer)：**回答才是正文**——流式、落库、复制、回写都只用它；**思考只进条目的
-payload**（`reasoning` 字段），UI 在答案上方渲染成可折叠的「Thinking」块（生成中展开、可实时看；
-结束后自动折叠，可手动展开）。拆分规则：同分隔符样式（`…`/`…`）只在文本**最开头**生效（正文里的
+payload**（`reasoning` 字段），UI 在答案上方渲染成 ChatGPT 式的折叠行（生成中标签为带微光动画的
+「Thinking」，完成后换成「Thought for N seconds」；默认折叠、不自动展开）。拆分规则：同分隔符样式
+（`…`/`…`）只在文本**最开头**生效（正文里的
 省略号是普通文字）；开标签缺失时，闭标签之前都算思考；未闭合的块视为「还在思考」（此期间回答为空，
 指示器继续跑）；被停止时思考保留，正文是 "(generation stopped)"。聊天历史只存回答——思考是实时观感，
 不是会话内容。
@@ -67,3 +68,18 @@ tag-like token：`<` [`/`] 名字 [空白] `>`，名字为 ASCII 字母、不接
 「开标签丢失」——正文里的 `<response>…</response>` 之类 XML 内容不受影响。另加一条 stderr 诊断：
 完成后若 reasoning/answer 里仍残留 tag-like token，就以 `{:?}`（转义字节）打印一次——下次遇到新包装，
 日志一行就能定位，不再靠截图猜测。
+
+## 增补：Thinking 行采用 ChatGPT 的视觉语言（MOE-0011）
+
+调研见 `docs/research/chatgpt-thinking-block.md`（一手来源：OpenAI o1/o3/GPT-5 公告原文里展示的
+演示文本，以及平台「Reasoning models」文档；纯视觉细节在笔记中标为观察/推断）。落到实现：
+
+- **标签**：生成中「Thinking」（灰度渐变微光；`prefers-reduced-motion` 下不出现动画）；结束后
+  「Thought for N seconds」（不足一秒为 "a few seconds"，超过一分钟缩写为 `1m 19s`）。计时从首帧
+  思考到收尾帧；文案形状是已验证的 ChatGPT 形状（"Thought for 5 seconds"/"Thought for 1m 19s"）。
+- **默认折叠、不自动展开也不自动收起**：整行是点击目标；chevron 在行尾，展开时右→下旋转。结果卡
+  每帧重建，因此跨帧保留用户的手动展开状态（rerun 时计时重新起算）。
+- **视觉**：无边框无底色，`text-xs` 弱化灰（hover 整行浅底）；内容按 Markdown 渲染（与 ChatGPT 的
+  摘要一致）；内联展开、无内部滚动。
+- **无障碍**：保留原生 `<details>/<summary>`——调研笔记建议的 button + `aria-expanded` 本身是推断性
+  建议，原生语义已覆盖同样的能力，不值得为此手写开关。

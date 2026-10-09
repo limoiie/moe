@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Briefcase,
   Check,
+  ChevronRight,
   Circle,
   Command,
   Copy,
@@ -84,6 +85,7 @@ const ICONS: Record<string, IconNode> = {
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
   "arrow-left": ArrowLeft,
+  "chevron-right": ChevronRight,
   "trash-2": Trash2,
   command: Command,
   copy: Copy,

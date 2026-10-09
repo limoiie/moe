@@ -714,3 +714,48 @@ body {
   padding: 0.2em 0.5em;
   border: 1px solid var(--moe-line);
 }
+
+/* ---- The Thinking row (MOE-0011): the ChatGPT-style reasoning block above an answer ----
+   Borderless and muted; the label shimmers while the model reasons, then reports the duration
+   ("Thought for N seconds"); the chevron turns when the row is open. See
+   docs/research/chatgpt-thinking-block.md. */
+.moe-thinking > summary {
+  list-style: none;
+}
+.moe-thinking > summary::-webkit-details-marker {
+  display: none;
+}
+.moe-thinking-chevron {
+  transition: transform 150ms ease;
+}
+.moe-thinking[open] .moe-thinking-chevron {
+  transform: rotate(90deg);
+}
+/* The reasoning renders as muted markdown; the .md rules brighten headings to the full fg color,
+   which would out-shout the row's own muted tone. */
+.moe-thinking-body :is(h1, h2, h3) {
+  color: inherit;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .moe-thinking-live {
+    background: linear-gradient(
+      90deg,
+      var(--moe-fg-faint) 20%,
+      var(--moe-fg) 50%,
+      var(--moe-fg-faint) 80%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: moe-thinking-sweep 1.8s linear infinite;
+  }
+  @keyframes moe-thinking-sweep {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -100% 0;
+    }
+  }
+}
