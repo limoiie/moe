@@ -56,3 +56,14 @@ payload**（`reasoning` 字段），UI 在答案上方渲染成可折叠的「Th
 省略号是普通文字）；开标签缺失时，闭标签之前都算思考；未闭合的块视为「还在思考」（此期间回答为空，
 指示器继续跑）；被停止时思考保留，正文是 "(generation stopped)"。聊天历史只存回答——思考是实时观感，
 不是会话内容。
+
+## 增补：包装标签按形状匹配，不按字面（MOE-0010）
+
+精确字符串匹配（`<thinking>`/`</thinking>`）对 provider/模板细节太脆弱：MiniMax 一脉的包装会带
+内部空格、大小写不同，或**开闭名字不同**（如 `<thinking>` 配 `</response>`）。改为按形状扫描
+tag-like token：`<` [`/`] 名字 [空白] `>`，名字为 ASCII 字母、不接受属性；开标签名字
+{thinking, think, reasoning} 在任意位置有效，{response} 只在消息最开头有效；闭标签名字上述四者皆可，
+任意开标签可被任意闭标签收尾；落单的闭标签只在非歧义名字（thinking/think/reasoning）时视为
+「开标签丢失」——正文里的 `<response>…</response>` 之类 XML 内容不受影响。另加一条 stderr 诊断：
+完成后若 reasoning/answer 里仍残留 tag-like token，就以 `{:?}`（转义字节）打印一次——下次遇到新包装，
+日志一行就能定位，不再靠截图猜测。

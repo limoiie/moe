@@ -246,18 +246,75 @@ pub(crate) struct StreamRequest {
 /// No-op finish hook (streams with no persistence and no completion callback).
 pub(crate) fn noop_sink(_text: &str) {}
 
-/// The canonical reasoning pair (MiniMax/DeepSeek): the model wraps its chain of thought in
-/// `…`…`…`; unambiguous, so recognised anywhere (interleaved blocks included).
-const THINK_OPEN: &str = "<thinking>";
-const THINK_CLOSE: &str = "</thinking>";
+/// Reasoning wrapper names (case-insensitive): a thinking-flavoured tag opens a block anywhere; a
+/// `response` tag only opens one at the very start of the message (elsewhere it is content).
+const OPEN_NAMES: [&str; 3] = ["thinking", "think", "reasoning"];
+const CLOSE_NAMES: [&str; 4] = ["thinking", "think", "reasoning", "response"];
+const START_OPEN_NAMES: [&str; 1] = ["response"];
+/// A lone closing token (dropped opener) is only trusted for the unambiguous names: a stray
+/// `</response>` is ordinary XML-ish content, not a wrapper.
+const LONE_CLOSE_NAMES: [&str; 3] = ["thinking", "think", "reasoning"];
 /// Older MiniMax/DeepSeek style: the **same** delimiter (an ordinary ellipsis too) on both ends.
 const SAME_DELIM: &str = "…";
 
-/// The earliest tag from `tags` in `text`: (byte index, tag length).
-fn first_tag(tags: &[&str], text: &str) -> Option<(usize, usize)> {
-    tags.iter()
-        .filter_map(|tag| text.find(tag).map(|at| (at, tag.len())))
-        .min_by_key(|(at, _)| *at)
+/// Case-insensitive name check against a name set.
+fn is_named(names: &[&str], name: &str) -> bool {
+    names
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+/// One tag-like token at or after `from`: `<` [`/`] name [whitespace] `>`, names ASCII letters and no
+/// attributes — wrappers are static template strings, and prose containing `<word ...>` must not
+/// match. Returns (start, end, is_closing, name).
+fn tag_token(text: &str, from: usize) -> Option<(usize, usize, bool, &str)> {
+    let bytes = text.as_bytes();
+    let mut at = from;
+    while let Some(rel) = text[at..].find('<') {
+        let start = at + rel;
+        let mut cursor = start + 1;
+        let closing = bytes.get(cursor) == Some(&b'/');
+        if closing {
+            cursor += 1;
+        }
+        let name_start = cursor;
+        while bytes
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_alphabetic())
+        {
+            cursor += 1;
+        }
+        if cursor == name_start {
+            at = start + 1;
+            continue;
+        }
+        let name = &text[name_start..cursor];
+        let mut end = cursor;
+        while bytes
+            .get(end)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            end += 1;
+        }
+        if bytes.get(end) != Some(&b'>') {
+            at = start + 1;
+            continue;
+        }
+        return Some((start, end + 1, closing, name));
+    }
+    None
+}
+
+/// The next reasoning closing token at or after the start of `text`: (start, end).
+fn next_closing_tag(text: &str) -> Option<(usize, usize)> {
+    let mut from = 0;
+    while let Some((start, end, closing, name)) = tag_token(text, from) {
+        if closing && is_named(&CLOSE_NAMES, name) {
+            return Some((start, end));
+        }
+        from = end;
+    }
+    None
 }
 
 /// Append one reasoning piece; blocks are separated by a blank line, each trimmed.
@@ -272,10 +329,66 @@ fn push_reasoning(reasoning: &mut String, piece: &str) {
     reasoning.push_str(piece);
 }
 
+/// Split on tag-like wrappers: the first thinking-flavoured token opens a block, the next closing
+/// token ends it (any opener pairs with any closer — templates mix `<thinking>` and `</response>`);
+/// a closing token without an opener means the opening tag was dropped. Unknown tokens stay answer
+/// text, so ordinary `<word>` content is untouched. Works on partial text: an unterminated block
+/// means "still thinking" (the answer stays empty).
+fn split_tagged(text: &str) -> (String, String) {
+    let mut reasoning = String::new();
+    let mut answer = String::new();
+    let mut rest = text;
+    loop {
+        let Some((start, end, closing, name)) = tag_token(rest, 0) else {
+            answer.push_str(rest);
+            break;
+        };
+        let opens = !closing
+            && (is_named(&OPEN_NAMES, name) || (start == 0 && is_named(&START_OPEN_NAMES, name)));
+        if opens {
+            let after = &rest[end..];
+            match next_closing_tag(after) {
+                // Unterminated block: still thinking (the answer must stay empty)
+                None => {
+                    answer.push_str(&rest[..start]);
+                    push_reasoning(&mut reasoning, after);
+                    break;
+                }
+                Some((close, close_end)) => {
+                    answer.push_str(&rest[..start]);
+                    push_reasoning(&mut reasoning, &after[..close]);
+                    rest = &after[close_end..];
+                }
+            }
+        } else if closing && is_named(&LONE_CLOSE_NAMES, name) {
+            // A lone closing tag: the opening tag was dropped — everything before it was reasoning
+            push_reasoning(&mut reasoning, &rest[..start]);
+            rest = &rest[end..];
+        } else {
+            // Not a reasoning wrapper: keep the token as answer text and keep scanning
+            answer.push_str(&rest[..end]);
+            rest = &rest[end..];
+        }
+    }
+    (reasoning, answer)
+}
+
+/// Diagnostic (stderr): a tag-like token left in the result names a wrapper spelling the matcher
+/// does not know yet — log it escaped (the exact bytes) once per completion.
+fn log_unconsumed_tag(reasoning: &str, answer: &str) {
+    for part in [answer, reasoning] {
+        if let Some((start, end, _, name)) = tag_token(part, 0) {
+            let token = &part[start..end];
+            eprintln!(
+                "moe: unrecognized tag-like token in the streamed result: {token:?} (name {name:?}) — extend OPEN_NAMES/CLOSE_NAMES if this wraps reasoning"
+            );
+            return;
+        }
+    }
+}
+
 /// Split an accumulated completion into (reasoning, answer): the answer is what streams, persists, is
 /// copied and written back; the reasoning only rides the frame payload to the UI's Thinking block.
-/// Works on partial text: an unterminated block means "still thinking" (the answer stays empty), and
-/// a closing tag without an opener (servers that drop it) makes everything before it reasoning.
 pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
     let trimmed = raw.trim_start();
 
@@ -300,40 +413,7 @@ pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
         return (reasoning, answer.trim().to_string());
     }
 
-    // Canonical tags, recognised anywhere; a lone closer means the opening tag was dropped.
-    let mut reasoning = String::new();
-    let mut answer = String::new();
-    let mut rest = raw;
-    loop {
-        let Some((open, open_len)) = first_tag(&[THINK_OPEN], rest) else {
-            match first_tag(&[THINK_CLOSE], rest) {
-                Some((close, close_len)) => {
-                    push_reasoning(&mut reasoning, &rest[..close]);
-                    rest = &rest[close + close_len..];
-                }
-                None => {
-                    answer.push_str(rest);
-                    break;
-                }
-            }
-            continue;
-        };
-        let after = &rest[open + open_len..];
-        match first_tag(&[THINK_CLOSE], after) {
-            // Unterminated block: still thinking (the answer must stay empty)
-            None => {
-                answer.push_str(&rest[..open]);
-                push_reasoning(&mut reasoning, after);
-                break;
-            }
-            Some((close_rel, close_len)) => {
-                let close = open + open_len + close_rel;
-                answer.push_str(&rest[..open]);
-                push_reasoning(&mut reasoning, &rest[open + open_len..close]);
-                rest = &rest[close + close_len..];
-            }
-        }
-    }
+    let (reasoning, answer) = split_tagged(trimmed);
     (reasoning.trim().to_string(), answer.trim().to_string())
 }
 
@@ -426,6 +506,7 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     }
     end_stream(&stream_key);
     let (reasoning, answer) = split_reasoning(&raw);
+    log_unconsumed_tag(&reasoning, &answer);
 
     if stopped {
         let text = if answer.trim().is_empty() {
@@ -1082,6 +1163,45 @@ This is a test case, do you know?"#;
         assert!(reasoning.contains("Fixed: \"This is a test case, do you know?\""));
         assert_eq!(answer, "This is a test case, do you know?");
         assert!(!reasoning.contains('<') && !answer.contains('<'));
+    }
+
+    /// Wrapper spellings the exact matcher missed (MOE-0010): internal whitespace, different case, a
+    /// differently named closer, and a `response`-opened block — while XML-ish content stays content.
+    #[test]
+    fn split_reasoning_matches_tolerant_tag_spellings() {
+        // Whitespace before the closing bracket
+        assert_eq!(
+            split_reasoning("<thinking >hmm</thinking >done"),
+            ("hmm".into(), "done".into())
+        );
+        // Case-insensitive names
+        assert_eq!(
+            split_reasoning("<Thinking>hmm</Thinking>done"),
+            ("hmm".into(), "done".into())
+        );
+        // Templates may open with `<thinking>` and close with `</response>`
+        assert_eq!(
+            split_reasoning("<thinking>hmm</response>done"),
+            ("hmm".into(), "done".into())
+        );
+        // …or open with `<response>` (trusted at the very start only)
+        assert_eq!(
+            split_reasoning("<response>hmm</response>done"),
+            ("hmm".into(), "done".into())
+        );
+        // Mid-answer `<response>` pairs are ordinary XML-ish content
+        assert_eq!(
+            split_reasoning("the api returns <response>ok</response> in json"),
+            (
+                String::new(),
+                "the api returns <response>ok</response> in json".into()
+            )
+        );
+        // Unknown tags stay answer text
+        assert_eq!(
+            split_reasoning("bold <b>text</b> here"),
+            (String::new(), "bold <b>text</b> here".into())
+        );
     }
 
     /// Same guard: the id synthesized by fallback must be routable; the title strips attachment mentions (IIE4AD-358).
