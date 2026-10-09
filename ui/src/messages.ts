@@ -54,7 +54,7 @@ interface StreamingBubble {
 }
 
 /**
- * The Thinking row (MOE-0011): ChatGPT's language — borderless, muted, collapsed by default; the
+ * The Thinking row (MOE-0012): ChatGPT's language — borderless, muted, collapsed by default; the
  * label shimmers while the model reasons and swaps to "Thought for N seconds" once it settles; the
  * trailing chevron turns on expand. One shared builder for the chat bubbles here and the panel's
  * result cards (`reasoningEl`). See docs/research/chatgpt-thinking-block.md.

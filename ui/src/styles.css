@@ -715,7 +715,7 @@ body {
   border: 1px solid var(--moe-line);
 }
 
-/* ---- The Thinking row (MOE-0011): the ChatGPT-style reasoning block above an answer ----
+/* ---- The Thinking row (MOE-0012): the ChatGPT-style reasoning block above an answer ----
    Borderless and muted; the label shimmers while the model reasons, then reports the duration
    ("Thought for N seconds"); the chevron turns when the row is open. See
    docs/research/chatgpt-thinking-block.md. */

@@ -69,7 +69,7 @@ tag-like token：`<` [`/`] 名字 [空白] `>`，名字为 ASCII 字母、不接
 完成后若 reasoning/answer 里仍残留 tag-like token，就以 `{:?}`（转义字节）打印一次——下次遇到新包装，
 日志一行就能定位，不再靠截图猜测。
 
-## 增补：Thinking 行采用 ChatGPT 的视觉语言（MOE-0011）
+## 增补：Thinking 行采用 ChatGPT 的视觉语言（MOE-0012）
 
 调研见 `docs/research/chatgpt-thinking-block.md`（一手来源：OpenAI o1/o3/GPT-5 公告原文里展示的
 演示文本，以及平台「Reasoning models」文档；纯视觉细节在笔记中标为观察/推断）。落到实现：

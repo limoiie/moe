@@ -1,12 +1,12 @@
-# M7r: the Thinking block adopts ChatGPT's language
+# M7t: the Thinking block adopts ChatGPT's language
 
-- **ID**: MOE-0011
+- **ID**: MOE-0012
 - **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: e31a3f5
+- **Commit**: e31a3f5 (pre-registration; see the renumber note below)
 
 User request: "optimize the ui&ux of these in-chat blocks, I prefer chat-gpt's style — please research
 their ui&ux design, and apply to ours."
@@ -65,3 +65,7 @@ default and **not** auto-expanded; inline expansion, no inner scroll.
 - 2026-10-09 (agent): delivered in `e31a3f5`; `pnpm build` green. GUI check pending: a minimax-M3
   transform should show the collapsed "Thinking" row shimmering, then "Thought for N seconds";
   clicking expands the muted markdown inline; nothing auto-opens or snaps shut.
+- 2026-10-09 (agent): renumbered MOE-0011 → MOE-0012 — the `MOE-0011` slot is held by
+  reasoning-tag tolerance (reconciled onto origin/main first, together with the rebase of
+  this worktree); this issue was allocated concurrently from the pre-reconcile numbering.
+  The commit subject above still cites MOE-0011.

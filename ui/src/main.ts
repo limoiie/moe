@@ -597,7 +597,7 @@ function paintDetail(
   const nearBottom =
     detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
   // The card re-renders per stream frame: carry the user's expand toggle and the thinking timer
-  // across the rebuild (MOE-0011; the row never auto-opens).
+  // across the rebuild (MOE-0012; the row never auto-opens).
   const reasoningWasOpen =
     detailEl.querySelector<HTMLDetailsElement>("details.moe-thinking")?.open ?? false;
   if (itemId !== detailItemId) detailThinkingStartedAt = null;
@@ -633,7 +633,7 @@ interface DetailParts {
 }
 let detailParts: DetailParts | null = null;
 
-/** When the shown detail's reasoning first appeared (the "Thought for N seconds" timer, MOE-0011). */
+/** When the shown detail's reasoning first appeared (the "Thought for N seconds" timer, MOE-0012). */
 let detailThinkingStartedAt: number | null = null;
 
 /** Detail body container + fixed inline generating indicator (rebuilt after clearDetail). */
