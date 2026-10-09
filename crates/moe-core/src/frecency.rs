@@ -26,7 +26,7 @@ pub struct Frecency {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Entry {
-    /// Decayed frecency as of `last_used_unix`; `count` is the pre-MOE-0008 field name, kept as a
+    /// Decayed frecency as of `last_used_unix`; `count` is the pre-MOE-0009 field name, kept as a
     /// deserialization alias so existing files seed their score with the old lifetime count.
     #[serde(alias = "count")]
     score: f64,
@@ -184,7 +184,7 @@ mod tests {
         );
     }
 
-    /// The MOE-0008 acceptance case: a command used regularly (≈1/day) stays clearly ahead of a
+    /// The MOE-0009 acceptance case: a command used regularly (≈1/day) stays clearly ahead of a
     /// lightly used command whose latest use is more recent — frequency dominates raw recency.
     #[test]
     fn heavy_recent_use_beats_a_fresh_but_light_command() {
@@ -208,7 +208,7 @@ mod tests {
         );
     }
 
-    /// MOE-0008: abandoned commands fade — below `MIN_SCORE` they read as forgotten, and the next
+    /// MOE-0009: abandoned commands fade — below `MIN_SCORE` they read as forgotten, and the next
     /// record prunes them, so a stale fossil cannot pin a Suggestions slot.
     #[test]
     fn faded_entries_read_as_gone_and_are_pruned_on_record() {
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(f.score("other", at(110 * DAY)), 1.0);
     }
 
-    /// Pre-MOE-0008 files stored a lifetime `count`; the serde alias loads it as the initial
+    /// Pre-MOE-0009 files stored a lifetime `count`; the serde alias loads it as the initial
     /// decayed score, so existing usage keeps its standing (and then ages normally).
     #[test]
     fn legacy_count_field_loads_as_the_initial_score() {

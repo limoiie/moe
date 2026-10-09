@@ -8,7 +8,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::sync::Arc;
 
-/// "Suggestions" section (IIE4AD-395, MOE-0008): on an empty query, lists the most frecency-worthy
+/// "Suggestions" section (IIE4AD-395, MOE-0009): on an empty query, lists the most frecency-worthy
 /// commands — up to 5, highest score first (frequency weighted by recency, not raw recency).
 const SUGGESTION_LIMIT: usize = 5;
 /// Suggestions section header (Raycast-style semantics; other section headers are extension names).
@@ -108,7 +108,7 @@ impl Registry {
 
     /// Command palette search: nucleo fuzzy matching scores, frecency breaks ties.
     /// Empty query: a "Favorites" section is pinned on top (user-curated, ADR-0027), then a "Suggestions"
-    /// section (frecency-ranked usage, IIE4AD-395 / MOE-0008), then grouped by source; a non-empty query is ONE
+    /// section (frecency-ranked usage, IIE4AD-395 / MOE-0009), then grouped by source; a non-empty query is ONE
     /// "Results" section in score order (ADR-0033 — supersedes ADR-0020's per-source grouping while
     /// searching; each row still labels its owner, ADR-0030); `selection` matters only in the
     /// "no match → fallback" step.
@@ -144,7 +144,7 @@ impl Registry {
                     items: favorite_items,
                 });
             }
-            // Suggestions (IIE4AD-395, MOE-0008): ranked by frecency — frequency with exponential
+            // Suggestions (IIE4AD-395, MOE-0009): ranked by frecency — frequency with exponential
             // recency decay — NOT by raw last use: a single fresh use must not displace a heavily
             // used command. Ties fall back to most recent use, then id (stable order).
             let mut used: Vec<(f64, u64, CommandMeta)> = commands
@@ -1243,7 +1243,7 @@ mod tests {
         );
     }
 
-    /// Suggestions capped at 5, ordered by frecency — never by raw recency (IIE4AD-395, MOE-0008).
+    /// Suggestions capped at 5, ordered by frecency — never by raw recency (IIE4AD-395, MOE-0009).
     #[test]
     fn suggestions_are_capped_at_five_and_rank_by_frecency() {
         let mut r = Registry::new();
@@ -1289,7 +1289,7 @@ mod tests {
         );
     }
 
-    /// MOE-0008 (user report): a heavily used command outranks a lightly used one whose latest use
+    /// MOE-0009 (user report): a heavily used command outranks a lightly used one whose latest use
     /// is newer — frequency with recency decay, not raw recency; equal scores break by last use.
     #[test]
     fn suggestions_rank_by_frecency_not_recency() {
