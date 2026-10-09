@@ -45,8 +45,9 @@ decay lets abandoned commands fade out of the list.
   id. The 5-row cap, the hidden-when-empty behavior, and the ⌃X / ⌃⇧X forget slots (ADR-0025) are
   unchanged. Search keeps breaking ties with the same score (ADR-0020 amendment) — one number,
   one meaning everywhere.
-- Legacy files' lifetime `count` loads through a serde alias as the initial score; it decays away
-  over ~10 half-lives. No migration step.
+- Legacy files' lifetime `count` loads through a serde alias as the initial score; it ages like
+  any other (a four-digit count leaves Suggestions after ~13 half-lives ≈ 400 days). No migration
+  step.
 - Cost: a heavy command abandoned for months still ranks for a while (≈ 68 days to fall below the
   best case for a fresh 10-use command, ≈ 163 days below 1) — that fade is intended, and
   `HALF_LIFE_SECS` is the tuning knob if the palette should forget faster.

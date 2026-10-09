@@ -25,10 +25,10 @@ recents). This ADR wires the existing delete slots (⌃X / ⌃⇧X, ADR-0022) on
 
 ## Cost
 
-- Clearing suggestions also resets the frecency **ordering weights** (score = count × freshness
-  decay) — the section and the tie-breaking share one data structure, so "forget all" means
-  search ordering falls back to plain matching order until usage accumulates again. This is
-  consistent, not a bug.
+- Clearing suggestions also resets the frecency **ordering weights** (score = the exponentially
+  decayed use counter, ADR-0023 amendment) — the section and the tie-breaking share one data
+  structure, so "forget all" means search ordering falls back to plain matching order until usage
+  accumulates again. This is consistent, not a bug.
 - UI relies on the first section being titled "Suggestions" to count its rows
   (`ui/src/main.ts` `suggestionsCount`); if ADR-0023's section ordering ever changes, that
   detection must follow.
