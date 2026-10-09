@@ -4,18 +4,17 @@
 //!
 //! Input = the text selected before opening the palette (the panel never treats the search text as
 //! content, ADR-0036); when there is no selection, a guidance card is shown.
-//! Streaming output goes to a result card in the panel; **on natural completion the result is
-//! automatically written back to the selection and the panel closes** (`CommandEvent::WriteBack`,
-//! intercepted and executed by the platform layer). When stopped with Esc, only the generated
-//! part is kept and nothing is written back automatically.
+//! Streaming output goes to a result card in the panel that **stays for review**: nothing is written
+//! back automatically (ADR-0024 amendment) — Apply (⏎) writes back, ⌥⏎ copies, "{Command} Again"
+//! re-runs the transform on the result, Esc discards. When stopped, only the generated part is kept.
 //! A single transform is never persisted and never creates a conversation (no history semantics).
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
-    Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, Extension, InputKind,
-    Item, MoeError, Selection,
+    Action, ActionKind, ActionResult, CommandMeta, Emitter, Extension, InputKind, Item, MoeError,
+    Selection,
 };
 use moe_platform::config::MoeConfig;
 use moe_platform::keychain;
@@ -128,8 +127,10 @@ fn spec_of(command_id: &str) -> Option<&'static Spec> {
     SPECS.iter().find(|spec| spec.id == command_id)
 }
 
-/// Result card (streaming placeholder / final text): Apply = write back, ⌥⏎ = copy.
-fn transform_item(text: &str, pending: bool) -> Item {
+/// Result card (streaming placeholder / final text): Apply = write back, ⌥⏎ = copy, and the refine
+/// loop — "{title} Again" re-runs the same transform on this result (`ActionResult::Rerun`, ADR-0024
+/// amendment). The card is the decision point: nothing touches the host app until the user applies.
+fn transform_item(title: &str, text: &str, pending: bool) -> Item {
     Item {
         id: "aicmd.result".into(),
         title: "AI Command Result".into(),
@@ -147,6 +148,12 @@ fn transform_item(text: &str, pending: bool) -> Item {
                 title: "Copy".into(),
                 kind: ActionKind::Secondary,
                 keybinding: Some("⌥⏎".into()),
+            },
+            Action {
+                id: "rerun".into(),
+                title: format!("{title} Again"),
+                kind: ActionKind::Secondary,
+                keybinding: None,
             },
         ],
         payload: serde_json::Value::Null,
@@ -296,7 +303,11 @@ impl Extension for AiCommands {
         let model = config.ai.model_or_default().to_string();
         let body = prompt_body(&model, spec.instruction, &text, false);
         match completion_blocking(&base_url, &key, body) {
-            Ok(out) => Ok(ActionResult::WriteBack { text: out }),
+            // The blocking path returns the same review card as the streaming path — never an
+            // automatic write-back (ADR-0024 amendment; the panel itself always streams).
+            Ok(out) => Ok(ActionResult::detail(vec![transform_item(
+                spec.title, &out, false,
+            )])),
             Err(err) => Ok(ActionResult::detail(vec![notice_item(&format!(
                 "## Request failed\n\n```\n{err}\n```"
             ))])),
@@ -328,15 +339,9 @@ impl Extension for AiCommands {
         let body = prompt_body(&model, spec.instruction, &text, true);
 
         let stream_key = run_key();
-        let item_of: ai::FrameBuilder = Arc::new(transform_item);
-        let on_done: ai::StreamFinish = {
-            let emitter = emitter.clone();
-            Arc::new(move |text| {
-                // Natural completion: ask the platform to write back to the selection and close the panel (run_stream does not call back when stopped with Esc).
-                emitter.emit(CommandEvent::WriteBack {
-                    text: text.to_string(),
-                });
-            })
+        let item_of: ai::FrameBuilder = {
+            let title = spec.title.to_string();
+            Arc::new(move |text, pending| transform_item(&title, text, pending))
         };
         let command_id = command_id.to_string();
         let emitter = emitter.clone();
@@ -350,13 +355,17 @@ impl Extension for AiCommands {
                     stream_key,
                     item_of,
                     persist: Arc::new(ai::noop_sink),
-                    on_done,
+                    // Deliberately a no-op: the finished card stays on screen and the user decides
+                    // (ADR-0024 amendment) — Enter is the explicit write-back.
+                    on_done: Arc::new(ai::noop_sink),
                 },
                 emitter,
             );
         });
         // Placeholder frame: body left empty — the "generating" inline indicator is already the only status feedback
-        Ok(ActionResult::detail(vec![transform_item("", true)]))
+        Ok(ActionResult::detail(vec![transform_item(
+            spec.title, "", true,
+        )]))
     }
 
     fn run_item_action(
@@ -366,6 +375,7 @@ impl Extension for AiCommands {
         action: &Action,
     ) -> Result<ActionResult, MoeError> {
         match action.id.as_str() {
+            // Apply: the explicit write-back of the reviewed result into the host app (ADR-0024 amendment)
             "write-back" => Ok(ActionResult::WriteBack {
                 text: item.detail.clone().unwrap_or_else(|| item.title.clone()),
             }),
@@ -374,6 +384,16 @@ impl Extension for AiCommands {
                 moe_platform::clipboard::copy(&text)
                     .map_err(|err| MoeError::Internal(err.to_string()))?;
                 Ok(ActionResult::Silent)
+            }
+            // The refine loop (ADR-0024 amendment): the platform re-invokes this command with the
+            // result as its input. A click while the card is mid-stream is a no-op (one stream per card).
+            "rerun" => {
+                if item.pending {
+                    return Ok(ActionResult::Silent);
+                }
+                Ok(ActionResult::Rerun {
+                    text: item.detail.clone().unwrap_or_else(|| item.title.clone()),
+                })
             }
             _ => Err(MoeError::NotFound),
         }
@@ -388,7 +408,7 @@ impl Extension for AiCommands {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moe_core::contract::Extension;
+    use moe_core::contract::{CommandEvent, Extension};
 
     fn selection(text: &str) -> Selection {
         Selection {
@@ -471,10 +491,11 @@ mod tests {
         );
     }
 
-    /// Result card actions: Apply writes back, ⌥⏎ copies (the run_item_action landing spots).
+    /// Result card actions: Apply writes back, ⌥⏎ copies, "{Command} Again" asks for the refine
+    /// loop (ADR-0024 amendment — the platform turns `Rerun` into a re-invocation).
     #[test]
-    fn transform_item_actions_write_back_and_copy() {
-        let item = transform_item("result", false);
+    fn transform_item_actions_write_back_copy_and_rerun() {
+        let item = transform_item("Improve Writing", "result", false);
         let write = &item.actions[0];
         assert_eq!(write.kind, ActionKind::Primary);
         assert_eq!(
@@ -485,13 +506,35 @@ mod tests {
                 text: "result".into()
             }
         );
+        let rerun = item
+            .actions
+            .iter()
+            .find(|a| a.id == "rerun")
+            .expect("rerun action");
+        assert_eq!(rerun.title, "Improve Writing Again");
+        assert_eq!(
+            AiCommands
+                .run_item_action("aicmd.improve", &item, rerun)
+                .unwrap(),
+            ActionResult::Rerun {
+                text: "result".into()
+            }
+        );
+        // Mid-stream the card owns its one stream: a rerun click is a no-op.
+        let pending = transform_item("Improve Writing", "part", true);
+        assert_eq!(
+            AiCommands
+                .run_item_action("aicmd.improve", &pending, rerun)
+                .unwrap(),
+            ActionResult::Silent
+        );
     }
 
-    /// End to end: the stream finishes naturally → the last frame has pending=false, and on_done
-    /// receives the final full text (AI commands turn it into a `WriteBack` auto write-back event,
-    /// ADR-0024; the stop path is covered by the stop test in ai.rs).
+    /// End to end: the stream finishes naturally → the last frame has pending=false and the final
+    /// full text; the completion hook receives it too (AI commands pass a no-op there now — the card
+    /// stays for review, ADR-0024 amendment; the stop path is covered by the stop test in ai.rs).
     #[test]
-    fn streaming_completion_invokes_on_done_with_final_text() {
+    fn streaming_completion_lands_the_final_frame() {
         let _guard = ai::STREAM_TEST_LOCK.lock().expect("stream test lock");
         use std::io::{Read, Write};
         use std::net::TcpListener;
@@ -536,7 +579,7 @@ mod tests {
         let base_url = format!("http://{addr}/v1");
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         {
-            // on_done = the AI commands' auto write-back callback (this is the shape used in invoke_streaming)
+            // on_done is a generic run_stream hook; AI commands no longer wire it (Moe decides)
             let recorder = recorder.clone();
             std::thread::spawn(move || {
                 ai::run_stream(
@@ -546,7 +589,9 @@ mod tests {
                         body: prompt_body("m", "Only output the translation.", "hello", true),
                         command_id: "aicmd.improve".into(),
                         stream_key: "aicmd:test-run".into(),
-                        item_of: Arc::new(transform_item),
+                        item_of: Arc::new(|text, pending| {
+                            transform_item("Improve Writing", text, pending)
+                        }),
                         persist: Arc::new(ai::noop_sink),
                         on_done: Arc::new(move |text| {
                             recorder.done_texts.lock().unwrap().push(text.to_string());

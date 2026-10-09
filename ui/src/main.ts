@@ -1021,6 +1021,11 @@ function applyResult(
     // Write-back is done by the backend (dismiss panel → AX / clipboard fallback delivery); the panel is already hidden by now
     return;
   }
+  if ("rerun" in res) {
+    // The refine loop is intercepted platform-side: it re-invokes the command and returns *that*
+    // call's result (the new streaming card). A raw value here would mean the intercept was skipped.
+    return;
+  }
   if ("openSideView" in res) {
     // The side view window is shown by the backend and receives the payload; the panel is already hidden
     return;
@@ -1242,7 +1247,12 @@ function objectCardRows(ctx: PageContext): CardRow[] {
   // The item's own declaration (ADR-0006): the first action carries the Apply semantic (⏎).
   return item.actions.map((action) => ({
     title: action.title,
-    icon: action.kind === "primary" ? "corner-down-left" : "copy",
+    icon:
+      action.id === "rerun"
+        ? "wand-2"
+        : action.kind === "primary"
+          ? "corner-down-left"
+          : "copy",
     keys: action.keybinding ?? (action.kind === "primary" ? "⏎" : null),
     run: () => void runItemAction(item, action),
   }));

@@ -29,3 +29,19 @@ Raycast Pro 的 AI Commands（Improve Writing / Make Shorter / Translate…）�
 - 自动回写依赖「辅助功能」授权（与现有回写同一门槛）；选区在生成期间被用户改动时回写落点以当时为准。
 - AI 命令不读附件/文件（v1 只处理文字）；将来「总结这个文件」可复用同一管线加附件展开。
 - `CommandEvent` 多了一个变体：所有 match 处需显式覆盖（编译器兜底）。
+
+## 增补：结果卡是决策点，不再自动回写（MOE-0007）
+
+用户反馈：变换一跑完就自动替换选区、收起面板，看不到结果，也没机会再改。**自然完成不再回写**：
+结果卡留在面板上，由用户在卡上决定——
+
+- **应用** = 卡片的 primary 动作 `write-back`（⏎）：走 `ActionResult::WriteBack` → 平台
+  `deliver_writeback`（写入 + 收起面板）。**复制** = ⌥⏎。**丢弃** = Back（Esc / 空 ⌫，ADR-0038），
+  宿主文字原样不动——只有显式应用才会触碰宿主应用。
+- **再改一次** = 新声明的 `rerun` 动作，标题「{命令} Again」（如「Make Shorter Again」）：把当前
+  结果当作输入，用同一条命令再跑一遍，流式更新同一张卡。契约新增 `ActionResult::Rerun { text }`：
+  扩展只表达意图，平台在 `run_item_action` 命令里拦截并代为调用（以 `text` 为输入、不带呼出时抓的
+  Selection、不记 frecency），把那次调用的结果原样交回 UI——扩展不需要在 `run_item_action` 里拿到
+  emitter，也不复制一遍配置/密钥管线。流式进行中点 rerun 是空操作：一张卡同时只有一条流。
+- `CommandEvent::WriteBack` 保留在契约里（平台的拦截路径不变，别的扩展要自动回写仍可用），
+  AiCommands 不再发出它；阻塞 `invoke` 路径同样返回评审卡而不是直接回写。

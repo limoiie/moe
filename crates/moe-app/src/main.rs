@@ -546,13 +546,19 @@ fn invoke_command(
         moe_platform::store::save_frecency(&frecency);
     }
 
-    if let ActionResult::WriteBack { text } = &result {
-        deliver_writeback(&app, text.clone())?;
-    }
-    if let ActionResult::OpenSideView { payload } = &result {
-        open_side_view(&app, payload.clone());
-    }
+    apply_result_effects(&app, &result)?;
     Ok(result)
+}
+
+/// Platform effects of a command result (ADR-0002/0004): write-back delivery and side-view materialization.
+fn apply_result_effects(app: &AppHandle, result: &ActionResult) -> Result<(), String> {
+    if let ActionResult::WriteBack { text } = result {
+        deliver_writeback(app, text.clone())?;
+    }
+    if let ActionResult::OpenSideView { payload } = result {
+        open_side_view(app, payload.clone());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -569,12 +575,22 @@ fn run_item_action(
         .expect("registry poisoned")
         .run_item_action(&command_id, &item, &action)
         .map_err(|e| e.to_string())?;
-    if let ActionResult::WriteBack { text } = &result {
-        deliver_writeback(&app, text.clone())?;
+    // The refine loop (ADR-0024 amendment): the Extension asks for a re-run with the item's text as
+    // the input; the platform owns that invocation (fresh emitter, no captured Selection, no frecency)
+    // and hands the inner result — the new streaming card — back to the UI.
+    if let ActionResult::Rerun { text } = &result {
+        let emitter: std::sync::Arc<dyn CommandEmitter> =
+            std::sync::Arc::new(TauriEventEmitter(app.clone()));
+        let rerun = state
+            .registry
+            .lock()
+            .expect("registry poisoned")
+            .invoke_streaming(&command_id, Some(text), None, emitter)
+            .map_err(|e| e.to_string())?;
+        apply_result_effects(&app, &rerun)?;
+        return Ok(rerun);
     }
-    if let ActionResult::OpenSideView { payload } = &result {
-        open_side_view(&app, payload.clone());
-    }
+    apply_result_effects(&app, &result)?;
     Ok(result)
 }
 

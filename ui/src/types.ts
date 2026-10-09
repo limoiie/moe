@@ -56,6 +56,7 @@ export interface CommandSection {
 export type ActionResult =
   | string
   | { writeBack: { text: string } }
+  | { rerun: { text: string } }
   | { list: { items: Item[]; detailFull?: boolean } }
   | { conversation: { conversationId: string | null } }
   | { openSideView: { payload: unknown } };

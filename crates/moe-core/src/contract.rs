@@ -70,6 +70,12 @@ pub enum ActionResult {
     WriteBack {
         text: String,
     },
+    /// The refine loop ("Improve Writing Again"): re-run the command that produced this Item with
+    /// `text` as its input, **not** the Selection captured before summoning. The platform performs
+    /// that invocation and hands its result back to the caller, so a new stream lands in the same card.
+    Rerun {
+        text: String,
+    },
     List {
         items: Vec<Item>,
         /// Whether the detail fills the screen: true when there is a single result and it is itself the content (AI answers, notifications).
@@ -386,6 +392,16 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json["writeBack"]["text"], "rewritten text");
+    }
+
+    /// The refine loop (ADR-0024 amendment): the platform serializes it to the UI and intercepts it.
+    #[test]
+    fn rerun_result_serializes() {
+        let json = serde_json::to_value(ActionResult::Rerun {
+            text: "the result so far".into(),
+        })
+        .unwrap();
+        assert_eq!(json["rerun"]["text"], "the result so far");
     }
 
     /// Selection context (ADR-0021): text + files round-trip together; the camelCase shape is stable.

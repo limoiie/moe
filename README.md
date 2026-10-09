@@ -125,14 +125,17 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   Fix Spelling & Grammar / Make Shorter / Make Longer / Simplify Language / Summarize /
   Translate to English / Translate to Chinese / Tone: Professional / Tone: Friendly /
   Extract Key Ideas / Continue Writing. **Select text, summon, type the command name (e.g.
-  "improve") and press Enter**: the result streams into a result card and **automatically
-  replaces the selection and dismisses the panel when done**; with no selection the command guides
-  you to select the text first — the search text is never transformed (ADR-0036) and is cleared from
-  the Input Bar when the command opens. **While the result streams, `⏎` stops the generation** (the
-  primary action yields to Stop, ADR-0036 amendment) and **Back (`Esc` / empty `⌫`) asks first** — an
-  accidental Back must not kill the generation (ADR-0038); with the search text gone, Back leaves the
-  result page in one step. After the stream has stopped or finished, `⏎` writes back manually and
-  `⌥⏎` copies — a stopped generation keeps what was generated and does not write back by itself.
+  "improve") and press Enter**: the result streams into a result card that **stays there for
+  review — nothing touches the selection until you apply** (ADR-0024 amendment). `⏎` writes the
+  result back into the host app and dismisses the panel; `⌥⏎` copies it; `⌘K` lists the card's
+  actions including **"{Command} Again"** (re-run the same transform on the result, streaming into
+  the same card); `Esc` / empty `⌫` leaves without touching the host text (ADR-0038). With no
+  selection the command guides you to select the text first — the search text is never transformed
+  (ADR-0036) and is cleared from the Input Bar when the command opens. **While the result streams,
+  `⏎` stops the generation** (the primary action yields to Stop, ADR-0036 amendment) and **Back
+  (`Esc` / empty `⌫`) asks first** — an accidental Back must not kill the generation (ADR-0038);
+  with the search text gone, Back leaves the result page in one step. A stopped generation keeps
+  what was generated and writes back nothing.
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
   buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same
@@ -218,7 +221,7 @@ Icon sources: `python3 crates/moe-app/icons/gen-app-icon.py` (app icon, then run
 - **AI**: streaming chat against any OpenAI-compatible endpoint; conversations and messages live
   in local SQLite (`data_dir/moe/moe.db`, `ai` namespace); attachments (text inlined / images
   multimodal); Side View continuation uses the whole history as context; AI Commands transform
-  text and write the result back automatically.
+  text into a review card (write back / copy / re-run / discard — ADR-0024 amendment).
 - **Resident**: menu bar tray (with Launch at Login via LaunchAgent); no Dock icon on macOS,
   not in ⌘-Tab.
 - **UI**: one keybinding semantics set (`↓`/`⌃N`, `↑`/`⌃P`, `⏎`, `⌥⏎`, `⌘K`, `⌘J`, `Esc`)

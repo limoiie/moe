@@ -118,9 +118,10 @@ apps)
 
 **AI Command (AI text transform)**:
 A one-shot text transform command of the AI Commands extension (Improve Writing / Make Shorter /
-Translate …): input = the selection (or the input-bar text when there is none); the streamed
-result automatically writes back to the selection and dismisses the panel on completion; a
-stopped generation does not write back (ADR-0024).
+Translate …): input = the selection (or the input-bar text when there is none); the finished result
+card **is the decision point** — nothing touches the host app until the user applies (⏎ write back,
+⌥⏎ copy, "{Command} Again" in ⌘K re-runs the transform on the result, Esc discards), and a stopped
+generation writes back nothing (ADR-0024 amendments).
 _Avoid_: quick ask (that is AI Chat), prompt
 
 **Detail Full**:
