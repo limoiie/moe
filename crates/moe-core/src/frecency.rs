@@ -1,5 +1,9 @@
 //! frecency: "frequency + recency" ordering weight for commands.
 //!
+//! Each use adds 1 to a command's score and the stored score decays exponentially (half-life
+//! [`HALF_LIFE_SECS`], ADR-0023 amendment): consistently used commands stay ahead of one-off fresh
+//! uses, while abandoned commands fade over months instead of pinning a suggestion slot.
+//!
 //! Platform-level data, outside every Extension's Namespace (ADR-0003 leaves the isolated domain to extension-owned data).
 
 use std::collections::HashMap;
@@ -7,9 +11,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-const HOUR: u64 = 3_600;
 const DAY: u64 = 86_400;
-const WEEK: u64 = 7 * DAY;
+/// Score half-life: without use, a command's accumulated score halves every 30 days — the current
+/// Firefox frecency default (`halfLifeDays 30`, docs/research/frecency-ranking.md).
+const HALF_LIFE_SECS: u64 = 30 * DAY;
+/// Below this live score a command reads as forgotten (score 0, out of Suggestions) and is pruned
+/// on the next `record`. Mirrors Firefox's adaptive-history deletion threshold 0.975^90 ≈ 0.10.
+const MIN_SCORE: f64 = 0.1;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frecency {
@@ -18,39 +26,40 @@ pub struct Frecency {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Entry {
-    count: u32,
+    /// Decayed frecency as of `last_used_unix`; `count` is the pre-MOE-0008 field name, kept as a
+    /// deserialization alias so existing files seed their score with the old lifetime count.
+    #[serde(alias = "count")]
+    score: f64,
     last_used_unix: u64,
 }
 
 impl Frecency {
+    /// Record one use: fold every stored score's decay forward and drop the faded entries (lazy
+    /// aging, as Redis's LFU does on access), then add this use.
     pub fn record(&mut self, id: &str, now: SystemTime) {
+        let now = unix_secs(now);
+        self.entries
+            .retain(|_, entry| decayed_score(entry, now) >= MIN_SCORE);
         let entry = self.entries.entry(id.to_string()).or_insert(Entry {
-            count: 0,
-            last_used_unix: 0,
+            score: 0.0,
+            last_used_unix: now,
         });
-        entry.count += 1;
-        entry.last_used_unix = unix_secs(now);
+        entry.score = decayed_score(entry, now) + 1.0;
+        entry.last_used_unix = now;
     }
 
-    /// frequency × freshness buckets: ×4 within an hour, ×2 within a day, ×1 within a week, ×0.25 beyond.
+    /// Live frecency score: uses decay with a 30-day half-life, so frequency and recency are one
+    /// number. 0.0 for never-used commands and for faded ones (below `MIN_SCORE`).
     pub fn score(&self, id: &str, now: SystemTime) -> f64 {
         let Some(entry) = self.entries.get(id) else {
             return 0.0;
         };
-        let age = unix_secs(now).saturating_sub(entry.last_used_unix);
-        let freshness = if age <= HOUR {
-            4.0
-        } else if age <= DAY {
-            2.0
-        } else if age <= WEEK {
-            1.0
-        } else {
-            0.25
-        };
-        entry.count as f64 * freshness
+        let live = decayed_score(entry, unix_secs(now));
+        if live >= MIN_SCORE { live } else { 0.0 }
     }
 
-    /// Most recent use time (unix seconds); None if never recorded. "Suggestions" sort by it descending (IIE4AD-395).
+    /// Most recent use time (unix seconds); None if never recorded. "Suggestions" break frecency
+    /// ties by it, descending (IIE4AD-395).
     pub fn last_used(&self, id: &str) -> Option<u64> {
         self.entries.get(id).map(|entry| entry.last_used_unix)
     }
@@ -109,6 +118,13 @@ impl FrecencyLookup for NoFrecency {
     }
 }
 
+/// The stored score decayed to `now_secs`: `s · 2^(−(now − last_used) / half-life)` — the standard
+/// time-decayed counter (docs/research/frecency-ranking.md).
+fn decayed_score(entry: &Entry, now_secs: u64) -> f64 {
+    let age = now_secs.saturating_sub(entry.last_used_unix);
+    entry.score * 2f64.powf(-(age as f64) / HALF_LIFE_SECS as f64)
+}
+
 fn unix_secs(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
@@ -141,7 +157,7 @@ mod tests {
             "two uses should score higher than one"
         );
 
-        // Same use count, older scores lower (decay buckets)
+        // Same use count, older scores lower (exponential decay)
         let mut g = Frecency::default();
         g.record("b", at(0));
         g.record("b", at(0));
@@ -155,17 +171,77 @@ mod tests {
         );
     }
 
+    /// Half-life decay: a score halves every 30 days of no use (ADR-0023 amendment).
     #[test]
-    fn recent_use_beats_many_old_uses() {
+    fn score_halves_each_half_life() {
         let mut f = Frecency::default();
-        for _ in 0..3 {
-            f.record("old", at(0));
-        }
-        f.record("new", at(30 * DAY));
+        f.record("a", at(0));
+        let fresh = f.score("a", at(0));
+        let after = f.score("a", at(HALF_LIFE_SECS));
         assert!(
-            f.score("new", at(30 * DAY)) > f.score("old", at(30 * DAY)),
-            "one recent use should beat three uses a month ago"
+            (after - fresh / 2.0).abs() < 0.01,
+            "30 days without use should halve the score"
         );
+    }
+
+    /// The MOE-0008 acceptance case: a command used regularly (≈1/day) stays clearly ahead of a
+    /// lightly used command whose latest use is more recent — frequency dominates raw recency.
+    #[test]
+    fn heavy_recent_use_beats_a_fresh_but_light_command() {
+        let mut f = Frecency::default();
+        // 1000 uses, one a day, the last one a day ago.
+        for day in 0..1000 {
+            f.record("heavy", at(day * DAY));
+        }
+        // 10 uses over the last ten days, the latest one an hour ago (more recent than heavy's).
+        for day in 990..1000 {
+            f.record("light", at(day * DAY));
+        }
+        f.record("light", at(1000 * DAY - 3_600));
+
+        let now = at(1000 * DAY);
+        let heavy = f.score("heavy", now);
+        let light = f.score("light", now);
+        assert!(
+            heavy > light * 3.0,
+            "heavy={heavy} should stay clearly ahead of light={light}"
+        );
+    }
+
+    /// MOE-0008: abandoned commands fade — below `MIN_SCORE` they read as forgotten, and the next
+    /// record prunes them, so a stale fossil cannot pin a Suggestions slot.
+    #[test]
+    fn faded_entries_read_as_gone_and_are_pruned_on_record() {
+        let mut f = Frecency::default();
+        f.record("once", at(0));
+        assert!(
+            f.score("once", at(95 * DAY)) > 0.0,
+            "still warm before the threshold"
+        );
+        assert_eq!(
+            f.score("once", at(110 * DAY)),
+            0.0,
+            "a use ~3.7 half-lives old reads as forgotten"
+        );
+        assert_eq!(f.last_used("once"), Some(0), "until a record prunes it");
+        f.record("other", at(110 * DAY));
+        assert_eq!(
+            f.last_used("once"),
+            None,
+            "lazy aging pruned the faded entry"
+        );
+        assert_eq!(f.score("other", at(110 * DAY)), 1.0);
+    }
+
+    /// Pre-MOE-0008 files stored a lifetime `count`; the serde alias loads it as the initial
+    /// decayed score, so existing usage keeps its standing (and then ages normally).
+    #[test]
+    fn legacy_count_field_loads_as_the_initial_score() {
+        let json = r#"{"entries":{"a":{"count":1000,"last_used_unix":0}}}"#;
+        let f: Frecency = serde_json::from_str(json).unwrap();
+        assert_eq!(f.score("a", at(0)), 1000.0);
+        assert_eq!(f.score("a", at(30 * DAY)), 500.0);
+        assert_eq!(f.last_used("a"), Some(0));
     }
 
     #[test]

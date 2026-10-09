@@ -21,3 +21,32 @@
   这是一致的（常用即置顶），不是缺陷。
 - 5 条上限是常量（`SUGGESTION_LIMIT`），将来要可配置再落 config。
 - 空输入页不再显示「全部命令」：没进建议的命令仍可在后续分组里找到（只是被建议抢了置顶位）。
+
+## Amendment: Suggestions rank by frecency, not raw recency
+
+Pure recency proved unfair to consistently heavy use: a command used 1000 times lost the first slot
+to a command used 10 times once, merely because the latter ran most recently — while the heavy
+command was still in regular use. `docs/research/frecency-ranking.md` surveyed the field against
+primary sources (zoxide's count × last-use buckets plus global aging, Firefox Places' frecency —
+today a per-page exponential decay with `halfLifeDays 30` —, Redis's LFU dynamic aging, VS Code's
+plain MRU, and the standard time-decayed counter). Conclusion: rank by **frecency with per-command
+exponential decay**. Bucket × count can fossilize (a 1000-use command scores `1000 × 0.25 = 250`
+forever) and zoxide's aging is a *global* renormalization that preserves that order; per-command
+decay lets abandoned commands fade out of the list.
+
+- `Frecency` stores a **decayed counter** instead of a lifetime count: every use does
+  `score ← score·2^(−Δt / 30 d) + 1`, and `score()` applies the same decay at read time. A steady
+  1-use/day command converges to ≈ 43 while a single fresh use is 1, so the reported case keeps the
+  heavy command clearly ahead.
+- A score below `0.1` reads as forgotten (it leaves Suggestions and the search tie-break) and is
+  pruned lazily on the next `record` — Firefox deletes adaptive history below `0.975^90 ≈ 0.10`,
+  and Redis ages on access the same way.
+- The Suggestions section sorts by that score, highest first; ties break by most recent use, then
+  id. The 5-row cap, the hidden-when-empty behavior, and the ⌃X / ⌃⇧X forget slots (ADR-0025) are
+  unchanged. Search keeps breaking ties with the same score (ADR-0020 amendment) — one number,
+  one meaning everywhere.
+- Legacy files' lifetime `count` loads through a serde alias as the initial score; it decays away
+  over ~10 half-lives. No migration step.
+- Cost: a heavy command abandoned for months still ranks for a while (≈ 68 days to fall below the
+  best case for a fresh 10-use command, ≈ 163 days below 1) — that fade is intended, and
+  `HALF_LIFE_SECS` is the tuning knob if the palette should forget faster.

@@ -8,7 +8,8 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::sync::Arc;
 
-/// "Suggestions" section (IIE4AD-395): on an empty query, lists recently used commands — up to 5, most recent first.
+/// "Suggestions" section (IIE4AD-395, MOE-0008): on an empty query, lists the most frecency-worthy
+/// commands — up to 5, highest score first (frequency weighted by recency, not raw recency).
 const SUGGESTION_LIMIT: usize = 5;
 /// Suggestions section header (Raycast-style semantics; other section headers are extension names).
 const SUGGESTIONS_TITLE: &str = "Suggestions";
@@ -107,7 +108,7 @@ impl Registry {
 
     /// Command palette search: nucleo fuzzy matching scores, frecency breaks ties.
     /// Empty query: a "Favorites" section is pinned on top (user-curated, ADR-0027), then a "Suggestions"
-    /// section (recently used commands, IIE4AD-395), then grouped by source; a non-empty query is ONE
+    /// section (frecency-ranked usage, IIE4AD-395 / MOE-0008), then grouped by source; a non-empty query is ONE
     /// "Results" section in score order (ADR-0033 — supersedes ADR-0020's per-source grouping while
     /// searching; each row still labels its owner, ADR-0030); `selection` matters only in the
     /// "no match → fallback" step.
@@ -143,19 +144,29 @@ impl Registry {
                     items: favorite_items,
                 });
             }
-            // Suggestions (IIE4AD-395): recently used commands pinned as their own section;
-            // remaining commands group by extension as usual, without repeating favorites/suggestions.
-            let mut used: Vec<(u64, CommandMeta)> = commands
+            // Suggestions (IIE4AD-395, MOE-0008): ranked by frecency — frequency with exponential
+            // recency decay — NOT by raw last use: a single fresh use must not displace a heavily
+            // used command. Ties fall back to most recent use, then id (stable order).
+            let mut used: Vec<(f64, u64, CommandMeta)> = commands
                 .iter()
                 .filter(|cmd| !pinned.contains(&cmd.id))
-                .filter_map(|cmd| frecency.last_used(&cmd.id).map(|t| (t, cmd.clone())))
+                .filter_map(|cmd| {
+                    let score = frecency.frecency(&cmd.id);
+                    (score > 0.0)
+                        .then(|| (score, frecency.last_used(&cmd.id).unwrap_or(0), cmd.clone()))
+                })
                 .collect();
-            used.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
+            used.sort_by(|a, b| {
+                b.0.partial_cmp(&a.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.1.cmp(&a.1))
+                    .then_with(|| a.2.id.cmp(&b.2.id))
+            });
             if !used.is_empty() {
                 let suggested: std::collections::HashSet<String> = used
                     .iter()
                     .take(SUGGESTION_LIMIT)
-                    .map(|(_, cmd)| cmd.id.clone())
+                    .map(|(_, _, cmd)| cmd.id.clone())
                     .collect();
                 pinned.extend(suggested);
                 sections.push(CommandSection {
@@ -163,7 +174,7 @@ impl Registry {
                     items: used
                         .into_iter()
                         .take(SUGGESTION_LIMIT)
-                        .map(|(_, cmd)| cmd)
+                        .map(|(_, _, cmd)| cmd)
                         .collect(),
                 });
             }
@@ -1124,7 +1135,7 @@ mod tests {
         assert_eq!(ids[0], "toy.list");
     }
 
-    /// Fake frecency with last_used (for suggestions tests).
+    /// Fake frecency with score + last_used (for suggestions tests).
     struct RecentFrecency(std::collections::HashMap<String, (f64, u64)>);
 
     impl FrecencyLookup for RecentFrecency {
@@ -1140,23 +1151,58 @@ mod tests {
         }
     }
 
-    fn recent(pairs: &[(&str, u64)]) -> RecentFrecency {
+    fn recent(pairs: &[(&str, f64, u64)]) -> RecentFrecency {
         RecentFrecency(
             pairs
                 .iter()
-                .map(|(id, used)| ((*id).to_string(), (0.0, *used)))
+                .map(|(id, score, used)| ((*id).to_string(), (*score, *used)))
                 .collect(),
         )
     }
 
-    /// Suggestions (IIE4AD-395): empty query pins recently used commands on top; the rest group as usual without repeats.
+    /// A one-command extension; the name doubles as the extension id (suggestions tests).
+    struct OneCommand(&'static str);
+
+    impl Extension for OneCommand {
+        fn id(&self) -> &str {
+            self.0
+        }
+        fn title(&self) -> &str {
+            "One"
+        }
+        fn commands(&self) -> Vec<CommandMeta> {
+            vec![CommandMeta {
+                id: format!("{}.run", self.0),
+                extension_id: self.0.into(),
+                title: format!("Run {}", self.0),
+                subtitle: None,
+                icon: None,
+                input: InputKind::None,
+                live: false,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
+            }]
+        }
+        fn invoke(
+            &self,
+            _command_id: &str,
+            _query: Option<&str>,
+            _selection: Option<&Selection>,
+        ) -> Result<ActionResult, MoeError> {
+            Err(MoeError::NotFound)
+        }
+    }
+
+    /// Suggestions (IIE4AD-395): empty query pins the frecency-ranked used commands on top; the
+    /// rest group as usual without repeats.
     #[test]
     fn empty_query_prepends_recent_suggestions() {
         // Toy has two commands; only toy.list has a use record
         let hits = registry().search(
             "",
             None,
-            &recent(&[("toy.list", 100)]),
+            &recent(&[("toy.list", 1.0, 100)]),
             &Favorites::default(),
         );
         assert_eq!(
@@ -1189,7 +1235,7 @@ mod tests {
                 .search(
                     "toy",
                     None,
-                    &recent(&[("toy.list", 100)]),
+                    &recent(&[("toy.list", 1.0, 100)]),
                     &Favorites::default()
                 )
                 .iter()
@@ -1197,61 +1243,30 @@ mod tests {
         );
     }
 
-    /// Suggestions capped at 5, most recent first (IIE4AD-395).
+    /// Suggestions capped at 5, ordered by frecency — never by raw recency (IIE4AD-395, MOE-0008).
     #[test]
-    fn suggestions_are_capped_at_five_and_most_recent_first() {
-        struct OneCommand(&'static str);
-        impl Extension for OneCommand {
-            fn id(&self) -> &str {
-                self.0
-            }
-            fn title(&self) -> &str {
-                "One"
-            }
-            fn commands(&self) -> Vec<CommandMeta> {
-                vec![CommandMeta {
-                    id: format!("{}.run", self.0),
-                    extension_id: self.0.into(),
-                    title: format!("Run {}", self.0),
-                    subtitle: None,
-                    icon: None,
-                    input: InputKind::None,
-                    live: false,
-                    keybinding: None,
-                    extension_title: None,
-                    kind: None,
-                }]
-            }
-            fn invoke(
-                &self,
-                _command_id: &str,
-                _query: Option<&str>,
-                _selection: Option<&Selection>,
-            ) -> Result<ActionResult, MoeError> {
-                Err(MoeError::NotFound)
-            }
-        }
-
+    fn suggestions_are_capped_at_five_and_rank_by_frecency() {
         let mut r = Registry::new();
         for name in ["a", "b", "c", "d", "e", "f"] {
             r.register(Box::new(OneCommand(name)));
         }
-        // Use times deliberately shuffled: f most recent, a oldest
-        let used: Vec<(String, u64)> = vec![
-            ("a.run", 10),
-            ("f.run", 60),
-            ("c.run", 30),
-            ("b.run", 20),
-            ("e.run", 50),
-            ("d.run", 40),
+        // Scores and use times deliberately shuffled: a.run was used most recently (t=100) yet has
+        // the lowest score, so it stays out of the top 5.
+        let used: Vec<(String, (f64, u64))> = vec![
+            ("a.run", (1.0, 100)),
+            ("f.run", (6.0, 10)),
+            ("c.run", (3.0, 40)),
+            ("b.run", (2.0, 30)),
+            ("e.run", (5.0, 20)),
+            ("d.run", (4.0, 60)),
         ]
         .into_iter()
-        .map(|(id, t)| (id.to_string(), t))
+        .map(|(id, record)| (id.to_string(), record))
         .collect();
         let hits = r.search(
             "",
             None,
-            &RecentFrecency(used.into_iter().map(|(id, t)| (id, (0.0, t))).collect()),
+            &RecentFrecency(used.into_iter().collect()),
             &Favorites::default(),
         );
         assert_eq!(hits[0].title, "Suggestions");
@@ -1262,15 +1277,42 @@ mod tests {
                 .map(|c| c.id.as_str())
                 .collect::<Vec<_>>(),
             ["f.run", "e.run", "d.run", "c.run", "b.run"],
-            "most recent first, at most 5"
+            "highest frecency first, at most 5 (not recency order)"
         );
-        // The oldest one (a.run) stays in the remaining groups
+        // The lowest score (a.run, despite its newest use) stays in the remaining groups
         assert_eq!(
             flat(&hits[1..])
                 .iter()
                 .map(|c| c.id.as_str())
                 .collect::<Vec<_>>(),
             ["a.run"]
+        );
+    }
+
+    /// MOE-0008 (user report): a heavily used command outranks a lightly used one whose latest use
+    /// is newer — frequency with recency decay, not raw recency; equal scores break by last use.
+    #[test]
+    fn suggestions_rank_by_frecency_not_recency() {
+        let mut r = Registry::new();
+        for name in ["heavy", "light", "twin"] {
+            r.register(Box::new(OneCommand(name)));
+        }
+        // heavy: 1000 uses, last one older; light: 11 uses, last use newest; twin: same score as
+        // light but used earlier, so the tie-break puts light first.
+        let frecency = recent(&[
+            ("heavy.run", 1000.0, 50),
+            ("light.run", 11.0, 100),
+            ("twin.run", 11.0, 90),
+        ]);
+        let hits = r.search("", None, &frecency, &Favorites::default());
+        assert_eq!(
+            hits[0]
+                .items
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["heavy.run", "light.run", "twin.run"],
+            "one fresh light use must not displace heavy use; equal scores break by last use"
         );
     }
 
@@ -1314,7 +1356,7 @@ mod tests {
         let mut favorites = Favorites::default();
         favorites.toggle("toy.hello");
         favorites.toggle("missing.command");
-        let hits = registry().search("", None, &recent(&[("toy.list", 100)]), &favorites);
+        let hits = registry().search("", None, &recent(&[("toy.list", 1.0, 100)]), &favorites);
         assert_eq!(
             hits.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
             ["Favorites", "Suggestions"],
@@ -1334,7 +1376,7 @@ mod tests {
         let hits = registry().search(
             "",
             None,
-            &recent(&[("toy.list", 100)]),
+            &recent(&[("toy.list", 1.0, 100)]),
             &Favorites::default(),
         );
         assert_eq!(hits[0].title, "Suggestions");
