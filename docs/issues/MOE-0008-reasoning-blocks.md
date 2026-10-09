@@ -1,12 +1,12 @@
 # M7p: thinking blocks are not the answer — strip them from the result, render them as Thinking
 
 - **ID**: MOE-0008
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: 15e34cf
 
 User feedback: models like minimax-m3 stream their chain of thought inside the content
 (`…reasoning…answer`, sometimes with the opening tag dropped by the server), so the reasoning text
@@ -52,4 +52,8 @@ became the result: it showed in the card, got copied, and (before MOE-0007) was 
 
 ## Comments
 
-- 2026-10-09 (agent): filed from user feedback (minimax-m3); implementing.
+- 2026-10-09 (agent): filed from user feedback (minimax-m3).
+- 2026-10-09 (agent): delivered in `15e34cf`; `cargo fmt --check`, `cargo clippy --workspace
+  --all-targets -- -D warnings`, `cargo test --workspace` (148), `pnpm build` green. GUI check
+  pending: run a transform through minimax-M3 — the answer is clean, the reasoning shows in the
+  Thinking block, and copy/write-back carry the answer only.
