@@ -1,12 +1,12 @@
 # M7o: the AI Command result is a decision point — no automatic write-back
 
 - **ID**: MOE-0007
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: 15c9390
 
 User feedback: "once the ai command finishes generation, it writes back the outputs directly without my
 confirmation. but, I want to see the modified text in moe, and decide if I want to improve again, or
@@ -55,4 +55,8 @@ discard, or apply by writing back, or just copy to clipboard."
 
 ## Comments
 
-- 2026-10-09 (agent): filed from user feedback; implementing.
+- 2026-10-09 (agent): filed from user feedback.
+- 2026-10-09 (agent): delivered in `15c9390`; `cargo fmt --check`, `cargo clippy --workspace
+  --all-targets -- -D warnings`, `cargo test --workspace` (147), `pnpm build` green. GUI check
+  pending: run a transform to completion — the card stays; ⏎ applies, ⌥⏎ copies, ⌘K → "… Again"
+  re-runs on the result; Esc leaves the host text untouched.
