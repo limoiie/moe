@@ -459,13 +459,20 @@ fn open_side_view(app: &AppHandle, payload: serde_json::Value) {
 }
 
 /// WriteBack delivery: permission pre-check → dismiss panel → wait for focus to return → write via AX/clipboard.
+///
+/// Reached both from the main thread (a synchronous command's ActionResult) and from the AI stream's
+/// worker thread (`CommandEvent::WriteBack` on natural completion, ai_commands.rs), so every window
+/// operation hops to the main thread: AppKit's orderOut/orderFront are main-thread-only, and hiding the
+/// NSPanel from the stream thread crashed the process right as a generation finished. No ack is awaited
+/// so the main-thread call path cannot deadlock on itself.
 fn deliver_writeback(app: &AppHandle, text: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if !moe_platform::mac::is_accessibility_trusted() {
-        moe_platform::mac::prompt_accessibility_permission();
+        let _ = app.run_on_main_thread(moe_platform::mac::prompt_accessibility_permission);
         return Err("Accessibility permission is required to write back (System Settings → Privacy & Security → Accessibility; the system prompt was opened, no restart needed once granted)".into());
     }
-    hide_panel_blocking(app);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || hide_panel_blocking(&handle));
     let handle = app.clone();
     std::thread::spawn(move || {
         // Wait for the non-activating panel to close and focus to return to the target app
