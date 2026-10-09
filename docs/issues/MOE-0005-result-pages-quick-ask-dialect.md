@@ -1,12 +1,12 @@
 # M7m: result pages share the Quick Ask dialect — Back confirms, the page owns the input, Back leaves in one step
 
 - **ID**: MOE-0005
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: f240aa1
 
 User feedback after Quick Ask v2 (ADR-0036) and Enter-stops (MOE-0003): the AI Commands result pages
 still behaved differently from the panel's conversation page, and Quick Ask had its own scroll bug and
@@ -70,4 +70,7 @@ unsmooth streaming.
 
 ## Comments
 
-- 2026-10-09 (agent): filed from user feedback; implementing.
+- 2026-10-09 (agent): filed from user feedback.
+- 2026-10-09 (agent): delivered in `f240aa1`; `pnpm build` (tsc + vite) green; `cargo test --workspace`
+  (146) still green (UI-only change). GUI verification pending on the user's side: AI Command → ⌫/Esc
+  mid-stream pops the dialog; idle ⌫ leaves the card in one step; Quick Ask follows the answer down.
