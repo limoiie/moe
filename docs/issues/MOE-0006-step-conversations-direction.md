@@ -1,12 +1,12 @@
 # M7n: ⌃[ / ⌃] step the wrong way — `[` is Back, `]` is Forward
 
 - **ID**: MOE-0006
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: bf573d4
 
 User question: "is the behavior for ⌃[ and ⌃] mistaken? ⌃[ should be backward, and ⌃] should be
 forward, right or not?" — Yes, it was inverted.
@@ -45,4 +45,6 @@ newer. The list-order reading (`[` = up the visible list) would need the `⇧` v
 ## Comments
 
 - 2026-10-09 (agent): filed from the user's question; direction confirmed inverted against the macOS
-  Back/Forward convention and the README's own "previous / next" wording. Implementing.
+  Back/Forward convention and the README's own "previous / next" wording.
+- 2026-10-09 (agent): delivered in `bf573d4`; `pnpm build` green. GUI check pending: from the newest
+  conversation `⌃[` opens the previous (older) one and `⌃]` returns.
