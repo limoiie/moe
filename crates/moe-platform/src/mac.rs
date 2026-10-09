@@ -19,12 +19,13 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType,
 };
-use objc2::MainThreadMarker;
-use objc2::runtime::{AnyClass, NSObjectProtocol};
+use objc2::rc::Retained;
+use objc2::runtime::{AnyClass, NSObject, NSObjectProtocol};
+use objc2::{AnyThread, DefinedClass, MainThreadMarker};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSEvent, NSEventMask, NSScreen, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-    NSWindowOrderingMode,
+    NSAutoresizingMaskOptions, NSEvent, NSEventMask, NSScreen, NSTrackingArea,
+    NSTrackingAreaOptions, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowOrderingMode,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::cell::RefCell;
@@ -202,6 +203,89 @@ pub fn install_panel_click_to_key() {
             std::mem::forget(monitor);
         }
     }
+}
+
+/// The tracking-area owner: AppKit sends `mouseEntered:` / `mouseExited:` to whatever object the
+/// area names — it need not be a view — and with `ActiveAlways` those fire for the window under
+/// the cursor even while the app is inactive.
+#[derive(Default)]
+struct SideViewPointerIvars {
+    on_change: Option<Box<dyn Fn(bool)>>,
+}
+
+objc2::define_class!(
+    #[unsafe(super(NSObject))]
+    #[ivars = SideViewPointerIvars]
+    struct SideViewPointerOwner;
+
+    impl SideViewPointerOwner {
+        #[unsafe(method(mouseEntered:))]
+        fn mouse_entered(&self, _event: &NSEvent) {
+            if let Some(on_change) = &self.ivars().on_change {
+                on_change(true);
+            }
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn mouse_exited(&self, _event: &NSEvent) {
+            if let Some(on_change) = &self.ivars().on_change {
+                on_change(false);
+            }
+        }
+    }
+);
+
+impl SideViewPointerOwner {
+    fn new(on_change: Box<dyn Fn(bool)>) -> Retained<Self> {
+        let this = Self::alloc();
+        let this = this.set_ivars(SideViewPointerIvars {
+            on_change: Some(on_change),
+        });
+        unsafe { objc2::msg_send![super(this), init] }
+    }
+}
+
+/// The Side View's hover as native tracking: while the window is not key the webview receives no
+/// pointer events at all (WebKit gates its mouse tracking on key status), so hovering an unfocused
+/// Side View did nothing. An `NSTrackingArea` with `ActiveAlways` delivers enter/exit for the
+/// window under the cursor even when the app is inactive; each transition is evaluated back into
+/// the page (`window.__moePointerInside`), driving the same `moe-pointer-inside` state the DOM
+/// events drive while focused. `acceptsMouseMovedEvents` is switched on as well so the webview's
+/// own hover styles recover too.
+///
+/// # Safety
+/// `ns_view` must be a valid webview `NSView` pointer (Tauri's `WebviewWindow::ns_view()`); call on
+/// the main thread.
+pub unsafe fn install_side_view_pointer_tracking(
+    ns_view: *mut std::ffi::c_void,
+    on_change: Box<dyn Fn(bool)>,
+) {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if ns_view.is_null() || MainThreadMarker::new().is_none() {
+        return;
+    }
+    let webview: &NSView = unsafe { &*ns_view.cast() };
+    let owner = SideViewPointerOwner::new(on_change);
+    let area = unsafe {
+        NSTrackingArea::initWithRect_options_owner_userInfo(
+            NSTrackingArea::alloc(),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0)),
+            NSTrackingAreaOptions::MouseEnteredAndExited
+                | NSTrackingAreaOptions::ActiveAlways
+                | NSTrackingAreaOptions::InVisibleRect,
+            Some(&owner),
+            None,
+        )
+    };
+    webview.addTrackingArea(&area);
+    if let Some(window) = webview.window() {
+        window.setAcceptsMouseMovedEvents(true);
+    }
+    // AppKit does not retain the tracking area's owner: keep it alive for the process (one object).
+    std::mem::forget(owner);
 }
 
 /// Show the system prompt once when unauthorized, and add this app to the "Input Monitoring" list.

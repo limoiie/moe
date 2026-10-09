@@ -109,9 +109,9 @@ void getCurrentWindow().onResized(() => void syncSizeButtons());
 void syncSizeButtons();
 
 // The titlebar chrome states (Raycast-like; the cascade lives in styles.css): the pointer decides
-// *whether* it shows — over the window the trio and capsule appear muted and the title lights up,
-// out they hide and the title dims, even while the composer keeps keyboard focus — and the window's
-// focus decides the weight (clicked into the window → fully lit).
+// *whether* it shows — over the window the trio and capsule appear (muted while the window is not
+// key, lit once clicked into it) and the title lights up, out they hide and the title dims, even
+// while the composer keeps keyboard focus.
 function setPointerInside(inside: boolean) {
   document.body.classList.toggle("moe-pointer-inside", inside);
 }
@@ -119,11 +119,20 @@ function setWindowFocused(focused: boolean) {
   document.body.classList.toggle("moe-window-focused", focused);
 }
 document.documentElement.addEventListener("mouseenter", () => setPointerInside(true));
+// A second source for "inside": a missed enter event must not leave the chrome hidden while the
+// pointer is over the window.
+document.documentElement.addEventListener("mousemove", () => setPointerInside(true));
 document.documentElement.addEventListener("mouseleave", () => setPointerInside(false));
 // A window hidden under a stationary cursor must not keep a stale hover state.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") setPointerInside(false);
 });
+// While the window is not key the webview receives no pointer events at all (WebKit gates its
+// mouse tracking on key status); the platform layer tracks the pointer natively — AppKit tracking
+// that stays active while the app is inactive — and drives the same state through this hook
+// (moe-platform::mac::install_side_view_pointer_tracking).
+(window as Window & { __moePointerInside?: (inside: boolean) => void }).__moePointerInside =
+  setPointerInside;
 void getCurrentWindow().isFocused().then(setWindowFocused);
 void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
   setWindowFocused(focused);

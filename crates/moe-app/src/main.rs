@@ -403,6 +403,26 @@ fn install_side_view_material(window: &tauri::WebviewWindow) {
     }
 }
 
+/// The webview gets no pointer events while the window is not key (WebKit gates its mouse tracking
+/// on key status): AppKit tracking, active even when the app is inactive, drives the same
+/// `moe-pointer-inside` state through the page hook chat.ts installs.
+#[cfg(target_os = "macos")]
+fn install_side_view_pointer_tracking(window: &tauri::WebviewWindow) {
+    let eval_handle = window.clone();
+    let on_change = Box::new(move |inside: bool| {
+        let js = if inside {
+            "window.__moePointerInside?.(true)"
+        } else {
+            "window.__moePointerInside?.(false)"
+        };
+        let _ = eval_handle.eval(js);
+    });
+    if let Ok(ns_view) = window.ns_view() {
+        // SAFETY: the pointer comes from Tauri's webview handle and its lifetime follows the webview.
+        unsafe { moe_platform::mac::install_side_view_pointer_tracking(ns_view, on_change) };
+    }
+}
+
 /// Must be called on the main thread: capture the selection first, then position and show the panel.
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -1266,6 +1286,13 @@ fn main() {
             #[cfg(target_os = "macos")]
             if let Some(window) = handle.get_webview_window("chat") {
                 install_side_view_material(&window);
+            }
+
+            // The webview sees no pointer events while the window is not key: hover tracking is
+            // native and drives the page hook chat.ts installs (moe-platform).
+            #[cfg(target_os = "macos")]
+            if let Some(window) = handle.get_webview_window("chat") {
+                install_side_view_pointer_tracking(&window);
             }
 
             // AppKit's click-to-key for non-activating panels is not reliable (a click can land

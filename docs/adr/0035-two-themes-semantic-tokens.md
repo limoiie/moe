@@ -236,3 +236,20 @@ through crisp — and only recovered when the window was clicked again.
   the card's ~0.8-alpha fill, so its tint contributes ~15–20% of the composite while the blur does
   the visible work — it matters for a luminance-adaptive glass surface, not for a pinned frost.
   Revisit when more of the surface moves native.
+
+## Amendment: the unfocused hover state is styled, and driven natively (MOE-0022)
+
+Two changes to the Side View's hover-to-reveal chrome:
+
+- **The muted variant is a style, not a fade.** The reveal used to dim to 0.55 over the whole bar;
+  the unfocused hover is now a deliberate variant: the traffic lights desaturate and soften
+  (`filter: grayscale(1)` + 0.55, the macOS inactive-window read) and the action capsule flattens
+  (no sheen, blur or rim; a plain `surface-hover` wash with softened icons). The reveal itself is
+  opacity 1 in both variants — the pointer remains the only visibility rule, and focus only picks
+  the style.
+- **The hover is tracked natively.** WebKit delivers no pointer events to a non-key window's
+  webview, so after clicking outside the DOM events never fired and the chrome stayed hidden. An
+  `NSTrackingArea` (`activeAlways`, added in the platform layer) covers the webview and evaluates
+  enter/exit back into the page (`window.__moePointerInside`), driving the same state; the DOM
+  listeners stay as the focused path. `acceptsMouseMovedEvents` is enabled too, so the webview's
+  own `:hover` styles recover while unfocused.

@@ -567,21 +567,35 @@ html[data-platform="macos"] .moe-window-card {
 /* ---- Side View window chrome (MOE-0018): traffic lights · centered title · action capsule ---- */
 
 /* Titlebar chrome states (Raycast-like): the pointer decides *whether* it shows, the window's focus
-   decides its *weight*. Pointer over the window → the trio and the capsule appear muted; clicked
-   into the window → they light up; pointer out → they hide and the title dims, even while the
-   composer keeps keyboard focus. Opacity alone would leave invisible hit targets behind, so the
-   reveal also gates pointer events. */
+   decides its *weight*. Pointer over the window → the chrome appears whatever the focus is: muted
+   while the window is not key (the trio desaturates and softens, the capsule flattens), lit once
+   the window is clicked into. Pointer out → they hide and the title dims, even while the composer
+   keeps keyboard focus. Invisible hit targets would linger behind a hidden bar, so the reveal also
+   gates pointer events. */
 .moe-titlebar-reveal {
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease;
 }
 body.moe-pointer-inside .moe-titlebar-reveal {
-  opacity: 0.55;
+  opacity: 1;
   pointer-events: auto;
 }
-body.moe-pointer-inside.moe-window-focused .moe-titlebar-reveal {
-  opacity: 1;
+/* The muted state is styled, not faded — gray/disabled-looking lights and a flat capsule — so the
+   hover affordance reads at rest without competing with the lit state after a click-in. */
+body.moe-pointer-inside:not(.moe-window-focused) .moe-traffic-light {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+body.moe-pointer-inside:not(.moe-window-focused) .moe-window-actions {
+  background: var(--moe-surface-hover);
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+body.moe-pointer-inside:not(.moe-window-focused) .moe-window-actions button {
+  opacity: 0.6;
 }
 /* The title shares the pointer rule but brightens with it: muted by default, lit while the pointer
    is over the window (the focus click keeps the chrome above at full weight). */
@@ -612,6 +626,7 @@ body.moe-pointer-inside .moe-titlebar-title {
   cursor: default;
   color: rgb(0 0 0 / 0.55);
   box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.14);
+  transition: opacity 140ms ease, filter 140ms ease;
 }
 .moe-traffic-light[data-tone="close"] {
   background: #ff5f57;
