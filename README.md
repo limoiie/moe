@@ -51,7 +51,7 @@ themselves stay listed in their own sections.
 | `⌃X` | Delete | Delete the current record (AI = current conversation; results layer, Quick Ask page and Suggestions only, ADR-0022/0025/0036) |
 | `⌃⇧X` | DeleteAll | Delete all records (AI = all conversations; also clears all suggestions, ADR-0022/0025) |
 | `⌘J` | Materialize | Move the current conversation into the extension's Side View |
-| `⌃[` / `⌃]` | Step conversations | Quick Ask page and Side View: previous / next conversation in the chat history (ADR-0036) |
+| `⌃[` / `⌃]` | Step conversations | Quick Ask page and Side View: backward / forward through the chat history — `⌃[` the previous (older) conversation, `⌃]` the newer one (ADR-0036) |
 | `⌘⇧A` | Attach | Type/paste a file path, inserted as `@"path"` (ADR-0010) |
 | `⌘⇧K` | About | Open the About card (Open Config File / Save AI Key / Send Feedback; the avatar chip's menu, ADR-0027) |
 | `⌘⇧F` | Favorite | Add/remove the current command from Favorites (root: the focused command; inside a command: the source command, ADR-0029) |
@@ -111,8 +111,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   Input Bar is the composer: **`⏎` sends** (input cleared) and answers stream into the conversation,
   the page following the answer down as it streams;
   **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
-  **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step through
-  history, **`⌘P`** opens the history list, **`⌘J`** continues in the Side View, `⌥⏎` copies the last
+  **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step backward /
+  forward through history (the previous, older conversation / the newer one), **`⌘P`** opens the
+  history list, **`⌘J`** continues in the Side View, `⌥⏎` copies the last
   answer and `⌘K` groups the conversation's actions (Open in Side View / Copy Last Answer / Write
   Back) with the page's slots (Browse Chats / New Chat / Remove Chat / Remove All Chats). **Text
   selected before summoning automatically becomes
@@ -149,7 +150,8 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   state). In the panel they land on the extension's declared record list / actions layer / new
   record / delete hooks (an error toast when the extension implements none; on the Quick Ask page
   they land on history / chat actions / new chat / remove chat, ADR-0036). `⌃[` / `⌃]` step
-  through the current conversation list (Quick Ask page and Side View); opening/switching a conversation scrolls to the bottom
+  backward / forward through the current conversation list (older / newer; Quick Ask page and Side
+  View); opening/switching a conversation scrolls to the bottom
   of the last line; `⏎` sends / `⇧⏎` newline / `Esc` dismisses overlays first, stops while
   generating, otherwise hides; 📎 adds attachments; window position and size are remembered after
   dragging. Past conversations are also reachable from the command "Search Chat History" (AI)

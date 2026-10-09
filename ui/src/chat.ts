@@ -409,14 +409,21 @@ document.addEventListener("mousedown", (e) => {
 
 // ---- Conversation switching ----
 
-async function stepConversation(delta: number) {
+/**
+ * ⌃[ / ⌃]: step through conversations per the current list (including the filter) — `⌃[` is Back (the
+ * previous, older conversation), `⌃]` is Forward (the newer one). The list is newest-first, so
+ * backward is +1 in the array; a conversation outside it (a blank new chat) sits at "now": backward
+ * lands on the newest, forward goes nowhere. Both ends clamp.
+ */
+async function stepConversation(backward: boolean) {
   if (conversations.length === 0) return;
   const index = conversations.findIndex((c) => c.id === conversationId);
+  const delta = backward ? 1 : -1;
   const next =
     index === -1
-      ? delta > 0
+      ? backward
         ? 0
-        : conversations.length - 1
+        : -1
       : Math.min(Math.max(index + delta, 0), conversations.length - 1);
   const target = conversations[next];
   if (!target || target.id === conversationId) return;
@@ -703,10 +710,11 @@ window.addEventListener("keydown", (e) => {
     else void deleteCurrent(general === "deleteAll");
     return;
   }
-  // ⌃[ / ⌃]: step through conversations per the current list (including the filter)
+  // ⌃[ / ⌃]: step through conversations per the current list (including the filter) — ⌃[ backward to
+  // the previous (older) conversation, ⌃] forward to the newer one
   if (e.ctrlKey && (e.key === "[" || e.key === "]")) {
     e.preventDefault();
-    void stepConversation(e.key === "]" ? 1 : -1);
+    void stepConversation(e.key === "[");
     return;
   }
   if (e.key === "Escape" || (mod && e.key.toLowerCase() === "w")) {

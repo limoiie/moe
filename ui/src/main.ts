@@ -835,16 +835,22 @@ async function stopChatGeneration() {
   refreshChatChrome();
 }
 
-/** ⌃[ / ⌃] on the page: step through chat history, like the Side View. */
-async function stepChat(delta: number) {
+/**
+ * ⌃[ / ⌃] on the page: step through chat history, like the Side View — `⌃[` is Back (the previous,
+ * older conversation), `⌃]` is Forward (the newer one). The list is newest-first, so backward is +1
+ * in the array; a conversation outside it (a blank new chat) sits at "now": backward lands on the
+ * newest, forward goes nowhere. Both ends clamp.
+ */
+async function stepChat(backward: boolean) {
   if (chatConversations.length === 0) await loadChatConversations();
   if (chatConversations.length === 0) return;
   const index = chatConversations.findIndex((c) => c.id === chatConversationId);
+  const delta = backward ? 1 : -1;
   const next =
     index === -1
-      ? delta > 0
+      ? backward
         ? 0
-        : chatConversations.length - 1
+        : -1
       : Math.min(Math.max(index + delta, 0), chatConversations.length - 1);
   const target = chatConversations[next];
   if (!target || target.id === chatConversationId) return;
@@ -2047,7 +2053,8 @@ window.addEventListener("keydown", (e) => {
     void back({ quit: false });
     return;
   }
-  // The Quick Ask page steps through chat history with ⌃[ / ⌃] (ADR-0036, the Side View's binding)
+  // The Quick Ask page steps through chat history with ⌃[ / ⌃] (ADR-0036, the Side View's binding):
+  // ⌃[ goes backward to the previous (older) conversation, ⌃] forward to the newer one
   if (
     !cardOpen &&
     view.get().mode === "chat" &&
@@ -2057,7 +2064,7 @@ window.addEventListener("keydown", (e) => {
     (e.key === "[" || e.key === "]")
   ) {
     e.preventDefault();
-    void stepChat(e.key === "]" ? 1 : -1);
+    void stepChat(e.key === "[");
     return;
   }
   // On the Quick Ask page ↑↓/⌃N/⌃P keep their native input meaning (nothing to navigate)

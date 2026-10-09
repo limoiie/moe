@@ -34,8 +34,9 @@ nowhere to live once Enter meant *send*.
   layering), the next Back returns to the command layer (the Input Bar's leading arrow follows).
 - **The page is a record surface**: ⌘N / New Chat open a blank page (`ai.new-chat` returns the blank
   `Conversation`), ⌃X removes the current conversation and ⌃⇧X all of them through the Extension's
-  delete hooks — exactly the chat history page's deletion (ADR-0022) — and ⌃[ / ⌃] step through
-  `side_conversations` like the Side View. ⌘P (Browse) still resolves the Extension's declared record
+  delete hooks — exactly the chat history page's deletion (ADR-0022) — and ⌃[ / ⌃] step backward /
+  forward through `side_conversations` (the previous, older conversation / the newer one), like the
+  Side View. ⌘P (Browse) still resolves the Extension's declared record
   list, and the actions card carries New Chat / Remove Chat / Open in Side View (⌘J) / Copy Last
   Answer (⌥⏎) / Write Back Last Answer: the old answer card's capabilities, rebuilt on the
   conversation instead of a single item.
