@@ -1,12 +1,12 @@
 # M7l: the auto write-back crashes Moe when an AI Command finishes
 
 - **ID**: MOE-0004
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: 8cc07b3
 
 Opening any AI Command (Improve Writing / Make Shorter / …) and letting the generation finish naturally
 crashed Moe the moment the stream completed.
@@ -40,4 +40,6 @@ hops to the main thread (`open_side_view` wraps in `run_on_main_thread` with an 
 ## Comments
 
 - 2026-10-09 (agent): filed from user report; root cause traced to the stream thread's WriteBack → hide
-  path (AppKit called off the main thread). Implementing.
+  path (AppKit called off the main thread).
+- 2026-10-09 (agent): shipped in `8cc07b3`; `cargo fmt --check`, `cargo clippy --workspace --all-targets
+  -- -D warnings`, `cargo test --workspace` (146) green. GUI repro pending on the user's side.
