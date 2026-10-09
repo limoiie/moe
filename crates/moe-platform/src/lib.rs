@@ -39,10 +39,35 @@ impl fmt::Display for PlatformError {
     }
 }
 
+/// The pre-show outcome of [`TextTarget::capture_selection`].
+pub enum Capture {
+    /// The selection is known: its text, or `None` for "nothing selected" (cursor mode).
+    Done(Option<String>),
+    /// The clipboard fallback's synthesized copy is still in flight (AX-opaque app): the panel may
+    /// be shown now; [`PendingCapture::finish`] completes the capture off the main thread.
+    Pending(Box<dyn PendingCapture>),
+}
+
+/// The unfinished tail of a capture whose fallback copy may not have landed yet.
+///
+/// `finish` waits out the remaining observation budget, reads the selection back and restores the
+/// clipboard snapshot; it blocks, so run it off the main thread (the panel is already visible).
+/// Dropping it without finishing leaves a copy that did land on the clipboard (the snapshot is
+/// not written back) — callers must finish.
+pub trait PendingCapture: Send {
+    /// Complete the capture: the selection text when the copy landed and carried one, else `None`.
+    fn finish(self: Box<Self>) -> Option<String>;
+}
+
 /// The Command layer reads and writes host-app text only through this boundary, without knowing the concrete mechanism.
 pub trait TextTarget: Send + Sync {
-    /// Grab the current Selection (text). Returns Ok(None) when there is no selection, falling back to the cursor.
-    fn read_selection(&self) -> Result<Option<String>, PlatformError>;
+    /// Grab the current Selection (text) before the panel becomes key. The AX path answers
+    /// synchronously; when the app doesn't expose its selection (ADR-0002), the clipboard
+    /// fallback fires its synthesized ⌘C — which is only valid while the host app still has focus —
+    /// and either completes within a short grace (a real selection lands in a poll or two) or
+    /// returns [`Capture::Pending`]: show the panel, then finish off the main thread. `None` means
+    /// there is no selection (falling back to the cursor).
+    fn capture_selection(&self) -> Capture;
 
     /// Replace the Selection if there is one, otherwise insert at the cursor.
     fn write_text(&self, text: &str) -> Result<(), PlatformError>;
@@ -52,8 +77,10 @@ pub trait TextTarget: Send + Sync {
 pub struct Unsupported;
 
 impl TextTarget for Unsupported {
-    fn read_selection(&self) -> Result<Option<String>, PlatformError> {
-        Err(PlatformError::Unsupported("stub"))
+    fn capture_selection(&self) -> Capture {
+        // No platform text access: there is never a selection (matches the old error being
+        // swallowed at the call site; the guidance UI keys off permission state instead).
+        Capture::Done(None)
     }
     fn write_text(&self, _text: &str) -> Result<(), PlatformError> {
         Err(PlatformError::Unsupported("stub"))
@@ -65,10 +92,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stub_reports_unsupported() {
+    fn stub_has_no_selection_and_rejects_writes() {
         let target = Unsupported;
+        assert!(matches!(target.capture_selection(), Capture::Done(None)));
         assert!(matches!(
-            target.read_selection(),
+            target.write_text("x"),
             Err(PlatformError::Unsupported(_))
         ));
     }

@@ -5,6 +5,7 @@
 //! a CGEventTap listener, combos go through the global-shortcut plugin (ADR-0008).
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use moe_core::contract::Emitter as CommandEmitter;
@@ -153,6 +154,10 @@ struct AppState {
     /// The selection context captured before the panel is summoned (AX focus leaves the target
     /// app once the panel becomes key): text selection + Finder-selected files (ADR-0021).
     selection: Mutex<Option<Selection>>,
+    /// Bumped on every summon while holding the selection lock: a worker finishing an earlier
+    /// capture's clipboard fallback must not publish its late text over a newer summon's selection
+    /// (MOE-0013).
+    selection_generation: AtomicU64,
     /// The platform implementation of selection read and write-back (ADR-0002).
     text_target: Box<dyn moe_platform::TextTarget>,
     /// Command usage records (platform-level, IIE4AD-346); lock order: frecency → favorites → registry.
@@ -367,14 +372,66 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
         // Capture the selection context before showing the panel (system focus leaves the target
         // app once the panel becomes key): text selection + Finder-selected files (ADR-0021).
-        let text = state.text_target.read_selection().unwrap_or(None);
+        // AX answers synchronously; the clipboard fallback (AX-opaque apps) fires its ⌘C now and
+        // either completes within its grace or hands back a pending capture — the panel shows
+        // immediately and the remaining observation runs on a worker (MOE-0013).
+        let capture_started = std::time::Instant::now();
+        let capture = state.text_target.capture_selection();
+        let capture_ms = capture_started.elapsed().as_millis();
         let files = moe_platform::files::finder_selection();
-        eprintln!(
-            "moe: selection {} chars, {} Finder files",
-            text.as_deref().map(|s| s.chars().count()).unwrap_or(0),
-            files.len()
-        );
-        *state.selection.lock().expect("selection poisoned") = Some(Selection { text, files });
+        let frontmost = moe_platform::files::frontmost_bundle_id().unwrap_or_else(|| "-".into());
+        let mut pending: Option<Box<dyn moe_platform::PendingCapture>> = None;
+        let generation = {
+            let mut slot = state.selection.lock().expect("selection poisoned");
+            match capture {
+                moe_platform::Capture::Done(text) => {
+                    eprintln!(
+                        "moe: selection {} chars, {} Finder files, capture {capture_ms} ms (frontmost {frontmost})",
+                        text.as_deref().map(|s| s.chars().count()).unwrap_or(0),
+                        files.len(),
+                    );
+                    *slot = Some(Selection { text, files });
+                }
+                moe_platform::Capture::Pending(tail) => {
+                    eprintln!(
+                        "moe: selection pending (copy in flight), {} Finder files, capture {capture_ms} ms (frontmost {frontmost})",
+                        files.len(),
+                    );
+                    *slot = Some(Selection { text: None, files });
+                    pending = Some(tail);
+                }
+            }
+            // Under the same lock: a worker that finishes before the store above sees this bump
+            // (a newer summon), one that finishes after it can no longer trust its generation.
+            state.selection_generation.fetch_add(1, Ordering::SeqCst) + 1
+        };
+        if let Some(tail) = pending {
+            let handle = window.app_handle().clone();
+            let spawned = std::thread::Builder::new()
+                .name("moe-selection-capture".into())
+                .spawn(move || {
+                    let text = tail.finish();
+                    eprintln!(
+                        "moe: selection late: {} ({} ms)",
+                        text.as_deref()
+                            .map(|s| format!("{} chars", s.chars().count()))
+                            .unwrap_or_else(|| "none".into()),
+                        capture_started.elapsed().as_millis(),
+                    );
+                    let Some(state) = handle.try_state::<AppState>() else {
+                        return;
+                    };
+                    let mut slot = state.selection.lock().expect("selection poisoned");
+                    if state.selection_generation.load(Ordering::SeqCst) == generation
+                        && let Some(selection) = slot.as_mut()
+                    {
+                        selection.text = text;
+                    }
+                });
+            if spawned.is_err() {
+                eprintln!("moe: selection capture thread failed to spawn (late capture dropped)");
+            }
+        }
         *state.last_shown.lock().expect("last_shown poisoned") = Some(std::time::Instant::now());
     }
     place_on_active_screen(window);
@@ -975,6 +1032,7 @@ fn main() {
             theme: Mutex::new(theme),
             listener: Mutex::new(listener),
             selection: Mutex::new(None),
+            selection_generation: AtomicU64::new(0),
             text_target,
             frecency: Mutex::new(moe_platform::store::load_frecency()),
             favorites: Mutex::new(moe_platform::store::load_favorites()),

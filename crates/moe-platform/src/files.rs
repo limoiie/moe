@@ -28,6 +28,17 @@ pub fn finder_selection() -> Vec<String> {
     Vec::new()
 }
 
+/// The frontmost application's bundle identifier (diagnostics: which app a summon was captured from).
+#[cfg(target_os = "macos")]
+pub fn frontmost_bundle_id() -> Option<String> {
+    imp::frontmost_bundle_id()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn frontmost_bundle_id() -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,7 +90,7 @@ mod imp {
     return _out
 end tell"#;
 
-    fn frontmost_bundle_id() -> Option<String> {
+    pub(super) fn frontmost_bundle_id() -> Option<String> {
         let workspace = NSWorkspace::sharedWorkspace();
         let app = workspace.frontmostApplication()?;
         app.bundleIdentifier().map(|id| id.to_string())
