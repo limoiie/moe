@@ -133,6 +133,17 @@ document.addEventListener("visibilitychange", () => {
 // (moe-platform::mac::install_side_view_pointer_tracking).
 (window as Window & { __moePointerInside?: (inside: boolean) => void }).__moePointerInside =
   setPointerInside;
+// A remapped or synthetic click (e.g. a BetterTouchTool Magic Mouse tap) can land in the page
+// without keying the window — AppKit's click-to-key path and the native mouse-down monitor can both
+// miss it. The focus state below is authoritative enough here: a click while the window is not
+// focused asks the backend for the key window the click meant (moe-app's focus_side_view).
+document.addEventListener(
+  "mousedown",
+  () => {
+    if (!document.body.classList.contains("moe-window-focused")) void invoke("focus_side_view");
+  },
+  { capture: true },
+);
 void getCurrentWindow().isFocused().then(setWindowFocused);
 void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
   setWindowFocused(focused);

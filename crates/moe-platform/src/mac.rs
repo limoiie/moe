@@ -23,12 +23,12 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, NSObject, NSObjectProtocol};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSEvent, NSEventMask, NSScreen, NSTrackingArea,
+    NSApplication, NSAutoresizingMaskOptions, NSEvent, NSEventMask, NSScreen, NSTrackingArea,
     NSTrackingAreaOptions, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowOrderingMode,
+    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
 
 use crate::summon::{
@@ -170,12 +170,17 @@ pub unsafe fn install_side_view_material(ns_view: *mut std::ffi::c_void) {
 ///
 /// AppKit's click-to-key path for a non-activating panel is not reliable: every so often a click
 /// delivered to the Side View leaves the panel non-key, so the click lands (hover states, buttons)
-/// but no caret appears and typing goes nowhere until the outside/inside ritual is repeated. The
-/// show path proves `makeKeyWindow` always works; the monitor runs before dispatch, keys the
-/// clicked window, and the click is then handled like a normal click in a key window.
+/// but no caret appears and typing goes nowhere until the outside/inside ritual is repeated — and a
+/// remapped/synthetic click (BetterTouchTool's Magic Mouse tap) can miss the path entirely. The
+/// show path proves the sequence `orderFrontRegardless` + `makeKeyWindow` always works; the monitor
+/// runs before dispatch and applies it to the clicked window unconditionally (`makeKeyWindow` is a
+/// no-op when the window is already key, and the state can *read* key while the keyboard focus
+/// never arrived — a guard would skip exactly that case). Every mouse-down kind is matched so a
+/// click cannot slip through by event type.
 ///
-/// A local monitor only sees events bound for this app, so this cannot touch other apps' windows,
-/// and `makeKeyWindow` does not activate the app — the panels stay non-activating.
+/// A local monitor only sees events bound for this app, so this cannot touch other apps' windows;
+/// the sequence itself does not activate the app (the chat window takes the standard activation
+/// path on a click, the summon panel stays non-activating).
 pub fn install_panel_click_to_key() {
     static INSTALLED: AtomicBool = AtomicBool::new(false);
     if INSTALLED.swap(true, Ordering::SeqCst) {
@@ -186,15 +191,27 @@ pub fn install_panel_click_to_key() {
         let event = unsafe { event.as_ref() };
         if let Some(mtm) = MainThreadMarker::new()
             && let Some(window) = event.window(mtm)
-            && !window.isKeyWindow()
         {
+            let was_key = window.isKeyWindow();
+            window.orderFrontRegardless();
             window.makeKeyWindow();
+            if !was_key {
+                // A remapped/synthetic click is refused key transitions while it is being
+                // dispatched (the window server's anti-focus-stealing); the request carries once
+                // the event is done.
+                schedule_deferred_key(&window);
+            }
         }
         event as *const NSEvent as *mut NSEvent
     });
     unsafe {
         let monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(
-            NSEventMask::LeftMouseDown,
+            NSEventMask::LeftMouseDown
+                | NSEventMask::RightMouseDown
+                | NSEventMask::OtherMouseDown
+                | NSEventMask::LeftMouseUp
+                | NSEventMask::RightMouseUp
+                | NSEventMask::OtherMouseUp,
             &handler,
         );
         // The monitor and its block live for the process (there is nothing to uninstall them for).
@@ -205,11 +222,183 @@ pub fn install_panel_click_to_key() {
     }
 }
 
+/// The deferred-key helper: a click that has already been dispatched cannot carry a key change
+/// (the window server refuses those for synthetic/remapped input while the event is in flight),
+/// and a later programmatic request is refused too while this app has no genuine interaction
+/// recorded — a remapped click does not count as one. So the retry past the event escalates: key,
+/// and if still refused, activate the app (which makes the panel keyable — it is then the front
+/// window), then key again. All of it only runs in the refused path, never for a normal click.
+struct SideViewDeferredKeyIvars {
+    window: usize,
+    attempts: Cell<u8>,
+}
+
+objc2::define_class!(
+    #[unsafe(super(NSObject))]
+    #[ivars = SideViewDeferredKeyIvars]
+    struct SideViewDeferredKey;
+
+    impl SideViewDeferredKey {
+        #[unsafe(method(tick))]
+        fn tick(&self) {
+            // SAFETY: the pointer was captured from a live window; the chat window lives for the
+            // process (see `key_window_after_click`).
+            let window: &NSWindow =
+                unsafe { &*(self.ivars().window as *mut std::ffi::c_void).cast() };
+            if !window.isVisible() || window.isKeyWindow() {
+                return;
+            }
+            // Only while the pointer is still over the window: a request left behind by a click
+            // must not reclaim the key after the user has moved on.
+            let frame = window.frame();
+            let point = NSEvent::mouseLocation();
+            let inside = point.x >= frame.origin.x
+                && point.x <= frame.origin.x + frame.size.width
+                && point.y >= frame.origin.y
+                && point.y <= frame.origin.y + frame.size.height;
+            if !inside {
+                return;
+            }
+            let Some(mtm) = MainThreadMarker::new() else {
+                return;
+            };
+            let app = NSApplication::sharedApplication(mtm);
+            window.orderFrontRegardless();
+            window.makeKeyWindow();
+            if window.isKeyWindow() {
+                eprintln!("moe: side view keyed by the deferred click retry");
+                return;
+            }
+            let attempts = self.ivars().attempts.get();
+            // The hover-driven classification may not have fired (the pointer can already be inside
+            // a freshly shown window): an activating window is the only one remapped clicks can
+            // focus through.
+            apply_window_activation(window, true);
+            if !app.isActive() && attempts == 0 {
+                eprintln!("moe: side view keying refused; activating the app");
+                unsafe {
+                    let _: () = objc2::msg_send![&app, activateIgnoringOtherApps: true];
+                }
+            }
+            // Activation can take a runloop turn to settle: one or two more beats.
+            if attempts < 2 {
+                self.ivars().attempts.set(attempts + 1);
+                let nil: Option<&objc2::runtime::AnyObject> = None;
+                unsafe {
+                    let _: () = objc2::msg_send![
+                        self,
+                        performSelector: objc2::sel!(tick),
+                        withObject: nil,
+                        afterDelay: 0.2f64
+                    ];
+                }
+            }
+        }
+    }
+);
+
+impl SideViewDeferredKey {
+    fn new(window: usize) -> Retained<Self> {
+        let this = Self::alloc();
+        let this = this.set_ivars(SideViewDeferredKeyIvars {
+            window,
+            attempts: Cell::new(0),
+        });
+        unsafe { objc2::msg_send![super(this), init] }
+    }
+}
+
+/// Schedule one deferred retry of the key request after a click (~0.15 s; the runloop retains the
+/// helper until it fires).
+fn schedule_deferred_key(window: &NSWindow) {
+    let helper = SideViewDeferredKey::new(window as *const NSWindow as usize);
+    let nil: Option<&objc2::runtime::AnyObject> = None;
+    unsafe {
+        let _: () = objc2::msg_send![
+            &helper,
+            performSelector: objc2::sel!(tick),
+            withObject: nil,
+            afterDelay: 0.15f64
+        ];
+    }
+}
+
+/// Key `ns_window` shortly after a click on it (the page's `focus_side_view` fallback, MOE-0023):
+/// the immediate request can land inside a synthetic click and be refused, so the retry is what
+/// actually carries.
+///
+/// # Safety
+/// `ns_window` must be a valid `NSWindow` pointer that outlives the deferred call — the chat
+/// window is created once and lives for the process; call on the main thread.
+pub unsafe fn key_window_after_click(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() || MainThreadMarker::new().is_none() {
+        return;
+    }
+    let window: &NSWindow = unsafe { &*ns_window.cast() };
+    schedule_deferred_key(window);
+}
+
+/// Key the Side View when a click lands inside it but is never delivered to this app (MOE-0023):
+/// a remapped/synthetic click — BetterTouchTool's Magic Mouse tap — can be posted to another
+/// process or swallowed before delivery, so neither the local monitor nor the page sees it. Global
+/// monitors are only offered events *not* destined to this app, so this fires exactly for those
+/// clicks; one whose location is inside the visible, unfocused Side View plainly meant that window.
+/// Mouse events need no accessibility grant (unlike key-event monitoring).
+///
+/// # Safety
+/// `ns_window` must be a valid `NSWindow` pointer that outlives the monitor — the chat window is
+/// created once and lives for the process; call on the main thread.
+pub unsafe fn install_panel_click_by_location(ns_window: *mut std::ffi::c_void) {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if ns_window.is_null() || MainThreadMarker::new().is_none() {
+        return;
+    }
+    let window_address = ns_window as usize;
+    let handler = block2::RcBlock::new(move |_event: NonNull<NSEvent>| {
+        if MainThreadMarker::new().is_none() {
+            return;
+        }
+        // SAFETY: see the doc comment — the pointer outlives the monitor.
+        let window: &NSWindow = unsafe { &*(window_address as *mut std::ffi::c_void).cast() };
+        if !window.isVisible() || window.isKeyWindow() {
+            return;
+        }
+        let frame = window.frame();
+        let point = NSEvent::mouseLocation();
+        let inside = point.x >= frame.origin.x
+            && point.x <= frame.origin.x + frame.size.width
+            && point.y >= frame.origin.y
+            && point.y <= frame.origin.y + frame.size.height;
+        if inside {
+            window.orderFrontRegardless();
+            window.makeKeyWindow();
+            eprintln!("moe: keyed the side view for a click that missed delivery");
+        }
+    });
+    let monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown,
+        &handler,
+    );
+    std::mem::forget(handler);
+    if let Some(monitor) = monitor {
+        std::mem::forget(monitor);
+    }
+}
+
 /// The tracking-area owner: AppKit sends `mouseEntered:` / `mouseExited:` to whatever object the
 /// area names — it need not be a view — and with `ActiveAlways` those fire for the window under
-/// the cursor even while the app is inactive.
+/// the cursor even while the app is inactive. Besides driving the page's hover state, the owner
+/// keeps the window's activation classification in step with the pointer (MOE-0023): an
+/// *unfocused* window under the pointer becomes activating, so a click — physical or remapped —
+/// takes the ordinary click-to-focus path; pointer out restores the non-activating base that the
+/// show path needs to float over full-screen Spaces. A keyed window's mask is never touched —
+/// that is when typing happens.
 #[derive(Default)]
 struct SideViewPointerIvars {
+    view: usize,
     on_change: Option<Box<dyn Fn(bool)>>,
 }
 
@@ -224,6 +413,12 @@ objc2::define_class!(
             if let Some(on_change) = &self.ivars().on_change {
                 on_change(true);
             }
+            let Some(window) = self.window() else {
+                return;
+            };
+            if !window.isKeyWindow() {
+                apply_window_activation(&window, true);
+            }
         }
 
         #[unsafe(method(mouseExited:))]
@@ -231,18 +426,57 @@ objc2::define_class!(
             if let Some(on_change) = &self.ivars().on_change {
                 on_change(false);
             }
+            if let Some(window) = self.window() {
+                apply_window_activation(&window, false);
+            }
         }
     }
 );
 
 impl SideViewPointerOwner {
-    fn new(on_change: Box<dyn Fn(bool)>) -> Retained<Self> {
+    fn new(view: usize, on_change: Box<dyn Fn(bool)>) -> Retained<Self> {
         let this = Self::alloc();
         let this = this.set_ivars(SideViewPointerIvars {
+            view,
             on_change: Some(on_change),
         });
         unsafe { objc2::msg_send![super(this), init] }
     }
+
+    /// The view's window, resolved at event time (the view lives in it by then).
+    fn window(&self) -> Option<Retained<NSWindow>> {
+        // SAFETY: the address was captured from a live webview; its window outlives the events.
+        let view: &NSView = unsafe { &*(self.ivars().view as *mut std::ffi::c_void).cast() };
+        view.window()
+    }
+}
+
+/// Toggle the window server's classification of the chat window (MOE-0023): the base is
+/// non-activating (the show path floats over full-screen Spaces and takes key without activating);
+/// activating is the ordinary click-to-focus path — the only one that grants focus to remapped
+/// clicks. Callers flip it only while the window is unfocused (pointer over it) or while it is
+/// unkeyed, never against a keyed window mid-typing.
+fn apply_window_activation(window: &NSWindow, activating: bool) {
+    let mask = window.styleMask();
+    let bit = NSWindowStyleMask::NonactivatingPanel;
+    let want = if activating { mask & !bit } else { mask | bit };
+    if want != mask {
+        window.setStyleMask(want);
+    }
+}
+
+/// Restore the chat window's base classification (non-activating) — the show path calls this so
+/// the summon always floats over a full-screen Space regardless of where the pointer was.
+///
+/// # Safety
+/// `ns_window` must be a valid `NSWindow` pointer (Tauri's `Window::ns_window()`); call on the
+/// main thread.
+pub unsafe fn set_window_activating(ns_window: *mut std::ffi::c_void, activating: bool) {
+    if ns_window.is_null() {
+        return;
+    }
+    let window: &NSWindow = unsafe { &*ns_window.cast() };
+    apply_window_activation(window, activating);
 }
 
 /// The Side View's hover as native tracking: while the window is not key the webview receives no
@@ -268,7 +502,7 @@ pub unsafe fn install_side_view_pointer_tracking(
         return;
     }
     let webview: &NSView = unsafe { &*ns_view.cast() };
-    let owner = SideViewPointerOwner::new(on_change);
+    let owner = SideViewPointerOwner::new(ns_view as usize, on_change);
     let area = unsafe {
         NSTrackingArea::initWithRect_options_owner_userInfo(
             NSTrackingArea::alloc(),

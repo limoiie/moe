@@ -39,8 +39,10 @@ tauri_nspanel::tauri_panel! {
     })
 }
 
-// The side view (chat) gets the same floating semantics: non-activating, joins the Spaces of
-// full-screen apps, and can become the key window to receive input.
+// The side view (chat) keeps the floating semantics — joins the Spaces of full-screen apps, can
+// become the key window to receive input — but stays an activating window (see the conversion
+// below): macOS refuses key/focus changes for remapped clicks on a non-activating panel
+// (MOE-0023).
 // The macro injects a batch of `use` imports and can only be invoked once per module, so it lives
 // in a submodule that re-exports the type.
 #[cfg(target_os = "macos")]
@@ -423,6 +425,18 @@ fn install_side_view_pointer_tracking(window: &tauri::WebviewWindow) {
     }
 }
 
+/// The chat window's base classification (MOE-0023): non-activating, so the summon floats over a
+/// full-screen Space and takes key without activating. The pointer tracking switches it to
+/// activating while it hovers an unfocused window (ordinary click-to-focus — the only path
+/// remapped clicks get focus through); the show path resets it before showing.
+#[cfg(target_os = "macos")]
+fn reset_side_view_activation(window: &tauri::WebviewWindow) {
+    if let Ok(ns_window) = window.ns_window() {
+        // SAFETY: the pointer comes from Tauri's window handle and its lifetime follows the window.
+        unsafe { moe_platform::mac::set_window_activating(ns_window, false) };
+    }
+}
+
 /// Must be called on the main thread: capture the selection first, then position and show the panel.
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -577,6 +591,9 @@ fn show_side_view_blocking(app: &AppHandle) {
     // Re-assert the native material: a frame restored while hidden still resizes the webview.
     #[cfg(target_os = "macos")]
     install_side_view_material(&window);
+    // Base classification before showing: the summon floats over a full-screen Space (MOE-0023).
+    #[cfg(target_os = "macos")]
+    reset_side_view_activation(&window);
 
     #[cfg(target_os = "macos")]
     let panel_shown = if let Ok(panel) = app.get_webview_panel("chat") {
@@ -867,6 +884,34 @@ fn hide_panel(app: AppHandle) {
 #[tauri::command]
 fn toggle_side_chat(app: AppHandle) {
     toggle_side_view(&app);
+}
+
+/// The click-to-key fallback from the page (MOE-0023): a remapped/synthetic click — a
+/// BetterTouchTool Magic Mouse tap — can land in the webview while AppKit's click-to-key path and
+/// the native mouse-down monitor both miss it (hover tracking is position-based and still fires,
+/// which is exactly the reported "muted chrome but no focus" state). The page's focus state comes
+/// from Tauri, so it asks for the key window the click clearly meant; main thread only.
+#[tauri::command]
+fn focus_side_view(app: AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        if let Ok(panel) = handle.get_webview_panel("chat") {
+            panel.make_key_and_order_front();
+            // A synthetic click refuses key changes while it dispatches; the retry past the event
+            // is what actually carries (moe-platform).
+            if let Some(window) = handle.get_webview_window("chat")
+                && let Ok(ns_window) = window.ns_window()
+            {
+                // SAFETY: the chat window lives for the process.
+                unsafe { moe_platform::mac::key_window_after_click(ns_window) };
+            }
+            return;
+        }
+        if let Some(window) = handle.get_webview_window("chat") {
+            let _ = window.set_focus();
+        }
+    });
 }
 
 /// Force AppKit to recompute this window's shadow (ADR-0016): the shadow is cached from the content
@@ -1257,7 +1302,13 @@ fn main() {
                 }
             }
 
-            // The side view window gets the same floating treatment: never activates, can appear on any Space (including above full-screen apps).
+            // The side view keeps the panel's floating semantics, but its activation classification
+            // is dynamic (MOE-0023): the base is non-activating — the show path can float over a
+            // full-screen Space and take key without activating — while the pointer is over the
+            // window it becomes activating, because the window server refuses key/focus grants to
+            // remapped/synthetic clicks on a non-activating panel. The mouse tracking in
+            // moe-platform flips it, the show path resets it. The summon panel is always
+            // non-activating: showing it must not steal the app you are in.
             #[cfg(target_os = "macos")]
             if let Some(window) = handle.get_webview_window("chat") {
                 match window.to_panel::<MoeChatPanel>() {
@@ -1295,11 +1346,21 @@ fn main() {
                 install_side_view_pointer_tracking(&window);
             }
 
-            // AppKit's click-to-key for non-activating panels is not reliable (a click can land
+            // AppKit's click-to-key for these floating windows is not reliable (a click can land
             // while the panel stays non-key — no caret, no typing); a local mouse-down monitor
             // keys whichever of our panels was clicked before the click dispatches.
             #[cfg(target_os = "macos")]
             moe_platform::mac::install_panel_click_to_key();
+
+            // A click that never reaches this app at all (a remapped/synthetic one) is still keyed
+            // by location when it lands in the Side View (moe-platform).
+            #[cfg(target_os = "macos")]
+            if let Some(window) = handle.get_webview_window("chat")
+                && let Ok(ns_window) = window.ns_window()
+            {
+                // SAFETY: the chat window lives for the process.
+                unsafe { moe_platform::mac::install_panel_click_by_location(ns_window) };
+            }
 
             // Menu bar resident (IIE4AD-347): no Dock icon, not in ⌘-Tab (Raycast-style)
             #[cfg(target_os = "macos")]
@@ -1389,6 +1450,7 @@ fn main() {
             open_external,
             hide_panel,
             toggle_side_chat,
+            focus_side_view,
             refresh_shadow,
             stop_generation,
             resolve_attachment,
