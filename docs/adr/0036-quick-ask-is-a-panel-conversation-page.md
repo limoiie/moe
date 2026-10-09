@@ -101,3 +101,29 @@ comes from the single table (ADR-0030):
   { payload: {} }` — the same platform path as the tray's "AI Chat": the panel is hidden and the
   chat window opens with a blank conversation, no panel page entered. The panel's ⌘J still
   materializes the *current* conversation instead; ⌘⇧/ is the direct "just open the side chat".
+
+## Amendment: the launch keys go global and toggle — ⌘' / ⌘⇧' (⌘/ unbound, MOE-0017)
+
+The panel-only ⌘/ / ⌘⇧/ keys did not deliver the point of the bindings: Quick Ask and the side chat
+could only start after summoning the panel, and pressing a key again did nothing. The two launch
+keys move to **⌘'** and **⌘⇧'**, and the app registers both as **global hotkeys** at startup through
+the global-shortcut plugin — fixed platform bindings like the summon key, not configurable. A chord
+another app owns fails to register (logged), and the same chord keeps working inside the open panel
+as the fallback; ⌘/ is unbound again.
+
+Both keys **toggle their surface**, the summon key's own semantics (a visible window hides):
+
+- **⌘' — Quick Ask**: with the panel hidden, the show path runs as a normal summon (the selection
+  context is captured, ADR-0019/0021) and the `quick-ask-toggle` event puts the webview on the page
+  — blank when it was elsewhere, kept as it was when it was already on the page. With the panel up
+  on the page, the webview dismisses it. Rust cannot read the page, so the visibility the hotkey
+  saw rides the event and the UI decides; the page's conversation is view state that survives
+  hiding either way.
+- **⌘⇧' — Open Side Chat**: a visible chat window is hidden, a hidden one is shown *as it was* (the
+  `side-show` event refreshes without resetting) — a window toggle must not drop the thread the
+  user stepped away from. The tray's "AI Chat" and the `ai.side-chat` command still open a blank
+  conversation (the direct-start path), and ⌘J still materializes the panel's current conversation.
+
+The registered hotkey consumes the chord, so the global path and the in-panel fallback cannot
+double-fire. On macOS these are Carbon hotkeys: no Input Monitoring grant is needed, so both keys
+work even before the double-tap summon listener is authorized.

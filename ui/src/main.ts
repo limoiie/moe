@@ -1534,8 +1534,28 @@ async function openConfigFile() {
 }
 
 /**
- * ⌘/ (ADR-0036 amendment): open the Quick Ask page from anywhere in the panel — the same landing
- * as applying the command's row (always blank; the search text is never sent as a question).
+ * ⌘' (ADR-0036 amendment): toggle the Quick Ask page. The global hotkey shows the panel and fires
+ * the event below; this is also the in-panel fallback when the chord lost its registration. A panel
+ * already on the page is dismissed; otherwise the page is entered — re-showing keeps the
+ * conversation that was on screen, entering blank only from another page.
+ */
+async function toggleQuickAsk(wasVisible: boolean) {
+  const onPage = view.get().mode === "chat";
+  if (wasVisible && onPage) {
+    await invoke("hide_panel");
+    return;
+  }
+  if (!onPage) {
+    await openQuickAsk();
+    return;
+  }
+  // The panel was re-shown on the page: keep it and take the input focus back.
+  q.focus();
+}
+
+/**
+ * Enter the Quick Ask page (blank): the same landing as applying the command's row (the search
+ * text is never sent as a question).
  */
 async function openQuickAsk() {
   closeAboutCard();
@@ -1552,17 +1572,14 @@ async function openQuickAsk() {
 }
 
 /**
- * ⌘⇧/ (ADR-0036 amendment): open the AI chat in the Side View directly (the `ai.side-chat`
- * command, the tray's "AI Chat" path). The backend hides the panel and shows the chat window;
- * nothing lands back in the panel. ⌘J still materializes the current conversation instead.
+ * ⌘⇧' (ADR-0036 amendment): toggle the AI chat side window (the `ai.side-chat` command's hotkey).
+ * The panel webview cannot read the window's visibility, so this asks the backend for the same
+ * toggle the global hotkey runs: visible → hidden, hidden → shown as it was. ⌘J still materializes
+ * the panel's current conversation instead.
  */
-async function openSideChat() {
-  closeAboutCard();
+async function toggleSideChat() {
   try {
-    await invoke<ActionResult>("invoke_command", {
-      commandId: "ai.side-chat",
-      query: null,
-    });
+    await invoke("toggle_side_chat");
   } catch (err) {
     showMessage(`Failed to run: ${String(err)}`);
   }
@@ -2121,17 +2138,19 @@ window.addEventListener("keydown", (e) => {
     else void openEntry(general);
     return;
   }
-  // The AI surfaces' launch keys (ADR-0036 amendment): ⌘/ opens the Quick Ask page in the panel
-  // from anywhere; ⌘⇧/ opens the AI chat in the Side View directly. Both are platform semantics
-  // (the rows' Kbd comes from the keymap table, ADR-0030); shift+/ is "?" on most layouts.
-  if ((e.metaKey || e.ctrlKey) && e.key === "/" && !e.shiftKey) {
+  // The AI surfaces' launch keys (ADR-0036 amendment): ⌘' toggles the Quick Ask page; ⌘⇧' toggles
+  // the AI chat side window. Both are global hotkeys — the OS normally consumes the chord and the
+  // events above run — so these branches only matter when the registration lost the chord to
+  // another app; shift+' is "\"" on most layouts.
+  if ((e.metaKey || e.ctrlKey) && e.key === "'" && !e.shiftKey) {
     e.preventDefault();
-    void openQuickAsk();
+    // The panel is visible by definition while handling its own key
+    void toggleQuickAsk(true);
     return;
   }
-  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "/" || e.key === "?")) {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "'" || e.key === "\"")) {
     e.preventDefault();
-    void openSideChat();
+    void toggleSideChat();
     return;
   }
   // The front-most list owns navigation and Backspace (ADR-0031): while a card is open, the card's
@@ -2372,6 +2391,11 @@ void listen<CommandEventPayload>("command-event", (event) => {
   itemFrames.push(payload.item.id, { commandId: payload.commandId, item: payload.item });
 });
 void listen("summon-authorized", () => hideBanner());
+// Global ⌘' (ADR-0036 amendment): toggle the Quick Ask page. The payload reports whether the panel
+// was already visible when the hotkey fired — visible on the page means dismiss it.
+void listen<{ visible?: boolean }>("quick-ask-toggle", (event) => {
+  void toggleQuickAsk(event.payload?.visible === true);
+});
 
 // Keep the previous input and results across summons (the user may add input after hiding);
 // only refresh the permission guidance (the user may have just granted it in System Settings); unfinished attachment input is not kept across summons.

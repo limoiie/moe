@@ -5,7 +5,8 @@
 //! Delete (⌃X, delete current record), DeleteAll (⌃⇧X, delete all records),
 //! Favorite (⌘⇧F, add/remove the current command from Favorites).
 //! The AI surfaces' launch keys are platform-fixed the same way (ADR-0036 amendment):
-//! Quick Ask (⌘/, the panel's conversation page) and Open Side Chat (⌘⇧/, the Side View directly).
+//! Quick Ask (⌘', the panel's conversation page) and Open Side Chat (⌘⇧', the Side View directly);
+//! the app also registers both as global hotkeys, so they start without summoning the panel first.
 //! The platform only fixes keybindings and routing; concrete entries are declared by Extensions.
 
 use serde::Serialize;
@@ -41,9 +42,11 @@ pub enum SystemKey {
     Materialize,
     /// Attach: add attachments to the current question (AI semantic: `@path` mention, ADR-0010).
     Attach,
-    /// Quick Ask: open the AI extension's conversation page in the panel from anywhere (ADR-0036). Default ⌘/.
+    /// Quick Ask: open the AI extension's conversation page in the panel from anywhere (ADR-0036).
+    /// Default ⌘' — also a global hotkey, so the page starts without summoning the panel first.
     QuickAsk,
-    /// Open Side Chat: open the AI chat in the Side View directly, without entering a panel page. Default ⌘⇧/.
+    /// Open Side Chat: open the AI chat in the Side View directly, without entering a panel page.
+    /// Default ⌘⇧' — also a global hotkey.
     OpenSideChat,
 }
 
@@ -67,8 +70,8 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("Esc", K::Back),
         ("⌘J", K::Materialize),
         ("⌘⇧A", K::Attach),
-        ("⌘/", K::QuickAsk),
-        ("⌘⇧/", K::OpenSideChat),
+        ("⌘'", K::QuickAsk),
+        ("⌘⇧'", K::OpenSideChat),
     ]
 }
 
@@ -159,13 +162,13 @@ mod tests {
     }
 
     /// The AI surfaces' launch keys are a platform contract too (ADR-0036 amendment):
-    /// ⌘/ opens the Quick Ask page, ⌘⇧/ opens the side chat directly.
+    /// ⌘' opens the Quick Ask page, ⌘⇧' opens the side chat directly (both global hotkeys).
     #[test]
     fn ai_surfaces_keep_their_launch_bindings() {
         let table = default_keymap();
         let display = |key: SystemKey| table.iter().find(|(_, k)| *k == key).map(|(d, _)| *d);
-        assert_eq!(display(SystemKey::QuickAsk), Some("⌘/"));
-        assert_eq!(display(SystemKey::OpenSideChat), Some("⌘⇧/"));
+        assert_eq!(display(SystemKey::QuickAsk), Some("⌘'"));
+        assert_eq!(display(SystemKey::OpenSideChat), Some("⌘⇧'"));
     }
 
     /// `display_of` is the single read path extensions use for declared invocation shortcuts (ADR-0030).

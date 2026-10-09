@@ -19,7 +19,9 @@ use moe_core::registry::Registry;
 use moe_platform::config::{MoeConfig, SummonKey, Theme};
 use moe_platform::summon::{Modifier, SummonEvent, SummonListener, SummonStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_global_shortcut::{Builder as ShortcutBuilder, ShortcutState};
+use tauri_plugin_global_shortcut::{
+    Builder as ShortcutBuilder, Code, Modifiers, Shortcut, ShortcutState,
+};
 
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{CollectionBehavior, ManagerExt, PanelLevel, WebviewWindowExt};
@@ -116,6 +118,29 @@ fn accelerator(key: &SummonKey) -> Option<String> {
         }
     });
     Some(parts.join("+"))
+}
+
+/// The AI surfaces' global launch keys (ADR-0036 amendment): fixed platform bindings, like the
+/// summon key — ⌘' starts Quick Ask in the panel, ⌘⇧' opens the side chat, both without summoning
+/// the panel first. The plugin's accelerator syntax names the apostrophe key "'" (Code::Quote).
+const QUICK_ASK_ACCELERATOR: &str = "Command+'";
+const SIDE_CHAT_ACCELERATOR: &str = "Command+Shift+'";
+
+/// Which global launch key fired; the summon combo (anything else) falls through to None = toggle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchKey {
+    QuickAsk,
+    SideChat,
+}
+
+fn launch_key_of(shortcut: &Shortcut) -> Option<LaunchKey> {
+    if shortcut.matches(Modifiers::SUPER, Code::Quote) {
+        Some(LaunchKey::QuickAsk)
+    } else if shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Quote) {
+        Some(LaunchKey::SideChat)
+    } else {
+        None
+    }
 }
 
 fn key_label(key: &SummonKey) -> String {
@@ -479,39 +504,104 @@ fn toggle_panel(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || toggle_panel_blocking(&handle));
 }
 
-/// Materialize: dismiss the panel → show the chat window right-docked → deliver the payload (conversation id, etc.).
+/// Quick Ask from the global launch key (⌘'): a **toggle** (ADR-0036 amendment). A panel already
+/// up on its Quick Ask page is dismissed by the webview (it owns the page state); anything else
+/// shows the panel — the show path captures the selection context exactly like a summon
+/// (ADR-0019/0021) — and the `quick-ask-toggle` event carries the visibility the hotkey saw, so
+/// the UI can tell "dismiss" from "enter the page". Window work must run on the main thread.
+fn toggle_quick_ask(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("panel") else {
+            eprintln!("moe: panel window does not exist");
+            return;
+        };
+        let visible = window.is_visible().unwrap_or(false);
+        if !visible {
+            show_panel_blocking(&window);
+        }
+        let _ = handle.emit_to(
+            "panel",
+            "quick-ask-toggle",
+            serde_json::json!({ "visible": visible }),
+        );
+    });
+}
+
+/// Must be called on the main thread. Dismiss the panel → show the chat window on its remembered
+/// frame (right-docked by default) and make it key. The window's content is left untouched, so the
+/// toggle's re-show path keeps the conversation that was on screen.
+fn show_side_view_blocking(app: &AppHandle) {
+    hide_panel_blocking(app);
+    let Some(window) = app.get_webview_window("chat") else {
+        eprintln!("moe: chat window does not exist");
+        return;
+    };
+    // Use the remembered frame if the user has dragged it, otherwise default right-docked
+    if !restore_side_view(&window) {
+        place_side_view(&window);
+    }
+    #[cfg(target_os = "macos")]
+    refresh_window_shadow(&window);
+
+    #[cfg(target_os = "macos")]
+    let panel_shown = if let Ok(panel) = app.get_webview_panel("chat") {
+        panel.show_and_make_key();
+        true
+    } else {
+        false
+    };
+    #[cfg(not(target_os = "macos"))]
+    let panel_shown = false;
+
+    if !panel_shown {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    eprintln!("moe: side view shown");
+}
+
+/// Must be called on the main thread.
+fn hide_side_view_blocking(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Ok(panel) = app.get_webview_panel("chat") {
+        panel.hide();
+        eprintln!("moe: side view hidden (NSPanel)");
+        return;
+    }
+    if let Some(window) = app.get_webview_window("chat") {
+        let _ = window.hide();
+        eprintln!("moe: side view hidden");
+    }
+}
+
+/// Materialize: dismiss the panel → show the chat window → deliver the payload (conversation id, etc.).
 fn open_side_view(app: &AppHandle, payload: serde_json::Value) {
     let handle = app.clone();
     // Window operations (including AppKit's orderOut/orderFront) must run on the main thread.
     let _ = app.run_on_main_thread(move || {
-        hide_panel_blocking(&handle);
-        let Some(window) = handle.get_webview_window("chat") else {
-            eprintln!("moe: chat window does not exist");
-            return;
-        };
-        // Use the remembered frame if the user has dragged it, otherwise default right-docked
-        if !restore_side_view(&window) {
-            place_side_view(&window);
-        }
-        #[cfg(target_os = "macos")]
-        refresh_window_shadow(&window);
-
-        #[cfg(target_os = "macos")]
-        let panel_shown = if let Ok(panel) = handle.get_webview_panel("chat") {
-            panel.show_and_make_key();
-            true
-        } else {
-            false
-        };
-        #[cfg(not(target_os = "macos"))]
-        let panel_shown = false;
-
-        if !panel_shown {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+        show_side_view_blocking(&handle);
         let _ = handle.emit_to("chat", "side-open", payload);
-        eprintln!("moe: side view shown");
+    });
+}
+
+/// Open Side Chat from the global launch key (⌘⇧'): a **toggle** (ADR-0036 amendment). A visible
+/// chat window is hidden; a hidden one is shown as it was — the toggle keeps the conversation on
+/// screen (the tray's "AI Chat" and ⌘J open a blank / a specific conversation instead).
+fn toggle_side_view(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let visible = handle
+            .get_webview_window("chat")
+            .map(|window| window.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        if visible {
+            hide_side_view_blocking(&handle);
+        } else {
+            show_side_view_blocking(&handle);
+            // Re-showing refreshes the window without resetting its conversation.
+            let _ = handle.emit_to("chat", "side-show", ());
+        }
     });
 }
 
@@ -736,6 +826,13 @@ fn clear_suggestions(state: State<'_, AppState>) -> Result<usize, String> {
 #[tauri::command]
 fn hide_panel(app: AppHandle) {
     hide_panel_blocking(&app);
+}
+
+/// The in-panel fallback for ⌘⇧' (ADR-0036 amendment): the panel webview cannot read the chat
+/// window's visibility, so it asks for the same toggle the global hotkey runs.
+#[tauri::command]
+fn toggle_side_chat(app: AppHandle) {
+    toggle_side_view(&app);
 }
 
 /// Stop in-progress generation (IIE4AD-365): called by the panel/side view on Esc; returns the number of generations aborted.
@@ -1019,9 +1116,17 @@ fn main() {
         ))
         .plugin(
             ShortcutBuilder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        toggle_panel(app);
+                // One handler for every registered global shortcut: the AI surfaces' launch keys
+                // (⌘' / ⌘⇧', ADR-0036 amendment) route to their open paths, the summon combo
+                // falls through to the panel toggle.
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    match launch_key_of(shortcut) {
+                        Some(LaunchKey::QuickAsk) => toggle_quick_ask(app),
+                        Some(LaunchKey::SideChat) => toggle_side_view(app),
+                        None => toggle_panel(app),
                     }
                 })
                 .build(),
@@ -1047,10 +1152,22 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
-            if let Some(accel) = accelerator {
+            {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
-                if let Err(err) = app.global_shortcut().register(accel.as_str()) {
+
+                if let Some(accel) = accelerator
+                    && let Err(err) = app.global_shortcut().register(accel.as_str())
+                {
                     eprintln!("moe: failed to register summon combo {accel}: {err}");
+                }
+                // The AI surfaces' launch keys (ADR-0036 amendment): global, so Quick Ask and the
+                // side chat start without summoning the panel first. A chord another app owns
+                // fails to register (logged); the same chord still works inside the open panel.
+                for accel in [QUICK_ASK_ACCELERATOR, SIDE_CHAT_ACCELERATOR] {
+                    match app.global_shortcut().register(accel) {
+                        Ok(()) => eprintln!("moe: launch key registered: {accel}"),
+                        Err(err) => eprintln!("moe: failed to register launch key {accel}: {err}"),
+                    }
                 }
             }
 
@@ -1204,6 +1321,7 @@ fn main() {
             extension_meta,
             open_external,
             hide_panel,
+            toggle_side_chat,
             stop_generation,
             resolve_attachment,
             side_messages,
@@ -1232,6 +1350,22 @@ mod tests {
         assert_eq!(accelerator(&key).as_deref(), Some("Control+K"));
         let key = SummonKey::parse("double-cmd").unwrap();
         assert_eq!(accelerator(&key), None);
+    }
+
+    /// The launch keys are fixed global chords (ADR-0036 amendment): ⌘' → Quick Ask, ⌘⇧' → the
+    /// side chat; every other registered shortcut (the summon combo) falls through to the toggle.
+    #[test]
+    fn launch_keys_route_by_chord() {
+        let quick: Shortcut = QUICK_ASK_ACCELERATOR.parse().unwrap();
+        let side: Shortcut = SIDE_CHAT_ACCELERATOR.parse().unwrap();
+        assert_eq!(launch_key_of(&quick), Some(LaunchKey::QuickAsk));
+        assert_eq!(launch_key_of(&side), Some(LaunchKey::SideChat));
+        // Exact-modifier matching: the shifted sibling never answers as the bare ⌘' Quick Ask; the
+        // summon combo falls through to the toggle; "Quote" spells the same key as "'".
+        let summon: Shortcut = "Command+Space".parse().unwrap();
+        assert_eq!(launch_key_of(&summon), None);
+        let quoted: Shortcut = "Command+Shift+Quote".parse().unwrap();
+        assert_eq!(quoted, side);
     }
 
     #[test]
