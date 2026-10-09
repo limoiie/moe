@@ -34,8 +34,8 @@ struct Entry {
 }
 
 impl Frecency {
-    /// Record one use: fold every stored score's decay forward and drop the faded entries (lazy
-    /// aging, as Redis's LFU does on access), then add this use.
+    /// Record one use: read every stored score through its decay and forget the faded entries (lazy
+    /// aging, as Redis's LFU does on access), then fold this command's decay in and add the use.
     pub fn record(&mut self, id: &str, now: SystemTime) {
         let now = unix_secs(now);
         self.entries
