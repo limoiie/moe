@@ -22,8 +22,8 @@ there was nowhere to surface a command's own shortcut.
   **Open Config File** declares ⌘,. Commands without a shortcut show no Kbd.
 - **A kind badge ends the row.** `Extension::command_kind()` declares the vocabulary
   (`CommandMeta.kind`); `None` renders as the platform default **"Command"**. Today the two AI
-  extensions declare **"AI Command"**; a future file source would declare "File". The badge is a
-  plain chip, not a Kbd.
+  extensions declare **"AI Command"**; a future file source would declare "File". The badge reads
+  as plain text (see the amendment; it is not a Kbd).
 - **Every key panel is the shared `kbdEl` component** (ADR-0015): the row shortcut, the action
   bar, the cards' rows and the row hints all render through it, one block per key, so the whole
   surface stays visually identical.
@@ -38,3 +38,11 @@ there was nowhere to surface a command's own shortcut.
   over the extension's.
 - The badge default is a bare string in the view layer ("Command"); if it ever needs to be
   configurable it moves into the contract.
+
+## Amendment: the kind label reads as plain text (MOE-0015)
+
+User feedback: the trailing kind rendered as a bordered chip, which reads as a control; it is a
+descriptor, not a key. It now renders as plain text at the row's end — same secondary-text token
+(13 px) and `--moe-fg-subtle` color as before, and hover still brightens it to `--moe-fg-muted` —
+so the shortcut Kbd is the only boxed element at the trailing end. Position, content, and the
+`badge` vocabulary in the view layer are unchanged; the class name stays `.moe-kind-badge`.

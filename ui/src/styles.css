@@ -432,20 +432,16 @@ body {
   display: inline-flex;
 }
 
-/* Root row kind badge (ADR-0030): the per-item type label ("Command" / "AI Command"), a plain
-   chip, not a Kbd. Sized from the shared secondary-text token so it is not a magic number. */
+/* Root row kind label (ADR-0030 amendment): the per-item type ("Command" / "AI Command") reads as
+   plain text at the row's end — no chip box — sized from the shared secondary-text token so it is
+   not a magic number. */
 .moe-kind-badge {
-  display: inline-flex;
-  align-items: center;
   flex: none;
-  padding: 2px 6px;
-  border: 1px solid var(--moe-line-strong);
-  border-radius: 6px;
   font-size: var(--moe-text-secondary);
   line-height: 1;
   color: var(--moe-fg-subtle);
 }
-/* Hover brightens the badge (the rows' standing hover rule; focus never changes it) */
+/* Hover brightens the label (the rows' standing hover rule; focus never changes it) */
 [data-pointer="live"] .group:hover .moe-kind-badge {
   color: var(--moe-fg-muted);
 }
