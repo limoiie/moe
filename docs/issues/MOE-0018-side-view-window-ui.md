@@ -1,11 +1,12 @@
 # M7z: the Side View window — chrome, a ChatGPT composer, a proper default width, legible rows
 
 - **ID**: MOE-0018
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: 56ada9b
 
 User feedback, four asks on the side-chat sub-app:
 
@@ -89,3 +90,4 @@ User feedback, four asks on the side-chat sub-app:
   (clicked into the window → fully lit). `body.moe-pointer-inside` tracks
   `mouseenter`/`mouseleave` on the document (reset on `visibilitychange` and on a re-show), and
   `body.moe-window-focused` still comes from Tauri's `isFocused` / `onFocusChanged`.
+  - 2026-10-09 (agent): closed as part of the stack commit at the user's request; commit 56ada9b.
