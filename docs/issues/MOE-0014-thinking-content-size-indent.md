@@ -1,12 +1,12 @@
 # M7v: the Thinking block's content — body-sized and indented one level
 
 - **ID**: MOE-0014
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: b5ad670
 
 User feedback on the ChatGPT-style Thinking row (MOE-0012): the expanded reasoning content was still
 `text-xs` (12 px) with no indent, so it read as a footnote rather than a nested body.
@@ -26,4 +26,7 @@ User feedback on the ChatGPT-style Thinking row (MOE-0012): the expanded reasoni
 
 ## Comments
 
-- 2026-10-09 (agent): filed from user feedback; implementing.
+- 2026-10-09 (agent): filed from user feedback.
+- 2026-10-09 (agent): delivered in `b5ad670`; `pnpm build` green. GUI check pending: expand a
+  Thinking row — 14 px muted content indented under the label, bullets and code blocks respecting
+  the indent.
