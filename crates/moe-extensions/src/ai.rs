@@ -246,12 +246,11 @@ pub(crate) struct StreamRequest {
 /// No-op finish hook (streams with no persistence and no completion callback).
 pub(crate) fn noop_sink(_text: &str) {}
 
-/// Reasoning tags some models wrap their chain of thought in. The XML-ish pairs are unambiguous
-/// anywhere in the text; MiniMax/DeepSeek-style `…` reuses the **same** delimiter on both ends and is
-/// handled separately (only at the very start — an ellipsis in prose is ordinary text).
-const THINK_OPENERS: [&str; 2] = ["<thinking>", " thinking"];
-const THINK_CLOSERS: [&str; 2] = ["</thinking>", " response"];
-/// The same-delimiter opener/closer (MiniMax/DeepSeek style).
+/// The canonical reasoning pair (MiniMax/DeepSeek): the model wraps its chain of thought in
+/// `…`…`…`; unambiguous, so recognised anywhere (interleaved blocks included).
+const THINK_OPEN: &str = "<thinking>";
+const THINK_CLOSE: &str = "</thinking>";
+/// Older MiniMax/DeepSeek style: the **same** delimiter (an ordinary ellipsis too) on both ends.
 const SAME_DELIM: &str = "…";
 
 /// The earliest tag from `tags` in `text`: (byte index, tag length).
@@ -278,10 +277,10 @@ fn push_reasoning(reasoning: &mut String, piece: &str) {
 /// Works on partial text: an unterminated block means "still thinking" (the answer stays empty), and
 /// a closing tag without an opener (servers that drop it) makes everything before it reasoning.
 pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
-    // MiniMax/DeepSeek style: `…` … `…`. The tag is ambiguous (it is also the ordinary ellipsis), so
-    // it only counts at the very start — a reasoning block always opens the message, while an
-    // ellipsis in the answer is just text. Consecutive blocks keep their own closers.
     let trimmed = raw.trim_start();
+
+    // Older style: `…` … `…`. The delimiter doubles as an ordinary ellipsis, so it only counts at the
+    // very start; each block's closer is the next delimiter.
     if let Some(body) = trimmed.strip_prefix(SAME_DELIM) {
         let mut reasoning = String::new();
         let mut tail = body;
@@ -301,14 +300,13 @@ pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
         return (reasoning, answer.trim().to_string());
     }
 
+    // Canonical tags, recognised anywhere; a lone closer means the opening tag was dropped.
     let mut reasoning = String::new();
     let mut answer = String::new();
     let mut rest = raw;
     loop {
-        let Some((open, open_len)) = first_tag(&THINK_OPENERS, rest) else {
-            // No opener: a lone closer means the server dropped the opening tag (everything before
-            // it was reasoning); with neither tag the rest is the answer.
-            match first_tag(&THINK_CLOSERS, rest) {
+        let Some((open, open_len)) = first_tag(&[THINK_OPEN], rest) else {
+            match first_tag(&[THINK_CLOSE], rest) {
                 Some((close, close_len)) => {
                     push_reasoning(&mut reasoning, &rest[..close]);
                     rest = &rest[close + close_len..];
@@ -321,7 +319,7 @@ pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
             continue;
         };
         let after = &rest[open + open_len..];
-        match first_tag(&THINK_CLOSERS, after) {
+        match first_tag(&[THINK_CLOSE], after) {
             // Unterminated block: still thinking (the answer must stay empty)
             None => {
                 answer.push_str(&rest[..open]);
@@ -1061,6 +1059,29 @@ mod tests {
             split_reasoning("\u{2026}one\u{2026}\u{2026}two\u{2026}the answer"),
             ("one\n\ntwo".into(), "the answer".into())
         );
+    }
+
+    /// The stream the user reported (MOE-0009): the canonical tags around the model's analysis — the
+    /// body must be only the final answer line, and neither part may carry tag bytes.
+    #[test]
+    fn split_reasoning_strips_the_reported_stream() {
+        let raw = r#"<thinking>
+The user wants me to fix spelling, grammar, and punctuation errors while keeping the meaning and style unchanged.
+
+Original: "this si a test cast, do you known?"
+
+Let me identify the errors:
+1. "this" should be capitalized at the start of a sentence
+2. "si" is a typo for "is"
+
+Fixed: "This is a test case, do you know?"
+</thinking>
+This is a test case, do you know?"#;
+        let (reasoning, answer) = split_reasoning(raw);
+        assert!(reasoning.starts_with("The user wants me to fix spelling"));
+        assert!(reasoning.contains("Fixed: \"This is a test case, do you know?\""));
+        assert_eq!(answer, "This is a test case, do you know?");
+        assert!(!reasoning.contains('<') && !answer.contains('<'));
     }
 
     /// Same guard: the id synthesized by fallback must be routable; the title strips attachment mentions (IIE4AD-358).
