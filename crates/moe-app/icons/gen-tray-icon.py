@@ -5,7 +5,7 @@ Template images (icon_as_template) only use the alpha channel; macOS renders the
 bar light/dark mode, so the mark adapts to the menu bar appearance for free.
 
 The mark is parsed DIRECTLY from ui/src/moe.svg (M/L/Q/Z path data → polygons, Q curves sampled),
-so the raster can never drift from the svg: edit the svg, rerun this script, done. The artwork bbox
+so the raster can never drift from the svg: regenerate the svg, rerun this script, done. The artwork bbox
 (over all vertices) is fitted to the slot, and 6x supersampling + downsampling gives anti-aliasing.
 Run: python3 crates/moe-app/icons/gen-tray-icon.py
 """
@@ -17,7 +17,7 @@ import struct
 import zlib
 
 S = 6  # supersampling factor
-W = H = 22  # the radiant-diamond mark is square once cropped
+W = H = 22  # the menu bar slot the mark is fitted into
 MARGIN = 1.0  # px of breathing room around the mark inside the menu-bar slot
 
 SVG_PATH = pathlib.Path(__file__).resolve().parents[3] / "ui" / "src" / "moe.svg"

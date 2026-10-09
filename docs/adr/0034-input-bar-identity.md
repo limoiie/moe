@@ -58,3 +58,17 @@ alpha-only): macOS tints template images per menu bar appearance, and — the st
 this iteration — the generator parses the svg's path data directly, so the raster can never drift
 from the mark: edit the svg, rerun the script. `square-m` leaves the Lucide map (ADR-0012) with
 its only caller gone.
+
+## Amendment: the refined mark — a circle core, traced from the master render
+
+The mark was refined again, this time as art: the launcher core is now a **circle** (was the rotated
+square) and the twelve satellites are rounded, corner-outward diamonds (were the hand-drawn wedge
+family), delivered as the colored app-icon render. That render (`icons/app-icon.png`) is the new
+icon master — it replaces the procedural `gen-app-icon.py` — and the flat in-app mark is *measured*
+from it, not drawn: `icons/gen-mark-svg.py` segments the master's warm pixels, fits the ring
+(30-degree slots, per-satellite sizes) and emits `ui/src/moe.svg` (single ink, M/L/Q/Z only,
+bbox-cropped); `gen-tray-icon.py` keeps parsing that svg. The chain is one-directional — master
+render → flat mark → tray raster → `cargo tauri icon` bundle set — so no step can drift, and a
+future art refinement is one re-render plus two script runs. Cost: the master render is an opaque
+square (light backdrop, no alpha), so the `.app` icon is a light square until an alpha-cut export
+replaces it.

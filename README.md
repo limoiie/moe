@@ -212,8 +212,10 @@ cd crates/moe-app && cargo tauri dev           # run the panel in development (r
 2. Two terminals: `pnpm -C ui dev` + `cargo run -p moe-app`
 3. Production build: `cd crates/moe-app && cargo tauri build` (embeds `ui/dist`, produces .app/.dmg)
 
-Icon sources: `python3 crates/moe-app/icons/gen-app-icon.py` (app icon, then run
-`cargo tauri icon`) and `gen-tray-icon.py` (menu bar template).
+Icon sources: `icons/app-icon.png` is the refined master render — the root of the chain.
+`gen-mark-svg.py` traces it into the flat `ui/src/moe.svg`, `gen-tray-icon.py` rasters the menu
+bar template from that svg, and `cd crates/moe-app && cargo tauri icon icons/app-icon.png`
+regenerates the bundle set (`.icns` / `.ico` / sizes).
 
 ## Current feature set
 

@@ -1,25 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="107 82 1040 1031">
-  <!-- Moe radiant-diamond mark: a rotated square (the launcher core) with twelve satellite wedges
-       orbiting it. Single ink: currentColor = one asset, per-theme and per-scene color (the white
-       background rect is gone — the mark is transparent, as an icon must be). viewBox is cropped
-       to the artwork bbox (107 82 → 1147 1113) so the mark fills whatever size it is given.
-       The tray raster (crates/moe-app/icons/gen-tray-icon.py) parses THIS file directly — no
-       duplicated geometry to keep in sync. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1008">
+  <!-- Moe mark: a circle core with twelve rounded-diamond satellites on a 30-degree ring —
+       the refined radiant mark. Generated from crates/moe-app/icons/app-icon.png by
+       crates/moe-app/icons/gen-mark-svg.py: the master render is the geometry's source of
+       truth (this svg is measured, not hand-drawn; do not hand-edit). Single ink:
+       currentColor = one asset, per-theme and per-scene color. Transparent; the viewBox is
+       cropped to the artwork bbox, so the mark fills whatever size it is given. The tray
+       raster (gen-tray-icon.py) parses THIS file directly — no duplicated geometry. -->
   <g fill="currentColor">
-    <!-- Outer shapes -->
-    <path d="M627 82 705 159 627 237 549 159Z"/>
-    <path d="M421 154 539 273Q480 285 433 320L345 231Z"/>
-    <path d="M833 154 909 231 820 320Q774 285 715 273Z"/>
-    <path d="M247 317 339 410Q306 457 290 509L173 393Z"/>
-    <path d="M1007 317 1081 393 964 509Q948 457 915 410Z"/>
-    <path d="M185 525 262 602 185 680 107 602Z"/>
-    <path d="M1069 525 1147 602 1069 680 991 602Z"/>
-    <path d="M286 680Q299 741 333 787L226 895 149 818Z"/>
-    <path d="M968 678 1105 818 1028 895 921 787Q954 740 968 678Z"/>
-    <path d="M428 882Q474 915 529 931L395 1066 319 992Z"/>
-    <path d="M825 882 935 992 859 1066 724 931Q779 915 825 882Z"/>
-    <path d="M627 957 704 1035 627 1113 549 1035Z"/>
-    <!-- Center square, rotated 45 degrees -->
-    <path d="M627 309 918 600 627 891 336 600Z"/>
+    <!-- Twelve satellites, 12 o'clock first, clockwise -->
+    <path d="M528.4 14.1L565.8 51.9Q593.8 80.2 565.9 108.5L528.6 146.3Q500.6 174.7 472.6 146.4L435.3 108.7Q407.3 80.4 435.2 52L472.5 14.2Q500.4 -14.2 528.4 14.1Z"/>
+    <path d="M755 121.2L768 172.1Q777.9 210.2 739.9 220.9L689.4 235.1Q651.5 245.7 641.7 207.6L628.6 156.8Q618.8 118.6 656.7 108L707.3 93.8Q745.2 83.1 755 121.2Z"/>
+    <path d="M915.7 297.9L901.6 347.3Q891 384.3 853.7 375L803.8 362.7Q766.5 353.4 777.1 316.4L791.1 267Q801.7 230 839.1 239.3L888.9 251.6Q926.3 260.9 915.7 297.9Z"/>
+    <path d="M985.9 533.5L948.1 569.4Q919.8 596.4 891.5 569.5L853.7 533.6Q825.3 506.7 853.6 479.7L891.3 443.8Q919.6 416.8 948 443.7L985.8 479.6Q1014.2 506.5 985.9 533.5Z"/>
+    <path d="M896.3 766.7L843.5 778.9Q803.9 788 791.9 749.1L775.9 697.3Q763.9 658.4 803.5 649.3L856.4 637.1Q896 628 908 666.8L924 718.7Q936 757.5 896.3 766.7Z"/>
+    <path d="M719.1 939.9L664.7 920.7Q623.8 906.2 631.7 863.6L642.1 806.8Q649.9 764.2 690.7 778.7L745.2 797.9Q786 812.4 778.2 855L767.8 911.8Q760 954.4 719.1 939.9Z"/>
+    <path d="M472.9 993.5L434.6 954.9Q405.9 925.9 434.6 896.8L472.8 858.1Q501.4 829 530.1 858L568.4 896.7Q597.1 925.7 568.5 954.7L530.3 993.5Q501.6 1022.5 472.9 993.5Z"/>
+    <path d="M234 913.6L223.1 856.1Q214.9 813 256.3 798.4L311.5 779Q352.9 764.4 361 807.5L371.9 865Q380.1 908.1 338.7 922.7L283.5 942.1Q242.1 956.7 234 913.6Z"/>
+    <path d="M77.5 719.7L92.8 667.4Q104.3 628.2 144.1 637.7L197.1 650.5Q236.8 660 225.3 699.3L210 751.6Q198.4 790.8 158.7 781.2L105.7 768.5Q66 758.9 77.5 719.7Z"/>
+    <path d="M14.1 480.7L51.9 444.7Q80.2 417.8 108.6 444.7L146.4 480.5Q174.7 507.5 146.4 534.4L108.7 570.4Q80.4 597.4 52 570.5L14.2 534.6Q-14.2 507.7 14.1 480.7Z"/>
+    <path d="M112 252.4L161.5 240Q198.7 230.7 209.3 267.5L223.4 316.5Q234 353.3 196.9 362.6L147.3 375Q110.2 384.4 99.6 347.6L85.5 298.5Q74.9 261.7 112 252.4Z"/>
+    <path d="M294 94.2L344.7 108.2Q382.8 118.7 372.9 156.9L359.8 207.9Q349.9 246.1 311.9 235.6L261.1 221.6Q223.1 211.1 232.9 172.9L246.1 121.9Q255.9 83.7 294 94.2Z"/>
+    <!-- The circle core -->
+    <path d="M750.4 507.1Q750.4 610.4 677.4 683.4Q604.3 756.5 501 756.5Q397.7 756.5 324.7 683.4Q251.6 610.4 251.6 507.1Q251.6 403.8 324.7 330.7Q397.7 257.7 501 257.7Q604.3 257.7 677.4 330.7Q750.4 403.8 750.4 507.1Z"/>
   </g>
 </svg>
