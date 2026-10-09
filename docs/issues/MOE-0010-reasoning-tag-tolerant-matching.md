@@ -1,12 +1,12 @@
 # M7q: reasoning wrappers — match tag-like tokens tolerantly, log what is left
 
 - **ID**: MOE-0010
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: 51bf986
 
 After MOE-0008/0009 the user's MiniMax stream still leaks: the card shows the reasoning and the
 answer merged (the wrapper tags are stripped by the HTML sanitizer, so they look like one body), and
@@ -54,3 +54,7 @@ fire on their stream.
 ## Comments
 
 - 2026-10-09 (agent): filed from the user's second report (rebuilt app still leaks); implementing.
+- 2026-10-09 (agent): delivered in `51bf986`; `cargo fmt --check`, `cargo clippy --workspace
+  --all-targets -- -D warnings`, `cargo test --workspace` (150) green. Rebuild pending on the user's
+  side; if anything still leaks, the terminal now prints the exact tag bytes to extend the name
+  sets from.
