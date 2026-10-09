@@ -127,9 +127,12 @@ document.addEventListener("visibilitychange", () => {
 void getCurrentWindow().isFocused().then(setWindowFocused);
 void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
   setWindowFocused(focused);
-  // The cached AppKit shadow samples content alpha and can go stale across a key-status change
-  // (ADR-0016), reading as a rectangular block around the rounded card; recompute it now.
-  void invoke("refresh_shadow");
+  // Key-status changes re-sample the cached AppKit shadow (ADR-0016): refresh on focus gain so the
+  // rounded card's shadow does not read as a rectangular block. On blur the window's shape and
+  // content are unchanged — nothing to recompute — and forcing a re-sample into the middle of the
+  // key→inactive shadow transition is suspected of the "window turns transparent seconds after
+  // clicking outside" report, so the blur side is left to the system.
+  if (focused) void invoke("refresh_shadow");
 });
 
 // ---- Lightweight toast (instant feedback for menu actions, e.g. "Config file opened") ----

@@ -392,6 +392,17 @@ fn refresh_window_shadow(window: &tauri::WebviewWindow) {
     }
 }
 
+/// The Side View's frost as a native, active-pinned material (moe-platform): macOS fades the
+/// behind-window backdrop out while a window is not key, which the card's CSS `backdrop-filter`
+/// follows; the native view does not. Install once at startup and re-assert on every show.
+#[cfg(target_os = "macos")]
+fn install_side_view_material(window: &tauri::WebviewWindow) {
+    if let Ok(ns_view) = window.ns_view() {
+        // SAFETY: the pointer comes from Tauri's webview handle and its lifetime follows the webview.
+        unsafe { moe_platform::mac::install_side_view_material(ns_view) };
+    }
+}
+
 /// Must be called on the main thread: capture the selection first, then position and show the panel.
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -543,6 +554,9 @@ fn show_side_view_blocking(app: &AppHandle) {
     }
     #[cfg(target_os = "macos")]
     refresh_window_shadow(&window);
+    // Re-assert the native material: a frame restored while hidden still resizes the webview.
+    #[cfg(target_os = "macos")]
+    install_side_view_material(&window);
 
     #[cfg(target_os = "macos")]
     let panel_shown = if let Ok(panel) = app.get_webview_panel("chat") {
@@ -837,7 +851,8 @@ fn toggle_side_chat(app: AppHandle) {
 
 /// Force AppKit to recompute this window's shadow (ADR-0016): the shadow is cached from the content
 /// alpha, and a key-status change can leave it stale — reading as a rectangular block around the
-/// rounded card until the next recompute. The Side View pings this on focus changes.
+/// rounded card until the next recompute. The Side View pings this when it *regains* focus (the
+/// blur side is left to the system; see the rationale in `ui/src/chat.ts`).
 #[tauri::command]
 fn refresh_shadow(window: tauri::WebviewWindow) {
     #[cfg(target_os = "macos")]
@@ -1243,6 +1258,14 @@ fn main() {
                     }
                     Err(err) => eprintln!("moe: failed to convert chat to NSPanel (falling back to a normal window): {err}"),
                 }
+            }
+
+            // The Side View's frost must survive losing key status (the CSS backdrop-filter does
+            // not): install the native, active-pinned material behind the webview; chat.html
+            // drops its CSS blur on macOS in turn.
+            #[cfg(target_os = "macos")]
+            if let Some(window) = handle.get_webview_window("chat") {
+                install_side_view_material(&window);
             }
 
             // Menu bar resident (IIE4AD-347): no Dock icon, not in ⌘-Tab (Raycast-style)

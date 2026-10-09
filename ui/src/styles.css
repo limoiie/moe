@@ -296,6 +296,15 @@ body {
   box-shadow: var(--moe-shadow-window);
 }
 
+/* On macOS the Side View's frost is native — an active-pinned NSVisualEffectView behind the webview
+   (moe-platform::mac::install_side_view_material). macOS fades a window's behind-window backdrop out
+   while the window is not key, and CSS `backdrop-filter` has no opt-out; the native view keeps the
+   frost. Drop the CSS layer there so the two blurs don't stack (chat.html sets the attribute). */
+html[data-platform="macos"] .moe-window-card {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 /* Actions card (⌘K / ⌘⇧P) and About card: floating cards above the results (shadow stays within the 8px padding, unclipped by the window) */
 .moe-actions-card,
 .moe-about-card {

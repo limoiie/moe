@@ -213,3 +213,26 @@ action capsule, the composer's round buttons):
   appear muted (opacity .55) and the title lights up; out they hide and the title dims, even while
   the composer keeps keyboard focus — while focus decides the *weight* (clicked into the window →
   fully lit).
+
+## Amendment: the Side View's frost is native and pinned active (MOE-0020)
+
+The CSS glass had one behavior gap the stylesheet cannot patch: **macOS fades a window's
+behind-window backdrop out while the window is not key** (the policy `NSVisualEffectView` exposes
+as `followsWindowActiveState`). The Side View samples that backdrop through the card's
+`backdrop-filter`, so a moment after clicking outside the card went unfrosted — the desktop showed
+through crisp — and only recovered when the window was clicked again.
+
+- **The frost becomes a native view on macOS.** `moe-platform::mac::install_side_view_material`
+  installs an `NSVisualEffectView` (`underWindowBackground`, `behindWindow`) directly behind the
+  webview, inset and rounded to the card's geometry (8 px / 16 px — mirroring `m-2` +
+  `rounded-2xl`) with `state = active`, so the material no longer follows the window's key status.
+  The insets are the autoresizing struts; the rounded clip keeps the system shadow reading the
+  card's shape and stops frost leaking into the corner cutouts (ADR-0016).
+- **The stylesheet drops its `backdrop-filter` for this window on macOS**
+  (`html[data-platform="macos"]`, which only chat.html sets) so the blurs do not stack. Tint, sheen
+  and rim stay CSS; the panel — and every non-macOS platform — keep the pure CSS path.
+- **The "Siri window" amendment's two caveats are scoped, not ignored.** Masking is done (the
+  inset, rounded material). `NSAppearance` sync is deferred deliberately: the material sits under
+  the card's ~0.8-alpha fill, so its tint contributes ~15–20% of the composite while the blur does
+  the visible work — it matters for a luminance-adaptive glass surface, not for a pinned frost.
+  Revisit when more of the surface moves native.

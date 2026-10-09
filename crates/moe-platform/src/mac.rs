@@ -20,7 +20,12 @@ use core_graphics::event::{
     CGEventType,
 };
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSEvent, NSScreen, NSWindow};
+use objc2::runtime::{AnyClass, NSObjectProtocol};
+use objc2_app_kit::{
+    NSAutoresizingMaskOptions, NSEvent, NSScreen, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSWindowOrderingMode,
+};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::cell::RefCell;
 
@@ -80,6 +85,82 @@ pub unsafe fn refresh_window_shadow(ns_window: *mut std::ffi::c_void) {
     unsafe {
         let _: () = objc2::msg_send![window, setHasShadow: true];
         let _: () = objc2::msg_send![window, invalidateShadow];
+    }
+}
+
+/// The Side View card's inset and corner radius in points — must match ui/chat.html (`m-2`, 8px)
+/// and styles.css (`rounded-2xl`, 16px).
+const SIDE_VIEW_MATERIAL_INSET: f64 = 8.0;
+const SIDE_VIEW_MATERIAL_RADIUS: f64 = 16.0;
+
+/// Install the Side View's native frost behind its webview: an `NSVisualEffectView` inset and
+/// rounded to the card's geometry, pinned to the *active* look.
+///
+/// macOS fades a window's behind-window backdrop out while the window is not key — the behavior
+/// `NSVisualEffectView` exposes as `FollowsWindowActiveState`. The card's CSS `backdrop-filter`
+/// samples that same backdrop, so the Side View lost its frost a moment after clicking outside
+/// (the desktop showed through crisp and unblurred) and only recovered when clicked again. CSS has
+/// no opt-out; a native effect view does (`state = active`), so on macOS the Side View's frost
+/// lives here and the stylesheet drops its `backdrop-filter` for this window
+/// (`html[data-platform="macos"]`).
+///
+/// # Safety
+/// `ns_view` must be a valid webview `NSView` pointer (Tauri's `WebviewWindow::ns_view()`); call on
+/// the main thread.
+pub unsafe fn install_side_view_material(ns_view: *mut std::ffi::c_void) {
+    if ns_view.is_null() {
+        return;
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let webview: &NSView = unsafe { &*ns_view.cast() };
+    // SAFETY: the caller guarantees a valid webview `NSView` (see the doc comment).
+    unsafe {
+        let Some(host) = webview.superview() else {
+            return;
+        };
+        let card = {
+            let frame = webview.frame();
+            NSRect::new(
+                NSPoint::new(
+                    frame.origin.x + SIDE_VIEW_MATERIAL_INSET,
+                    frame.origin.y + SIDE_VIEW_MATERIAL_INSET,
+                ),
+                NSSize::new(
+                    (frame.size.width - 2.0 * SIDE_VIEW_MATERIAL_INSET).max(0.0),
+                    (frame.size.height - 2.0 * SIDE_VIEW_MATERIAL_INSET).max(0.0),
+                ),
+            )
+        };
+        // Idempotent: a second call (the show path re-asserts it) only re-frames the material.
+        let material_class =
+            AnyClass::get(c"NSVisualEffectView").expect("NSVisualEffectView exists");
+        for subview in host.subviews().iter() {
+            if subview.isKindOfClass(material_class) {
+                subview.setFrame(card);
+                return;
+            }
+        }
+        let material = NSVisualEffectView::initWithFrame(mtm.alloc(), card);
+        material.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+        material.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        material.setState(NSVisualEffectState::Active);
+        // The insets are the struts: growing the window grows the material, keeping the 8px
+        // margin.
+        material.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        // Rounds the material itself (private but long-stable — window-vibrancy ships the same
+        // call). Required: square material corners would leak frost into the card's corner cutouts
+        // and turn the system shadow's rounded shape into a rectangle (ADR-0016).
+        let _: () = objc2::msg_send![&material, setCornerRadius: SIDE_VIEW_MATERIAL_RADIUS];
+        host.addSubview_positioned_relativeTo(
+            &material,
+            NSWindowOrderingMode::Below,
+            Some(webview),
+        );
     }
 }
 

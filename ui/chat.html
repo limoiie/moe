@@ -11,7 +11,14 @@
         "(prefers-color-scheme: dark)",
       )?.matches
         ? "dark"
-        : "light";    </script>
+        : "light";
+      /* macOS carries this window's frost as a native, active-pinned material behind the webview
+         (moe-platform::mac::install_side_view_material); the stylesheet drops its backdrop-filter
+         there so the two blurs don't stack. Only this page sets the attribute. */
+      if (navigator.userAgent.includes("Mac")) {
+        document.documentElement.dataset.platform = "macos";
+      }
+    </script>
   </head>
   <body class="bg-transparent">
     <div
