@@ -1,12 +1,12 @@
-# M7q: thinking blocks, verified — the reported stream is the canonical pair
+# M7r: thinking blocks, verified — the reported stream is the canonical pair
 
-- **ID**: MOE-0009
+- **ID**: MOE-0010
 - **State**: done
 - **Labels**: bug
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: f9adfcb
+- **Commit**: aefecef
 
 Follow-up to MOE-0008: the user reports the thinking text still reaching the result body and the
 clipboard (⌥⏎), showing "thinking" / "response" around it.
@@ -48,3 +48,7 @@ clipboard (⌥⏎), showing "thinking" / "response" around it.
 - 2026-10-09 (agent): delivered in `f9adfcb`; `cargo fmt --check`, `cargo clippy --workspace
   --all-targets -- -D warnings`, `cargo test --workspace` (149) green. Rebuild pending on the user's
   side (Rust-side change).
+- 2026-10-09 (agent): rebased onto origin/main with the whole worktree; the dev sha is now
+  `aefecef` (was `f9adfcb` — the rebase rewrote it; the close commit above still cites the
+  old sha). Renumbered MOE-0009 → MOE-0010: the `MOE-0009` slot is held on origin/main by
+  the Suggestions/frecency issue, which was published first.

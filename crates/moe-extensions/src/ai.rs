@@ -1142,7 +1142,7 @@ mod tests {
         );
     }
 
-    /// The stream the user reported (MOE-0009): the canonical tags around the model's analysis — the
+    /// The stream the user reported (MOE-0010): the canonical tags around the model's analysis — the
     /// body must be only the final answer line, and neither part may carry tag bytes.
     #[test]
     fn split_reasoning_strips_the_reported_stream() {
@@ -1165,7 +1165,7 @@ This is a test case, do you know?"#;
         assert!(!reasoning.contains('<') && !answer.contains('<'));
     }
 
-    /// Wrapper spellings the exact matcher missed (MOE-0010): internal whitespace, different case, a
+    /// Wrapper spellings the exact matcher missed (MOE-0011): internal whitespace, different case, a
     /// differently named closer, and a `response`-opened block — while XML-ish content stays content.
     #[test]
     fn split_reasoning_matches_tolerant_tag_spellings() {

@@ -1,14 +1,14 @@
-# M7q: reasoning wrappers — match tag-like tokens tolerantly, log what is left
+# M7s: reasoning wrappers — match tag-like tokens tolerantly, log what is left
 
-- **ID**: MOE-0010
+- **ID**: MOE-0011
 - **State**: done
 - **Labels**: bug
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: 51bf986
+- **Commit**: c0571e4
 
-After MOE-0008/0009 the user's MiniMax stream still leaks: the card shows the reasoning and the
+After MOE-0008/0010 the user's MiniMax stream still leaks: the card shows the reasoning and the
 answer merged (the wrapper tags are stripped by the HTML sanitizer, so they look like one body), and
 ⌥⏎ copies the raw text with the tags. The exact-string matcher (`<thinking>` / `</thinking>`) does not
 fire on their stream.
@@ -58,3 +58,6 @@ fire on their stream.
   --all-targets -- -D warnings`, `cargo test --workspace` (150) green. Rebuild pending on the user's
   side; if anything still leaks, the terminal now prints the exact tag bytes to extend the name
   sets from.
+- 2026-10-09 (agent): rebased onto origin/main (dev sha now `c0571e4`, was `51bf986`; the
+  close commit above still cites the old sha). Renumbered MOE-0010 → MOE-0011 so the merged
+  tracker keeps creation order: the regression-test issue (created earlier) takes 0010.

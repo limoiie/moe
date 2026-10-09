@@ -6,7 +6,7 @@
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: 15e34cf
+- **Commit**: 89a9c27
 
 User feedback: models like minimax-m3 stream their chain of thought inside the content
 (`…reasoning…answer`, sometimes with the opening tag dropped by the server), so the reasoning text
@@ -57,3 +57,6 @@ became the result: it showed in the card, got copied, and (before MOE-0007) was 
   --all-targets -- -D warnings`, `cargo test --workspace` (148), `pnpm build` green. GUI check
   pending: run a transform through minimax-M3 — the answer is clean, the reasoning shows in the
   Thinking block, and copy/write-back carry the answer only.
+- 2026-10-09 (agent): rebased onto origin/main to reconcile the worktree with the merged
+  Suggestions/frecency work; the dev sha is now `89a9c27` (was `15e34cf` — the rebase
+  rewrote it; the close commit above still cites the old sha).
