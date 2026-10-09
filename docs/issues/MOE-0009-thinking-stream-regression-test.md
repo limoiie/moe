@@ -1,12 +1,12 @@
 # M7q: thinking blocks, verified — the reported stream is the canonical pair
 
 - **ID**: MOE-0009
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
-- **Commit**: (pending)
+- **Commit**: f9adfcb
 
 Follow-up to MOE-0008: the user reports the thinking text still reaching the result body and the
 clipboard (⌥⏎), showing "thinking" / "response" around it.
@@ -45,3 +45,6 @@ clipboard (⌥⏎), showing "thinking" / "response" around it.
 - 2026-10-09 (agent): filed; investigation showed the canonical parser handles the reported shape —
   the live leak comes from the not-yet-rebuilt binary. Regression test added; if a rebuild still
   leaks, the next step is capturing the raw SSE bytes for the exact tag spelling.
+- 2026-10-09 (agent): delivered in `f9adfcb`; `cargo fmt --check`, `cargo clippy --workspace
+  --all-targets -- -D warnings`, `cargo test --workspace` (149) green. Rebuild pending on the user's
+  side (Rust-side change).
