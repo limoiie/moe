@@ -71,3 +71,6 @@ either opens the blank Quick Ask page. `ai.new-chat` is removed.
   filtered away. Fixed in `8b47a68`: both `kbdEl` and `kbdText` split on the documented " / "
   separator, so a bare "/" tokenizes as a key of its own. `pnpm -C ui build` green; visual re-check
   pending.
+- 2026-10-09 (agent): the launch keys moved on — ⌘' / ⌘⇧' as global hotkeys (no panel summon
+  needed); ⌘/ / ⌘⇧/ are unbound again. See MOE-0017 (the commands and the side-chat entry point
+  from this issue stand).
