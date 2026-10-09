@@ -1,11 +1,12 @@
 # M7y: ⌘' / ⌘⇧' toggle Quick Ask and the side chat globally
 
 - **ID**: MOE-0017
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: 6ab3c49
 
 User feedback: "bind quick-ask and open-side-chat to cmd+' and cmd+shift+' globally, so that I can
 start them directly without open moe previously", followed by "these two keybindings should toggle
@@ -66,3 +67,4 @@ semantics.
 - 2026-10-09 (agent): the user asked for proper toggling — both keys now toggle their surface
   (⌘' dismissal lives in the webview via the visibility payload; ⌘⇧' hides/shows the window with a
   non-resetting `side-show`). ADR-0036 amendment and README updated in the same pass.
+- 2026-10-09 (agent): closed as part of the stack commit at the user's request; commit 6ab3c49.
