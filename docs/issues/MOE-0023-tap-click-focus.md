@@ -1,11 +1,12 @@
 # M8e: a remapped tap click keys the Side View like a real click
 
 - **ID**: MOE-0023
-- **State**: in-progress
+- **State**: done
 - **Labels**: bug, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: 9a896f1
 
 User feedback: with BetterTouchTool remapping the Magic Mouse's left-tap to "left-single-click",
 "after I click outside the side-chat window, then left-tap inner the window, the window wouldn't
@@ -71,7 +72,10 @@ are the rare failure-path signals:
 
 ## Comments
 
-- 2026-10-09 (agent): filed from user feedback; two diagnostic runs localized the refusal
-  (delivery fine, key + activation refused for synthetic input on a non-activating panel) and led
-  to the activating-window change. Delivered in the working tree (uncommitted). Milestone prefix
-  guessed as M8e — rename if the milestone series differs.
+- 2026-10-09 (agent): filed from user feedback; two diagnostic runs localized the refusal — the
+  click is delivered, but key and activation are refused for synthetic input on a non-activating
+  panel — and led to the dynamic activation classification. Confirmed in the GUI ("it works"); the
+  routine diagnostic lines were trimmed, the rare failure-path ones kept. Milestone prefix guessed
+  as M8e — rename if the milestone series differs.
+- 2026-10-09 (agent): closed; commit 9a896f1. Follow-up filed: MOE-0024 (the first click after a
+  tap-activation is swallowed).
