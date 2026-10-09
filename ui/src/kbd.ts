@@ -46,8 +46,10 @@ export interface KbdOptions {
 export function kbdEl(display: string, options: KbdOptions = {}): HTMLElement {
   const wrap = document.createElement("span");
   wrap.className = "moe-keys";
+  // Split on the " / " separator only (spaces included): a bare "/" is a key of its own,
+  // so "⌘/" must tokenize to ⌘ + / instead of losing the slash.
   const parts = display
-    .split("/")
+    .split(" / ")
     .map((part) => part.trim())
     .filter(Boolean);
   const shown = options.firstOnly ? parts.slice(0, 1) : parts;
@@ -73,7 +75,7 @@ export function kbdEl(display: string, options: KbdOptions = {}): HTMLElement {
 /** Plain-text form (for placeholders, aria, and other non-DOM spots). */
 export function kbdText(display: string): string {
   return display
-    .split("/")
+    .split(" / ")
     .map((part) => part.trim())
     .filter(Boolean)
     .join(" / ");
