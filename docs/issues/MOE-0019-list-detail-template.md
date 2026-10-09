@@ -1,11 +1,12 @@
 # M8a: the list–detail page template — grouped lists as contract
 
 - **ID**: MOE-0019
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-09
 - **Updated**: 2026-10-09
 - **Assignee**: agent
+- **Commit**: e7b1e70
 
 User feedback: "group the chat sessions of the chat history in the side-chat window properly" and
 "group the chat sessions (list) in the search-chat-history's page as well, which is list-details
@@ -54,3 +55,4 @@ inheriting the actions&keybindings directly, preserving the identical behavior".
 
 - 2026-10-09 (agent): filed from user feedback; delivered in the working tree (uncommitted).
   Milestone prefix guessed as M8a — rename if the milestone series differs.
+- 2026-10-09 (agent): closed as part of the stack commit at the user's request; commit e7b1e70.
