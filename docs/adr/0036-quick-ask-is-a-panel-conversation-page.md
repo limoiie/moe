@@ -74,3 +74,10 @@ and Esc (`stop_generation`, platform-wide), and the pill carries the `⏎` Kbd i
 keeps its first-priority stop on result cards; only the Quick Ask page keeps the confirmation
 dialog on Back — an accidental Back there must not kill an answer mid-sentence. Once the stream
 stops or finishes, Enter is the item's primary again (write back for AI Commands, ADR-0024).
+
+## Amendment: Back confirms on every streaming surface (ADR-0038)
+
+The asymmetry above is gone: a result card asks the same question on Back (Esc / empty ⌫) — ⏎ Stop
+Generation / Esc Keep Generating — while ⏎ and the pill's Stop row still stop immediately. ADR-0038
+gives the result pages the rest of the page dialect the dialog belongs to: the Input Bar is not the
+page's state, and Back leaves a result page in one step to the fresh root.

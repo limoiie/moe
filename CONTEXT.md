@@ -105,7 +105,9 @@ The row an Extension offers when the search has no match (`Extension::fallback_c
 **consumes the Input Bar text** — the typed text is the command's parameter (AI: Ask "…", Moe:
 Save AI Key), and the page it opens may take the bar over (the Quick Ask page clears it). Matched
 command rows never treat the search text as content: the panel delivers the input only to rows
-declaring `InputKind::Query`, plus the Live List takeover above (ADR-0036).
+declaring `InputKind::Query`, plus the Live List takeover above (ADR-0036) — and the bar is cleared
+when a command that did not consume it opens its page, so the text never lingers as a page's state
+(ADR-0038).
 _Avoid_: fallback item (the formal term is the capturing row)
 
 **Focused Item**:
@@ -134,10 +136,11 @@ _Avoid_: execute, open, enable
 
 **Stop (stop generation)**:
 An item still streaming is marked `pending`; while pending, **Enter requests stop** (the primary
-action yields to Stop Generation — result cards and the Quick Ask page alike) and Back keeps its
-first-priority stop on result cards, while on the Quick Ask page Back asks for confirmation first
-(ADR-0036 amendments). Stopping is platform-wide (all ongoing generations at once) and keeps what
-was generated instead of rolling it back (ADR-0006 amendment).
+action yields to Stop Generation — result cards and the Quick Ask page alike) and **Back asks first**
+on every streaming surface: the confirmation dialog (⏎ Stop Generation / Esc Keep Generating), while
+the pill's Stop row stops immediately (ADR-0036 amendments, ADR-0038). Stopping is platform-wide
+(all ongoing generations at once) and keeps what was generated instead of rolling it back (ADR-0006
+amendment).
 _Avoid_: cancel, interrupt
 
 **Secondary Action**:

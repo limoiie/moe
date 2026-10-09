@@ -26,6 +26,7 @@ import {
 import { conversationTitle, createConversationView, type ConversationView } from "./messages";
 import { initPointerIntent } from "./pointer";
 import { store } from "./store";
+import { streamCoalescer } from "./stream";
 import { initTheme, themePreference, type ThemePreference } from "./theme";
 import type {
   Action,
@@ -103,8 +104,6 @@ let detailItemId: string | null = null;
 /** Detail card shape: preview (focused preview, the list stays) / message (full-screen card, e.g. errors). */
 type DetailMode = "none" | "preview" | "message";
 let detailMode: DetailMode = "none";
-/** After Esc dismisses the preview, it stays collapsed until focus changes (Raycast-style layering). */
-let previewDismissed = false;
 
 /**
  * Actions card (the floating card opened by ⌘K / ⌘⇧P): all actions + filtering, without replacing the body.
@@ -143,8 +142,9 @@ interface ChatParts {
 }
 let chatParts: ChatParts | null = null;
 
-/** Back on the page while generating asks first (ADR-0036): the dialog owns the keys while it is up. */
+/** Back while generating asks first (ADR-0036/0038): the dialog owns the keys while it is up and runs the stop on OK. */
 let confirmOpen = false;
+let confirmAction: (() => void) | null = null;
 
 // ---- Avatar chip (ADR-0026): the bottom-left card ----
 
@@ -650,14 +650,7 @@ function renderDetail() {
   const v = view.get();
   const item = v.mode === "items" ? v.items[v.focus] : undefined;
   const shape = pageShapeOf(item, v.detailFull === true, v.items.length);
-  // The split page's detail pane is part of the page (not dismissible): previewDismissed only applies to full-screen detail
-  const dismissible = shape === "detail";
-  if (
-    detailMode === "message" ||
-    (dismissible && previewDismissed) ||
-    shape === "list" ||
-    !item
-  ) {
+  if (detailMode === "message" || shape === "list" || !item) {
     if (detailMode !== "message") clearDetail();
     return;
   }
@@ -673,22 +666,6 @@ function renderDetail() {
   }
 }
 
-/**
- * First layer of Esc/Backspace: consumes a dismissible detail (returns true if consumed).
- * Only "full-screen detail" can be dismissed (after which the result row is visible); the split
- * page's detail pane is part of the page and is not dismissed — Back goes straight to the root (ADR-0018).
- */
-function dismissDetail(): boolean {
-  if (detailMode === "none") return false;
-  const v = view.get();
-  const item = v.mode === "items" ? v.items[v.focus] : undefined;
-  const shape = pageShapeOf(item, v.detailFull === true, v.items.length);
-  if (shape !== "detail") return false;
-  previewDismissed = true;
-  clearDetail();
-  return true;
-}
-
 view.subscribe(render);
 
 // ---- Quick Ask page (the panel's conversation, ADR-0036) ----
@@ -699,13 +676,16 @@ view.subscribe(render);
 /** The page's DOM (same lazy-rebuild pattern as the detail parts: `clearDetail` detaches it). */
 function ensureChatParts(): ChatParts {
   if (!chatParts || !detailEl.contains(chatParts.log)) {
+    // The log itself is the scroll container (CONVERSATION_PANE_CLASS is only the column): the
+    // conversation view's scrollToEnd targets it, like the Side View's #messages. The hint reads at
+    // the top of the blank page (order-first) while the log stretches below it.
     const log = document.createElement("div");
-    log.className = "space-y-4";
+    log.className = "min-h-0 flex-1 space-y-4 overflow-y-auto";
     const error = document.createElement("div");
     error.className =
-      "hidden rounded-xl border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger";
+      "hidden shrink-0 rounded-xl border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger";
     const hint = document.createElement("div");
-    hint.className = "px-1 py-2 text-xs text-fg-subtle";
+    hint.className = "order-first shrink-0 px-1 py-2 text-xs text-fg-subtle";
     hint.textContent =
       "New chat — type a question and press ⏎; ⌃[ / ⌃] step through chat history.";
     detailEl.replaceChildren(log, error, hint);
@@ -794,7 +774,6 @@ async function enterChat(conversationId: string | null, commandId?: string) {
   closeConfirm();
   closeActionsCard();
   clearDetail(); // resets the detail pane; the chat parts rebuild on the next render
-  previewDismissed = false;
   chatConversationId = conversationId;
   chatGenerating = false;
   view.update((v) => ({
@@ -963,32 +942,48 @@ async function writeBackLastAnswer() {
   await runChatAnswerAction("write-back", "Write Back");
 }
 
-/** Back on the page while an answer streams: confirm before stopping (ADR-0036). */
-function openConfirm() {
+/**
+ * The stop-confirmation dialog (ADR-0036/0038): one generic component for every streaming surface —
+ * Back only asks, the action it carries is the surface's own stop (Quick Ask page or result card).
+ */
+function openConfirm(options: { text: string; ok: string; cancel: string; action: () => void }) {
   if (confirmOpen) return;
   confirmOpen = true;
-  confirmTextEl.textContent = "Stop generating? The answer so far is kept.";
+  confirmAction = options.action;
+  confirmTextEl.textContent = options.text;
   confirmOkEl.replaceChildren(
-    document.createTextNode("Stop Generation"),
+    document.createTextNode(options.ok),
     kbdEl("⏎", { firstOnly: true }),
   );
   confirmCancelEl.replaceChildren(
-    document.createTextNode("Keep Generating"),
+    document.createTextNode(options.cancel),
     kbdEl("Esc", { firstOnly: true }),
   );
   confirmCardEl.classList.remove("hidden");
 }
 
+/** The "Back while generating" ask shared by the Quick Ask page and the result pages (ADR-0038). */
+function openStopConfirm(action: () => void) {
+  openConfirm({
+    text: "Stop generating? The generated part is kept.",
+    ok: "Stop Generation",
+    cancel: "Keep Generating",
+    action,
+  });
+}
+
 function closeConfirm() {
   if (!confirmOpen) return;
   confirmOpen = false;
+  confirmAction = null;
   confirmCardEl.classList.add("hidden");
   q.focus();
 }
 
 confirmOkEl.addEventListener("click", () => {
+  const action = confirmAction;
   closeConfirm();
-  void stopChatGeneration();
+  action?.();
 });
 confirmCancelEl.addEventListener("click", () => closeConfirm());
 // The dialog buttons must not steal the input focus (the same rule as the action pill)
@@ -1035,7 +1030,6 @@ function applyResult(
     const items = res.list.items;
     closeActionsCard();
     clearDetail();
-    previewDismissed = false;
     view.update((v) => ({
       ...v,
       mode: "items",
@@ -1079,10 +1073,11 @@ async function openEntry(kind: "browse" | "new") {
   try {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: command.id,
-      // Live commands take over input with their own view: clear the input on entry (same as applyFocused)
       query: null,
     });
-    if (command.live) q.value = "";
+    // An entry never consumes the search text: entering its records page clears the bar (ADR-0038),
+    // same as applyFocused — typing there searches commands again.
+    q.value = "";
     applyResult(res, command.id, command.live, command.icon, command.title);
   } catch (err) {
     showMessage(`Failed to run: ${String(err)}`);
@@ -1095,17 +1090,16 @@ async function openEntry(kind: "browse" | "new") {
  */
 async function applyCommand(cmd: CommandMeta) {
   // The Input Bar text is a command's parameter only when the row declares Query (ADR-0036): the
-  // capturing row (the no-match fallback) consumes it; a Live row takes the input over (cleared on
-  // entry); every other row is applied without it — text used to search is never content.
+  // capturing row (the no-match fallback) consumes it; a Live row takes the input over; every other
+  // row is applied without it — text used to search is never content, and the page it opens clears
+  // the bar (ADR-0038): from there the input is a search box again, not the page's state.
   const query = cmd.live || cmd.input !== "query" ? null : q.value;
   try {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: cmd.id,
       query,
     });
-    if (cmd.live) {
-      q.value = "";
-    }
+    if (cmd.live || cmd.input !== "query") q.value = "";
     applyResult(res, cmd.id, cmd.live, cmd.icon, cmd.title);
   } catch (err) {
     showMessage(`Failed to run: ${String(err)}`);
@@ -1142,7 +1136,6 @@ async function applyFocused(alt: boolean) {
 }
 
 function move(delta: number) {
-  previewDismissed = false;
   view.update((v) => {
     const len = v.mode === "commands" ? v.commands.length : v.items.length;
     return { ...v, focus: len === 0 ? 0 : (v.focus + delta + len) % len };
@@ -1748,12 +1741,12 @@ async function clearSuggestions() {
   }
 }
 
-// Esc / empty-input Backspace layered back: confirm dialog → stop generation → actions card → preview/detail → results layer → clear input → (may close panel)
+// Esc / empty-input Backspace layered back: confirm dialog → stop generation → actions card → result page → clear input → (may close panel)
 // Empty Backspace passes quit:false: the root layer stays in place and does not close the panel (closing the panel belongs to Esc alone)
 async function back(options: { quit?: boolean } = {}) {
   const { quit = true } = options;
   const v = view.get();
-  // The stop-confirmation dialog is the front-most layer (ADR-0036; its own keys are handled above)
+  // The stop-confirmation dialog is the front-most layer (ADR-0036/0038; its own keys are handled above)
   if (confirmOpen) {
     closeConfirm();
     return;
@@ -1762,7 +1755,7 @@ async function back(options: { quit?: boolean } = {}) {
   // clears first (the platform-wide input layering); otherwise back to the command layer.
   if (v.mode === "chat") {
     if (chatGenerating) {
-      openConfirm();
+      openStopConfirm(() => void stopChatGeneration());
       return;
     }
     if (q.value) {
@@ -1776,9 +1769,10 @@ async function back(options: { quit?: boolean } = {}) {
     void refresh("");
     return;
   }
-  // While streaming: Esc's first priority is stop (IIE4AD-365)
+  // A streaming result page asks first too (ADR-0038): an accidental Back must not silently kill a
+  // generation — Enter and the pill's Stop row stop immediately
   if (v.mode === "items" && v.items[v.focus]?.pending) {
-    await stopGeneration();
+    openStopConfirm(() => void stopGeneration());
     return;
   }
   // The actions card is an overlay: close it first, then back out further (Raycast-style)
@@ -1791,11 +1785,11 @@ async function back(options: { quit?: boolean } = {}) {
     closeAboutCard();
     return;
   }
-  if (dismissDetail()) {
-    return;
-  }
+  // Result pages back out in one step (ADR-0038): the full-screen detail is the page itself, the row
+  // list behind it is not a stop on the way, and the page cleared the Input Bar when it opened — so
+  // the parent is the fresh root (empty query), never the stale search from the way in.
   if (v.mode !== "commands") {
-    view.update((s) => ({ ...s, mode: "commands", items: [], focus: 0 }));
+    await refresh("");
     return;
   }
   if (q.value) {
@@ -1809,7 +1803,6 @@ async function back(options: { quit?: boolean } = {}) {
 
 async function refresh(query: string) {
   clearDetail();
-  previewDismissed = false;
   const sections = await invoke<CommandSection[]>("search_commands", { query });
   // The Suggestions section's real place in the flat list (ADR-0025): it sits under Favorites
   // when those exist, so the delete slot and the actions card need its range, not just a count.
@@ -1958,13 +1951,14 @@ async function submitAttach() {
 // ---- Global keyboard events (keyboard-first: every capability is reachable, the mouse is only redundant) ----
 
 window.addEventListener("keydown", (e) => {
-  // Back while an answer streams asks first (ADR-0036): the dialog is the front-most layer and owns
-  // every key — including the attachment toggle below (a modal must not open another mode).
+  // Back while an answer streams asks first (ADR-0036/0038): the dialog is the front-most layer and
+  // owns every key — including the attachment toggle below (a modal must not open another mode).
   if (confirmOpen) {
     e.preventDefault();
     if (e.key === "Enter") {
+      const action = confirmAction;
       closeConfirm();
-      void stopChatGeneration();
+      action?.();
     } else if (e.key === "Escape" || e.key === "Backspace") {
       closeConfirm();
     }
@@ -2140,6 +2134,9 @@ q.addEventListener("input", () => {
   debounce = setTimeout(() => {
     if (attaching) return;
     const v = view.get();
+    // While a result streams the page owns the input (ADR-0038): re-running the search would replace
+    // the results layer under the stream and orphan it (the frames keep arriving for a page nobody sees)
+    if (v.mode === "items" && v.items.some((i) => i.pending)) return;
     if (v.mode === "items" && v.sourceLive && v.sourceCommandId) {
       void rerunLive(q.value);
     } else {
@@ -2223,7 +2220,37 @@ bannerActionEl.addEventListener("click", () => {
 });
 
 // Streaming command events: the items layer updates in place by item id; the Quick Ask page adopts
-// frames of its own conversation (the capture's ask and the page's sends both carry the id).
+// frames of its own conversation (the capture's ask and the page's sends both carry the id). Frames
+// arrive per model delta, so both surfaces run them through the coalescer (ADR-0038): the DOM
+// re-renders at most every ~50 ms, and the newest frame per key is what lands.
+const chatFrames = streamCoalescer<string, { text: string; pending: boolean }>((frames) => {
+  const frame = frames.get(chatConversationId ?? "");
+  if (!frame || view.get().mode !== "chat") return;
+  const parts = ensureChatParts();
+  parts.view.updateStreaming(frame.text, frame.pending);
+  parts.view.scrollToEnd();
+  chatGenerating = frame.pending;
+  refreshChatChrome();
+  // The final frame (pending=false) marks the end of generation (IIE4AD-365)
+  if (!frame.pending) void loadChatConversations();
+});
+
+const itemFrames = streamCoalescer<string, { commandId: string; item: Item }>((frames) => {
+  const v = view.get();
+  if (v.mode !== "items") return;
+  const items = v.items.slice();
+  let changed = false;
+  for (const [id, frame] of frames) {
+    if (frame.commandId !== v.sourceCommandId) continue;
+    const idx = items.findIndex((i) => i.id === id);
+    if (idx === -1) continue;
+    items[idx] = frame.item;
+    changed = true;
+  }
+  // view updates trigger render() → the preview re-renders in place on streaming events (staying pinned to the bottom)
+  if (changed) view.update((s) => ({ ...s, items }));
+});
+
 void listen<CommandEventPayload>("command-event", (event) => {
   const payload = event.payload?.itemUpdated;
   if (!payload) return;
@@ -2232,23 +2259,15 @@ void listen<CommandEventPayload>("command-event", (event) => {
     const conversationId = (payload.item.payload as { conversationId?: string } | null)
       ?.conversationId;
     if (!conversationId || conversationId !== chatConversationId) return;
-    const pending = payload.item.pending === true;
-    const parts = ensureChatParts();
-    parts.view.updateStreaming(payload.item.detail ?? "", pending);
-    parts.view.scrollToEnd();
-    chatGenerating = pending;
-    refreshChatChrome();
-    // The final frame (pending=false) marks the end of generation (IIE4AD-365)
-    if (!pending) void loadChatConversations();
+    chatFrames.push(conversationId, {
+      text: payload.item.detail ?? "",
+      pending: payload.item.pending === true,
+    });
     return;
   }
   if (v.mode !== "items" || v.sourceCommandId !== payload.commandId) return;
-  const idx = v.items.findIndex((i) => i.id === payload.item.id);
-  if (idx === -1) return;
-  const items = v.items.slice();
-  items[idx] = payload.item;
-  // view updates trigger render() → the preview re-renders in place on streaming events (staying pinned to the bottom)
-  view.update((s) => ({ ...s, items }));
+  if (!v.items.some((i) => i.id === payload.item.id)) return;
+  itemFrames.push(payload.item.id, { commandId: payload.commandId, item: payload.item });
 });
 void listen("summon-authorized", () => hideBanner());
 

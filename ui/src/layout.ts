@@ -82,10 +82,12 @@ export const DETAIL_PANE_CLASS =
   "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-fg";
 
 /**
- * The Quick Ask page's conversation pane (ADR-0036): same insets as the detail pane, but no prose
- * styles on the container — each answer bubble carries its own `.md` (the Side View's arrangement).
+ * The Quick Ask page's conversation pane (ADR-0036): a flex column — the message log inside is the
+ * scroll container (`createConversationView`'s `scrollToEnd` scrolls the log, like the Side View's
+ * `#messages`), so this class carries no overflow and no prose styles (each answer bubble carries
+ * its own `.md`).
  */
-export const CONVERSATION_PANE_CLASS = "min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3";
+export const CONVERSATION_PANE_CLASS = "flex min-h-0 flex-1 flex-col px-4 pb-12 pt-3";
 
 /**
  * Which shape should render right now.

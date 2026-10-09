@@ -56,8 +56,8 @@ themselves stay listed in their own sections.
 | `⌘⇧K` | About | Open the About card (Open Config File / Save AI Key / Send Feedback; the avatar chip's menu, ADR-0027) |
 | `⌘⇧F` | Favorite | Add/remove the current command from Favorites (root: the focused command; inside a command: the source command, ADR-0029) |
 | `⌘,` | OpenConfig | Open the config file (the macOS Preferences convention; also the About card's first row, ADR-0027) |
-| `Esc` | Layered back | While generating → stop (on the Quick Ask page: a confirmation dialog first, ADR-0036); otherwise actions card → (full-screen) detail → root → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
-| `⌫` | Layered back | Non-empty input = normal delete; **empty input steps back one layer** (like `Esc`, but the root layer never closes the panel, ADR-0017) |
+| `Esc` | Layered back | While generating → a confirmation dialog first (every streaming surface, ADR-0036/0038); otherwise actions card → root (a result page backs out in one step) → clear input → close the panel; on split pages the detail never collapses, Back goes straight to root |
+| `⌫` | Layered back | Non-empty input = normal delete; **empty input steps back one layer** (like `Esc` — including the confirmation dialog while a result streams — but the root layer never closes the panel, ADR-0017) |
 
 A **bottom bar** floats over the list, exactly one row tall (ADR-0026) — the left chip and the
 right pill line up with the last visible row band, and the chip's avatar is centered on the item
@@ -108,7 +108,8 @@ Every shortcut is rendered as Kbd blocks, one key per block.
 - **AI Chat (Quick Ask)**: typing a question with nothing matching offers the fallback **Ask "…"**
   (`⏎` sends it); applying **Quick Ask** itself (e.g. typing `quick`) opens the **conversation page**
   in the panel instead — the search text is never sent as a question (ADR-0036). On the page the
-  Input Bar is the composer: **`⏎` sends** (input cleared) and answers stream into the conversation;
+  Input Bar is the composer: **`⏎` sends** (input cleared) and answers stream into the conversation,
+  the page following the answer down as it streams;
   **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
   **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step through
   history, **`⌘P`** opens the history list, **`⌘J`** continues in the Side View, `⌥⏎` copies the last
@@ -125,10 +126,12 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   Extract Key Ideas / Continue Writing. **Select text, summon, type the command name (e.g.
   "improve") and press Enter**: the result streams into a result card and **automatically
   replaces the selection and dismisses the panel when done**; with no selection the command guides
-  you to select the text first — the search text is never transformed (ADR-0036). **While the result
-  streams, `⏎` stops the generation** (the primary action yields to Stop, ADR-0036 amendment); after
-  it has stopped or finished, `⏎` writes back manually and `⌥⏎` copies — Esc keeps what was
-  generated so far and does not write back by itself.
+  you to select the text first — the search text is never transformed (ADR-0036) and is cleared from
+  the Input Bar when the command opens. **While the result streams, `⏎` stops the generation** (the
+  primary action yields to Stop, ADR-0036 amendment) and **Back (`Esc` / empty `⌫`) asks first** — an
+  accidental Back must not kill the generation (ADR-0038); with the search text gone, Back leaves the
+  result page in one step. After the stream has stopped or finished, `⏎` writes back manually and
+  `⌥⏎` copies — a stopped generation keeps what was generated and does not write back by itself.
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
   buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same

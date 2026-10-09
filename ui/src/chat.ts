@@ -10,6 +10,7 @@ import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
 import { conversationTitle, createConversationView } from "./messages";
 import { initPointerIntent } from "./pointer";
+import { streamCoalescer } from "./stream";
 import { initTheme } from "./theme";
 import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
 
@@ -543,21 +544,30 @@ void listen<SideOpenPayload>("side-open", (event) => {
 
 // Streamed answers of the shown conversation, whichever surface started them: the Side View's own
 // continuation (`ai.side` frames) and the panel's Quick Ask page (`ai.quick-ask` frames) both carry
-// the conversation id, so both windows mirror the same answer (ADR-0036).
+// the conversation id, so both windows mirror the same answer (ADR-0036). Frames arrive per model
+// delta and run through the coalescer (ADR-0038): the DOM re-renders at most every ~50 ms.
+const frames = streamCoalescer<string, { text: string; pending: boolean }>((batch) => {
+  const frame = batch.get(conversationId ?? "");
+  if (!frame) return;
+  log.updateStreaming(frame.text, frame.pending);
+  log.scrollToEnd();
+  if (generating !== frame.pending) {
+    generating = frame.pending;
+    updateSendUi();
+  }
+  // The final frame (pending=false) marks the end of generation (IIE4AD-365)
+  if (!frame.pending) void loadConversations();
+});
+
 void listen<CommandEventPayload>("command-event", (event) => {
   const update = event.payload?.itemUpdated;
   if (!update) return;
   const payload = update.item.payload as { conversationId?: string } | null;
   if (!payload || payload.conversationId !== conversationId) return;
-  // The final frame (pending=false) marks the end of generation (IIE4AD-365)
-  const pending = update.item.pending === true;
-  log.updateStreaming(update.item.detail ?? "", pending);
-  log.scrollToEnd();
-  if (generating !== pending) {
-    generating = pending;
-    updateSendUi();
-  }
-  if (!pending) void loadConversations();
+  frames.push(payload.conversationId, {
+    text: update.item.detail ?? "",
+    pending: update.item.pending === true,
+  });
 });
 
 // ---- Attachments (📎 = same path as the panel's ⌘⇧A, ADR-0010) ----

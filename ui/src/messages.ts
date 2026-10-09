@@ -52,6 +52,9 @@ export function createConversationView(container: HTMLElement): ConversationView
   /** The answer bubble being streamed into (created on the first event). */
   let streaming: StreamingBubble | null = null;
   let last: string | null = null;
+  /** Whether an rAF correction is already queued (stream bursts must not queue one per frame). */
+  let correcting = false;
+  let lateCorrection: ReturnType<typeof setTimeout> | undefined;
 
   function scrollToBottom() {
     container.scrollTop = container.scrollHeight;
@@ -127,9 +130,19 @@ export function createConversationView(container: HTMLElement): ConversationView
       return container.childElementCount === 0;
     },
     scrollToEnd() {
+      // Pin immediately, then correct once after async layout (markdown/code/images expand, IIE4AD-369).
+      // Stream frames call this in bursts: the rAF correction is deduped and the delayed one follows
+      // the last frame, so the container is not thrashed three times per frame.
       scrollToBottom();
-      requestAnimationFrame(scrollToBottom);
-      setTimeout(scrollToBottom, 120);
+      if (!correcting) {
+        correcting = true;
+        requestAnimationFrame(() => {
+          correcting = false;
+          scrollToBottom();
+        });
+      }
+      clearTimeout(lateCorrection);
+      lateCorrection = setTimeout(scrollToBottom, 120);
     },
   };
 }
