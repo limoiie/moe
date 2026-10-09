@@ -52,6 +52,8 @@ themselves stay listed in their own sections.
 | `⌃X` | Delete | Delete the current record (AI = current conversation; results layer, Quick Ask page and Suggestions only, ADR-0022/0025/0036) |
 | `⌃⇧X` | DeleteAll | Delete all records (AI = all conversations; also clears all suggestions, ADR-0022/0025) |
 | `⌘J` | Materialize | Move the current conversation into the extension's Side View |
+| `⌘/` | Quick Ask | Open the AI conversation page in the panel from anywhere; always blank — the search text is never sent (ADR-0036 amendment) |
+| `⌘⇧/` | Open Side Chat | Open the AI chat in the Side View directly (the `ai.side-chat` command), without entering a panel page (ADR-0036 amendment) |
 | `⌃[` / `⌃]` | Step conversations | Quick Ask page and Side View: backward / forward through the chat history — `⌃[` the previous (older) conversation, `⌃]` the newer one (ADR-0036) |
 | `⌘⇧A` | Attach | Type/paste a file path, inserted as `@"path"` (ADR-0010) |
 | `⌘⇧K` | About | Open the About card (Open Config File / Save AI Key / Send Feedback; the avatar chip's menu, ADR-0027) |
@@ -116,7 +118,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
   **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step backward /
   forward through history (the previous, older conversation / the newer one), **`⌘P`** opens the
-  history list, **`⌘J`** continues in the Side View, `⌥⏎` copies the last
+  history list, **`⌘J`** continues in the Side View, **`⌘/`** opens the page from anywhere in the
+  panel (always blank) and **`⌘⇧/`** opens the side chat directly instead (a new side window, no
+  panel step — ADR-0036 amendment), `⌥⏎` copies the last
   answer and `⌘K` groups the conversation's actions (Open in Side View / Copy Last Answer / Write
   Back) with the page's slots (Browse Chats / New Chat / Remove Chat / Remove All Chats). **Text
   selected before summoning automatically becomes

@@ -18,6 +18,7 @@ use moe_core::contract::{
     Item, MoeError, NoopEmitter, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
+use moe_core::keymap::{SystemKey, display_of};
 use moe_platform::config::MoeConfig;
 use moe_platform::db::Db;
 use moe_platform::keychain;
@@ -820,10 +821,11 @@ impl Extension for AiShell {
                 ),
                 icon: Some("sparkles".into()),
                 // Apply opens the page (ADR-0036); the capture row (fallback) declares Query and
-                // delivers the input text as the question.
+                // delivers the input text as the question. Its invocation shortcut is the platform's
+                // ⌘/ (display from the keymap table, ADR-0030).
                 input: InputKind::None,
                 live: false,
-                keybinding: None,
+                keybinding: display_of(SystemKey::QuickAsk).map(str::to_string),
                 extension_title: None,
                 kind: None,
             },
@@ -840,14 +842,14 @@ impl Extension for AiShell {
                 kind: None,
             },
             CommandMeta {
-                id: "ai.new-chat".into(),
+                id: "ai.side-chat".into(),
                 extension_id: "ai".into(),
-                title: "New Chat".into(),
-                subtitle: Some("Start a blank conversation in the panel".into()),
-                icon: Some("plus".into()),
+                title: "Open Side Chat".into(),
+                subtitle: Some("Open the AI chat in the side window directly".into()),
+                icon: Some("panel-right".into()),
                 input: InputKind::None,
                 live: false,
-                keybinding: None,
+                keybinding: display_of(SystemKey::OpenSideChat).map(str::to_string),
                 extension_title: None,
                 kind: None,
             },
@@ -863,10 +865,10 @@ impl Extension for AiShell {
         match command_id {
             "ai.quick-ask" => self.quick_ask(query, selection, None),
             "ai.search-history" => Ok(self.search_history(query.unwrap_or_default())),
-            // Generic New action (⌘N, ADR-0014) and the New Chat command: both open the blank Quick
-            // Ask page — the conversation lives in the panel now (ADR-0036).
-            "ai.new-chat" => Ok(ActionResult::Conversation {
-                conversation_id: None,
+            // Open the Side View directly (the tray's "AI Chat" path): the platform hides the panel
+            // and shows the chat window; an empty payload = a blank conversation.
+            "ai.side-chat" => Ok(ActionResult::OpenSideView {
+                payload: serde_json::json!({}),
             }),
             _ => Err(MoeError::NotFound),
         }
@@ -879,9 +881,11 @@ impl Extension for AiShell {
             .find(|c| c.id == "ai.search-history")
     }
 
-    /// Generic New action (⌘N, ADR-0014): AI's "new" = new conversation.
+    /// Generic New action (⌘N, ADR-0014): AI's "new" is the blank Quick Ask page. New Chat was
+    /// the same action and folded into Quick Ask (ADR-0036 amendment), so the entry resolves to
+    /// the Quick Ask command's meta.
     fn new_command(&self) -> Option<CommandMeta> {
-        self.commands().into_iter().find(|c| c.id == "ai.new-chat")
+        self.commands().into_iter().find(|c| c.id == "ai.quick-ask")
     }
 
     /// The trailing badge on root rows (ADR-0030): AI's commands are AI Commands.
@@ -1725,7 +1729,11 @@ This is a test case, do you know?"#;
             );
         }
         assert_eq!(ext.browse_command().unwrap().id, "ai.search-history");
-        assert_eq!(ext.new_command().unwrap().id, "ai.new-chat");
+        assert_eq!(
+            ext.new_command().unwrap().id,
+            "ai.quick-ask",
+            "New Chat folded into Quick Ask (ADR-0036 amendment)"
+        );
     }
 
     /// Request body assembly for the panel page: history + the new question (with selection context) both go into the body.
@@ -1806,13 +1814,15 @@ This is a test case, do you know?"#;
         );
     }
 
-    /// New (⌘N gives the New Chat command, ADR-0014): it opens the blank panel conversation page
-    /// instead of a notice card — the page is where a new conversation starts (ADR-0036).
+    /// New (⌘N gives the Quick Ask entry, ADR-0014): the blank panel conversation page. New Chat
+    /// was the same action and is gone — the entry resolves to `ai.quick-ask` (ADR-0036 amendment).
     #[test]
-    fn new_chat_opens_the_blank_panel_page() {
+    fn the_new_entry_opens_the_blank_panel_page() {
+        let new = AiShell.new_command().expect("AI declares its New entry");
+        assert_eq!(new.id, "ai.quick-ask", "New resolves to Quick Ask");
         let result = AiShell
-            .invoke("ai.new-chat", None, None)
-            .expect("ai.new-chat is routable");
+            .invoke(&new.id, None, None)
+            .expect("ai.quick-ask is routable");
         assert_eq!(
             result,
             ActionResult::Conversation {
@@ -1821,5 +1831,43 @@ This is a test case, do you know?"#;
         );
         let json = serde_json::to_value(&result).unwrap();
         assert!(json["conversation"]["conversationId"].is_null());
+    }
+
+    /// Quick Ask declares its ⌘/ shortcut from the platform keymap (ADR-0030), so the row's Kbd
+    /// can never drift from the binding the panel implements.
+    #[test]
+    fn quick_ask_declares_its_launch_shortcut() {
+        let quick = AiShell
+            .commands()
+            .into_iter()
+            .find(|c| c.id == "ai.quick-ask")
+            .expect("quick-ask registered");
+        assert_eq!(
+            quick.keybinding.as_deref(),
+            display_of(SystemKey::QuickAsk),
+            "the Kbd comes from the keymap table"
+        );
+    }
+
+    /// Open Side Chat (⌘⇧/, ADR-0036 amendment): the command opens the Side View directly with an
+    /// empty payload — a blank conversation, the tray's "AI Chat" path, no panel page entered.
+    #[test]
+    fn side_chat_opens_the_side_view_directly() {
+        let side = AiShell
+            .commands()
+            .into_iter()
+            .find(|c| c.id == "ai.side-chat")
+            .expect("side-chat registered");
+        assert_eq!(
+            side.keybinding.as_deref(),
+            display_of(SystemKey::OpenSideChat),
+            "the Kbd comes from the keymap table"
+        );
+        assert_eq!(
+            AiShell.invoke("ai.side-chat", None, None).unwrap(),
+            ActionResult::OpenSideView {
+                payload: serde_json::json!({})
+            }
+        );
     }
 }

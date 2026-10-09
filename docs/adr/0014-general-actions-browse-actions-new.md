@@ -29,7 +29,7 @@ UI 侧：`ui/src/keymap.ts` 是这三个语义的 UI 镜像（`generalActionOf(e
 | Actions ⌘⇧P | 打开 Focused Item 的动作层（同 ⌘K） | 打开更多操作菜单 |
 | New ⌘N | 调 `entry_command(new)` 新建记录 | 新对话 |
 
-AI 扩展声明：Browse → `ai.search-history`（历史会话），New → `ai.new-chat`（面板里的空态卡：
+AI 扩展声明：Browse → `ai.search-history`（历史会话），New → `ai.quick-ask`（面板里的会话页：
 一问一会话，下一条提问自然是新会话）。
 
 ## 代价
@@ -48,3 +48,11 @@ actions card（ADR-0028 的「一张卡两个窗口」连键位也统一）：�
 Materialize 由 ⌘M 改绑 **⌘J**（应用户要求；⌘M 亦与 macOS minimize 的肌肉记忆冲突）。AI 扩展
 answer item 声明的 keybinding、各处提示文案与 README 键位表同步更新；keymap 表仍是唯一事实源，
 Kbd 与 tooltip 不会漂移。
+
+## 修订：AI 的 New 归并到 Quick Ask，并为两个界面加直达键（MOE-0016）
+
+AI 扩展原先声明 New → `ai.new-chat`，与 `ai.quick-ask` 是同一个动作（都返回空白会话页），
+命令盘里却多一条重复行。现删除 `ai.new-chat`：`new_command()` 直接解析到 `ai.quick-ask`，
+各页面上的 ⌘N 行为不变（仍是打开空白会话页）；「New Chat」只留在 UI 的固定文案里
+（actions card 的 General 行、Side View 表头按钮）。两个界面的直达键见 ADR-0036 修订：
+⌘/ = 面板内 Quick Ask，⌘⇧/ = 直开侧栏聊天（`ai.side-chat`）。

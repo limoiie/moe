@@ -4,6 +4,8 @@
 //! Browse (⌘P, record list), Actions (⌘K, action list), New (⌘N, new record),
 //! Delete (⌃X, delete current record), DeleteAll (⌃⇧X, delete all records),
 //! Favorite (⌘⇧F, add/remove the current command from Favorites).
+//! The AI surfaces' launch keys are platform-fixed the same way (ADR-0036 amendment):
+//! Quick Ask (⌘/, the panel's conversation page) and Open Side Chat (⌘⇧/, the Side View directly).
 //! The platform only fixes keybindings and routing; concrete entries are declared by Extensions.
 
 use serde::Serialize;
@@ -39,6 +41,10 @@ pub enum SystemKey {
     Materialize,
     /// Attach: add attachments to the current question (AI semantic: `@path` mention, ADR-0010).
     Attach,
+    /// Quick Ask: open the AI extension's conversation page in the panel from anywhere (ADR-0036). Default ⌘/.
+    QuickAsk,
+    /// Open Side Chat: open the AI chat in the Side View directly, without entering a panel page. Default ⌘⇧/.
+    OpenSideChat,
 }
 
 /// (display string, semantic). The UI and keyboard events bind by semantic; the display string goes into the Hints Bar.
@@ -61,6 +67,8 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("Esc", K::Back),
         ("⌘J", K::Materialize),
         ("⌘⇧A", K::Attach),
+        ("⌘/", K::QuickAsk),
+        ("⌘⇧/", K::OpenSideChat),
     ]
 }
 
@@ -93,7 +101,7 @@ mod tests {
         }
         assert_eq!(
             seen.len(),
-            15,
+            17,
             "keep the Hints Bar grouping in sync when adding semantics"
         );
     }
@@ -148,6 +156,16 @@ mod tests {
             .find(|(_, k)| *k == SystemKey::OpenConfig)
             .map(|(d, _)| *d);
         assert_eq!(display, Some("⌘,"));
+    }
+
+    /// The AI surfaces' launch keys are a platform contract too (ADR-0036 amendment):
+    /// ⌘/ opens the Quick Ask page, ⌘⇧/ opens the side chat directly.
+    #[test]
+    fn ai_surfaces_keep_their_launch_bindings() {
+        let table = default_keymap();
+        let display = |key: SystemKey| table.iter().find(|(_, k)| *k == key).map(|(d, _)| *d);
+        assert_eq!(display(SystemKey::QuickAsk), Some("⌘/"));
+        assert_eq!(display(SystemKey::OpenSideChat), Some("⌘⇧/"));
     }
 
     /// `display_of` is the single read path extensions use for declared invocation shortcuts (ADR-0030).

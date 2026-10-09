@@ -1533,6 +1533,41 @@ async function openConfigFile() {
   }
 }
 
+/**
+ * ⌘/ (ADR-0036 amendment): open the Quick Ask page from anywhere in the panel — the same landing
+ * as applying the command's row (always blank; the search text is never sent as a question).
+ */
+async function openQuickAsk() {
+  closeAboutCard();
+  try {
+    const res = await invoke<ActionResult>("invoke_command", {
+      commandId: "ai.quick-ask",
+      query: null,
+    });
+    q.value = "";
+    applyResult(res, "ai.quick-ask", false, "sparkles");
+  } catch (err) {
+    showMessage(`Failed to run: ${String(err)}`);
+  }
+}
+
+/**
+ * ⌘⇧/ (ADR-0036 amendment): open the AI chat in the Side View directly (the `ai.side-chat`
+ * command, the tray's "AI Chat" path). The backend hides the panel and shows the chat window;
+ * nothing lands back in the panel. ⌘J still materializes the current conversation instead.
+ */
+async function openSideChat() {
+  closeAboutCard();
+  try {
+    await invoke<ActionResult>("invoke_command", {
+      commandId: "ai.side-chat",
+      query: null,
+    });
+  } catch (err) {
+    showMessage(`Failed to run: ${String(err)}`);
+  }
+}
+
 /** Save AI Key runs the same command as the list: its guidance card lands in the results layer. */
 async function runAboutKey() {
   closeAboutCard();
@@ -2084,6 +2119,19 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (general === "actions") toggleActionsCard();
     else void openEntry(general);
+    return;
+  }
+  // The AI surfaces' launch keys (ADR-0036 amendment): ⌘/ opens the Quick Ask page in the panel
+  // from anywhere; ⌘⇧/ opens the AI chat in the Side View directly. Both are platform semantics
+  // (the rows' Kbd comes from the keymap table, ADR-0030); shift+/ is "?" on most layouts.
+  if ((e.metaKey || e.ctrlKey) && e.key === "/" && !e.shiftKey) {
+    e.preventDefault();
+    void openQuickAsk();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "/" || e.key === "?")) {
+    e.preventDefault();
+    void openSideChat();
     return;
   }
   // The front-most list owns navigation and Backspace (ADR-0031): while a card is open, the card's

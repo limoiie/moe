@@ -32,8 +32,9 @@ nowhere to live once Enter meant *send*.
   with a confirmation dialog — Stop Generation (⏎) or Keep Generating (Esc) — because an accidental
   Back must not silently kill an answer. One Back layer: a draft clears first (ADR-0017's input
   layering), the next Back returns to the command layer (the Input Bar's leading arrow follows).
-- **The page is a record surface**: ⌘N / New Chat open a blank page (`ai.new-chat` returns the blank
-  `Conversation`), ⌃X removes the current conversation and ⌃⇧X all of them through the Extension's
+- **The page is a record surface**: ⌘N / New Chat open a blank page (`ai.quick-ask` with no query
+  returns the blank `Conversation`; New Chat was the same action and folded into it — see the
+  amendment), ⌃X removes the current conversation and ⌃⇧X all of them through the Extension's
   delete hooks — exactly the chat history page's deletion (ADR-0022) — and ⌃[ / ⌃] step backward /
   forward through `side_conversations` (the previous, older conversation / the newer one), like the
   Side View. ⌘P (Browse) still resolves the Extension's declared record
@@ -82,3 +83,21 @@ The asymmetry above is gone: a result card asks the same question on Back (Esc /
 Generation / Esc Keep Generating — while ⏎ and the pill's Stop row still stop immediately. ADR-0038
 gives the result pages the rest of the page dialect the dialog belongs to: the Input Bar is not the
 page's state, and Back leaves a result page in one step to the fresh root.
+
+## Amendment: New Chat folds into Quick Ask; the surfaces' launch keys (MOE-0016)
+
+`ai.new-chat` and `ai.quick-ask` resolved to the same result — the blank `Conversation` page — so
+the duplicate command is gone. The generic New action (⌘N, ADR-0014) still opens the blank page:
+`new_command()` now resolves to `ai.quick-ask`, and "New Chat" remains only where the UI paints it
+(the actions card's General row, the Side View's header button).
+
+The two surfaces also gain direct launch keys, declared in the platform keymap so the rows' Kbd
+comes from the single table (ADR-0030):
+
+- **⌘/ — Quick Ask**: from anywhere in the panel, opens the conversation page with the same landing
+  as applying the command's row — always blank, the search text is never sent (the page dialect of
+  this ADR is otherwise unchanged).
+- **⌘⇧/ — Open Side Chat**: the new `ai.side-chat` command returns `ActionResult::OpenSideView
+  { payload: {} }` — the same platform path as the tray's "AI Chat": the panel is hidden and the
+  chat window opens with a blank conversation, no panel page entered. The panel's ⌘J still
+  materializes the *current* conversation instead; ⌘⇧/ is the direct "just open the side chat".
