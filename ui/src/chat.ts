@@ -552,11 +552,15 @@ void listen<SideOpenPayload>("side-open", (event) => {
 // Streamed answers of the shown conversation, whichever surface started them: the Side View's own
 // continuation (`ai.side` frames) and the panel's Quick Ask page (`ai.quick-ask` frames) both carry
 // the conversation id, so both windows mirror the same answer (ADR-0036). Frames arrive per model
-// delta and run through the coalescer (ADR-0038): the DOM re-renders at most every ~50 ms.
-const frames = streamCoalescer<string, { text: string; pending: boolean }>((batch) => {
+// delta and run through the coalescer (ADR-0038): the DOM re-renders at most every ~50 ms; reasoning
+// blocks ride the payload (MOE-0008) and render as the bubble's Thinking block.
+const frames = streamCoalescer<
+  string,
+  { text: string; pending: boolean; reasoning: string }
+>((batch) => {
   const frame = batch.get(conversationId ?? "");
   if (!frame) return;
-  log.updateStreaming(frame.text, frame.pending);
+  log.updateStreaming(frame.text, frame.pending, frame.reasoning);
   log.scrollToEnd();
   if (generating !== frame.pending) {
     generating = frame.pending;
@@ -569,11 +573,12 @@ const frames = streamCoalescer<string, { text: string; pending: boolean }>((batc
 void listen<CommandEventPayload>("command-event", (event) => {
   const update = event.payload?.itemUpdated;
   if (!update) return;
-  const payload = update.item.payload as { conversationId?: string } | null;
-  if (!payload || payload.conversationId !== conversationId) return;
-  frames.push(payload.conversationId, {
+  const meta = update.item.payload as { conversationId?: string; reasoning?: string } | null;
+  if (!meta || meta.conversationId !== conversationId) return;
+  frames.push(meta.conversationId, {
     text: update.item.detail ?? "",
     pending: update.item.pending === true,
+    reasoning: meta.reasoning ?? "",
   });
 });
 

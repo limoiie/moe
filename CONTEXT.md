@@ -131,6 +131,13 @@ card **is the decision point** — nothing touches the host app until the user a
 generation writes back nothing (ADR-0024 amendments).
 _Avoid_: quick ask (that is AI Chat), prompt
 
+**Thinking (reasoning block)**:
+The chain of thought some models stream inline (`…` / `<thinking>` blocks): never the answer — the
+platform strips it from the streamed, persisted, copied and written-back text, carries it in the item
+payload, and the UI folds it into a collapsible "Thinking" block above the answer (ADR-0024
+amendment).
+_Avoid_: reasoning text, chain of thought as content
+
 **Detail Full**:
 A results-layer shape: the single result is itself the content (AI answers, notices) and its
 detail fills the panel; the opposite of the list + detail shape. Declared by the command's result

@@ -130,7 +130,8 @@ fn spec_of(command_id: &str) -> Option<&'static Spec> {
 /// Result card (streaming placeholder / final text): Apply = write back, ⌥⏎ = copy, and the refine
 /// loop — "{title} Again" re-runs the same transform on this result (`ActionResult::Rerun`, ADR-0024
 /// amendment). The card is the decision point: nothing touches the host app until the user applies.
-fn transform_item(title: &str, text: &str, pending: bool) -> Item {
+/// The model's thinking rides the payload (`reasoning`), never the body (MOE-0008).
+fn transform_item(title: &str, text: &str, reasoning: &str, pending: bool) -> Item {
     Item {
         id: "aicmd.result".into(),
         title: "AI Command Result".into(),
@@ -156,7 +157,7 @@ fn transform_item(title: &str, text: &str, pending: bool) -> Item {
                 keybinding: None,
             },
         ],
-        payload: serde_json::Value::Null,
+        payload: serde_json::json!({ "reasoning": reasoning }),
         detail: Some(text.into()),
         pending,
     }
@@ -306,7 +307,7 @@ impl Extension for AiCommands {
             // The blocking path returns the same review card as the streaming path — never an
             // automatic write-back (ADR-0024 amendment; the panel itself always streams).
             Ok(out) => Ok(ActionResult::detail(vec![transform_item(
-                spec.title, &out, false,
+                spec.title, &out, "", false,
             )])),
             Err(err) => Ok(ActionResult::detail(vec![notice_item(&format!(
                 "## Request failed\n\n```\n{err}\n```"
@@ -341,7 +342,9 @@ impl Extension for AiCommands {
         let stream_key = run_key();
         let item_of: ai::FrameBuilder = {
             let title = spec.title.to_string();
-            Arc::new(move |text, pending| transform_item(&title, text, pending))
+            Arc::new(move |text, reasoning, pending| {
+                transform_item(&title, text, reasoning, pending)
+            })
         };
         let command_id = command_id.to_string();
         let emitter = emitter.clone();
@@ -364,7 +367,7 @@ impl Extension for AiCommands {
         });
         // Placeholder frame: body left empty — the "generating" inline indicator is already the only status feedback
         Ok(ActionResult::detail(vec![transform_item(
-            spec.title, "", true,
+            spec.title, "", "", true,
         )]))
     }
 
@@ -495,7 +498,7 @@ mod tests {
     /// loop (ADR-0024 amendment — the platform turns `Rerun` into a re-invocation).
     #[test]
     fn transform_item_actions_write_back_copy_and_rerun() {
-        let item = transform_item("Improve Writing", "result", false);
+        let item = transform_item("Improve Writing", "result", "", false);
         let write = &item.actions[0];
         assert_eq!(write.kind, ActionKind::Primary);
         assert_eq!(
@@ -521,7 +524,7 @@ mod tests {
             }
         );
         // Mid-stream the card owns its one stream: a rerun click is a no-op.
-        let pending = transform_item("Improve Writing", "part", true);
+        let pending = transform_item("Improve Writing", "part", "", true);
         assert_eq!(
             AiCommands
                 .run_item_action("aicmd.improve", &pending, rerun)
@@ -552,6 +555,8 @@ mod tests {
             let delta = |content: &str| {
                 format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{content}\"}}}}]}}\n\n")
             };
+            // A thinking model (MOE-0008): the reasoning block must never leak into the result
+            let _ = socket.write_all(delta("…weighing options…").as_bytes());
             let _ = socket.write_all(delta("Improved").as_bytes());
             let _ = socket.write_all(delta(" text").as_bytes());
             let _ = socket.write_all(b"data: [DONE]\n\n");
@@ -589,8 +594,8 @@ mod tests {
                         body: prompt_body("m", "Only output the translation.", "hello", true),
                         command_id: "aicmd.improve".into(),
                         stream_key: "aicmd:test-run".into(),
-                        item_of: Arc::new(|text, pending| {
-                            transform_item("Improve Writing", text, pending)
+                        item_of: Arc::new(|text, reasoning, pending| {
+                            transform_item("Improve Writing", text, reasoning, pending)
                         }),
                         persist: Arc::new(ai::noop_sink),
                         on_done: Arc::new(move |text| {
@@ -609,7 +614,15 @@ mod tests {
         let items = recorder.items.lock().unwrap();
         let last = items.last().expect("at least one frame");
         assert!(!last.pending, "the last frame should have pending=false");
-        assert_eq!(last.detail.as_deref(), Some("Improved text"));
+        assert_eq!(
+            last.detail.as_deref(),
+            Some("Improved text"),
+            "the body is the answer, never the reasoning"
+        );
+        assert_eq!(
+            last.payload["reasoning"], "weighing options",
+            "the reasoning rides the payload for the UI's Thinking block"
+        );
         let done_texts = recorder.done_texts.lock().unwrap();
         assert_eq!(
             done_texts.as_slice(),

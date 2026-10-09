@@ -23,7 +23,12 @@ import {
   SECTION_HEADER_HEIGHT,
   type PageShape,
 } from "./layout";
-import { conversationTitle, createConversationView, type ConversationView } from "./messages";
+import {
+  conversationTitle,
+  createConversationView,
+  reasoningEl,
+  type ConversationView,
+} from "./messages";
 import { initPointerIntent } from "./pointer";
 import { store } from "./store";
 import { streamCoalescer } from "./stream";
@@ -587,6 +592,7 @@ function paintDetail(
   itemId: string | null,
   pending: boolean,
   headerItem?: Item,
+  reasoning?: string,
 ) {
   const nearBottom =
     detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
@@ -594,6 +600,9 @@ function paintDetail(
   const body = parts.body;
   body.replaceChildren();
   if (headerItem) body.append(detailHeaderEl(headerItem));
+  // The model's thinking (reasoning blocks, MOE-0008) renders as its own collapsible block above the
+  // answer — open while streaming, folded once settled; the body only ever holds the answer text
+  if (reasoning?.trim()) body.append(reasoningEl(reasoning, pending));
   const prose = document.createElement("div");
   prose.className = "md";
   prose.innerHTML = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
@@ -657,7 +666,14 @@ function renderDetail() {
   detailMode = "preview";
   const full = shape === "detail";
   detailEl.className = DETAIL_MESSAGE_CLASS;
-  paintDetail(item.detail ?? "", item.id, item.pending === true, full ? undefined : item);
+  const reasoning = (item.payload as { reasoning?: string } | null)?.reasoning;
+  paintDetail(
+    item.detail ?? "",
+    item.id,
+    item.pending === true,
+    full ? undefined : item,
+    reasoning,
+  );
   if (full) {
     listEl.classList.add("hidden");
   } else {
@@ -2240,11 +2256,14 @@ bannerActionEl.addEventListener("click", () => {
 // frames of its own conversation (the capture's ask and the page's sends both carry the id). Frames
 // arrive per model delta, so both surfaces run them through the coalescer (ADR-0038): the DOM
 // re-renders at most every ~50 ms, and the newest frame per key is what lands.
-const chatFrames = streamCoalescer<string, { text: string; pending: boolean }>((frames) => {
+const chatFrames = streamCoalescer<
+  string,
+  { text: string; pending: boolean; reasoning: string }
+>((frames) => {
   const frame = frames.get(chatConversationId ?? "");
   if (!frame || view.get().mode !== "chat") return;
   const parts = ensureChatParts();
-  parts.view.updateStreaming(frame.text, frame.pending);
+  parts.view.updateStreaming(frame.text, frame.pending, frame.reasoning);
   parts.view.scrollToEnd();
   chatGenerating = frame.pending;
   refreshChatChrome();
@@ -2273,12 +2292,13 @@ void listen<CommandEventPayload>("command-event", (event) => {
   if (!payload) return;
   const v = view.get();
   if (v.mode === "chat") {
-    const conversationId = (payload.item.payload as { conversationId?: string } | null)
-      ?.conversationId;
+    const meta = payload.item.payload as { conversationId?: string; reasoning?: string } | null;
+    const conversationId = meta?.conversationId;
     if (!conversationId || conversationId !== chatConversationId) return;
     chatFrames.push(conversationId, {
       text: payload.item.detail ?? "",
       pending: payload.item.pending === true,
+      reasoning: meta.reasoning ?? "",
     });
     return;
   }

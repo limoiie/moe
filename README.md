@@ -110,7 +110,8 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   (`⏎` sends it); applying **Quick Ask** itself (e.g. typing `quick`) opens the **conversation page**
   in the panel instead — the search text is never sent as a question (ADR-0036). On the page the
   Input Bar is the composer: **`⏎` sends** (input cleared) and answers stream into the conversation,
-  the page following the answer down as it streams;
+  the page following the answer down as it streams (a model's inline reasoning renders in a
+  collapsible **Thinking** block above the answer, never inside it);
   **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
   **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step backward /
   forward through history (the previous, older conversation / the newer one), **`⌘P`** opens the
@@ -136,7 +137,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   `⏎` stops the generation** (the primary action yields to Stop, ADR-0036 amendment) and **Back
   (`Esc` / empty `⌫`) asks first** — an accidental Back must not kill the generation (ADR-0038);
   with the search text gone, Back leaves the result page in one step. A stopped generation keeps
-  what was generated and writes back nothing.
+  what was generated and writes back nothing. Models that stream their reasoning (`…` /
+  `<thinking>` blocks, e.g. minimax-M3) get it stripped from the result — body, copy and write-back
+  are the answer only — and shown in a collapsible **Thinking** block above it.
 - **Side View (AI chat)**: a window on the right with no persistent history bar. Three icon
   buttons sit at the end of the header: **More Actions (⌘ icon / `⌘K`)**, **History**, and
   **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same

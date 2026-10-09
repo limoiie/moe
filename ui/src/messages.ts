@@ -18,9 +18,10 @@ export interface ConversationView {
   /**
    * Streaming frame: the full accumulated answer text + whether it is still being produced.
    * The body and the indicator are separate elements, so each frame only replaces the body and the
-   * dot animation is never restarted.
+   * dot animation is never restarted. `reasoning` (models that think in `…` blocks) renders in a
+   * collapsible Thinking block above the answer — it is never part of the body (MOE-0008).
    */
-  updateStreaming(text: string, pending: boolean): void;
+  updateStreaming(text: string, pending: boolean, reasoning?: string): void;
   /** Hide the generation indicator without touching the text (a user-requested stop); later frames still land here. */
   settleStreaming(): void;
   /** The last answer's text (null when there is none yet): the copy / write-back target. */
@@ -44,8 +45,40 @@ function markdown(text: string): string {
 }
 
 interface StreamingBubble {
+  reasoning: HTMLDetailsElement;
+  reasoningLabel: HTMLElement;
+  reasoningBody: HTMLElement;
   body: HTMLElement;
   indicator: HTMLElement;
+}
+
+/**
+ * The Thinking block's parts (MOE-0008): a muted collapsible block above the answer — one shared
+ * builder for the chat bubbles here and the panel's result cards (`reasoningEl`).
+ */
+function reasoningParts(): {
+  details: HTMLDetailsElement;
+  label: HTMLElement;
+  body: HTMLElement;
+} {
+  const details = document.createElement("details");
+  details.className =
+    "not-prose mb-2 rounded-xl border border-line bg-surface-float px-3 py-2 text-xs text-fg-subtle";
+  const label = document.createElement("summary");
+  label.className = "cursor-pointer select-none";
+  const body = document.createElement("div");
+  body.className = "mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed";
+  details.append(label, body);
+  return { details, label, body };
+}
+
+/** A settled Thinking block (open while `pending`): the panel's result card renders this directly. */
+export function reasoningEl(reasoning: string, pending: boolean): HTMLElement {
+  const { details, label, body } = reasoningParts();
+  label.textContent = pending ? "Thinking…" : "Thinking";
+  body.textContent = reasoning;
+  details.open = pending;
+  return details;
 }
 
 export function createConversationView(container: HTMLElement): ConversationView {
@@ -55,6 +88,8 @@ export function createConversationView(container: HTMLElement): ConversationView
   /** Whether an rAF correction is already queued (stream bursts must not queue one per frame). */
   let correcting = false;
   let lateCorrection: ReturnType<typeof setTimeout> | undefined;
+  /** The previous frame's pending flag: a settled answer folds the Thinking block once. */
+  let lastPending = false;
 
   function scrollToBottom() {
     container.scrollTop = container.scrollHeight;
@@ -95,11 +130,13 @@ export function createConversationView(container: HTMLElement): ConversationView
     if (!streaming) {
       const root = document.createElement("div");
       root.className = "md text-sm text-fg";
+      const { details, label, body: reasoningBody } = reasoningParts();
+      details.classList.add("hidden");
       const body = document.createElement("div");
       const indicator = generatingEl();
-      root.append(body, indicator);
+      root.append(details, body, indicator);
       container.append(root);
-      streaming = { body, indicator };
+      streaming = { reasoning: details, reasoningLabel: label, reasoningBody, body, indicator };
     }
     return streaming;
   }
@@ -109,13 +146,25 @@ export function createConversationView(container: HTMLElement): ConversationView
       container.replaceChildren();
       streaming = null;
       last = null;
+      lastPending = false;
     },
     append,
     beginAnswer() {
       streaming = null;
+      lastPending = false;
     },
-    updateStreaming(text, pending) {
+    updateStreaming(text, pending, reasoning = "") {
       const bubble = ensureStreamingBubble();
+      const hasReasoning = reasoning.trim().length > 0;
+      bubble.reasoning.classList.toggle("hidden", !hasReasoning);
+      if (hasReasoning) {
+        bubble.reasoningLabel.textContent = pending ? "Thinking…" : "Thinking";
+        bubble.reasoningBody.textContent = reasoning;
+        // Watch the thinking live; fold it when the answer settles (the user can reopen it)
+        if (pending) bubble.reasoning.open = true;
+        else if (lastPending) bubble.reasoning.open = false;
+      }
+      lastPending = pending;
       bubble.body.innerHTML = markdown(text);
       bubble.indicator.classList.toggle("hidden", !pending);
       if (text.trim()) last = text;

@@ -36,7 +36,12 @@ const HISTORY_LIMIT: usize = 20;
 /// Conversation title length (truncated with an ellipsis when exceeded).
 const TITLE_CHARS: usize = 40;
 
-fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> Item {
+fn answer_item(
+    detail: &str,
+    reasoning: &str,
+    conversation_id: Option<&str>,
+    pending: bool,
+) -> Item {
     Item {
         id: "ai.answer".into(),
         title: "AI Answer".into(),
@@ -62,23 +67,25 @@ fn answer_item(detail: &str, conversation_id: Option<&str>, pending: bool) -> It
                 keybinding: Some("⌘J".into()),
             },
         ],
-        payload: conversation_payload(conversation_id),
+        payload: conversation_payload(conversation_id, reasoning),
         detail: Some(detail.into()),
         pending,
     }
 }
 
-/// Item payload carries the conversation id, passed back as-is on Apply/⌘J (the UI does not interpret it).
-fn conversation_payload(conversation_id: Option<&str>) -> serde_json::Value {
-    match conversation_id {
-        Some(id) => serde_json::json!({ "conversationId": id }),
-        None => serde_json::Value::Null,
-    }
+/// Item payload: the conversation id (passed back as-is on Apply/⌘J — the UI does not interpret it)
+/// plus the model's thinking, which the UI renders as the bubble's collapsible Thinking block
+/// (stripped from the body, MOE-0008).
+fn conversation_payload(conversation_id: Option<&str>, reasoning: &str) -> serde_json::Value {
+    serde_json::json!({
+        "conversationId": conversation_id,
+        "reasoning": reasoning,
+    })
 }
 
 /// History/continuation list item: Apply opens that conversation in the side view; `preview` is a summary of the last answer (IIE4AD-370).
 fn history_item(conversation: Conversation, now_unix: u64, preview: Option<String>) -> Item {
-    let payload = conversation_payload(Some(&conversation.id));
+    let payload = conversation_payload(Some(&conversation.id), "");
     Item {
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
@@ -218,9 +225,10 @@ pub(crate) fn stop_all_streams() -> usize {
     streams.len()
 }
 
-/// Frame builder: full text + pending → Item (chat streams and AI command streams each have their own card shape).
-pub(crate) type FrameBuilder = Arc<dyn Fn(&str, bool) -> Item + Send + Sync>;
-/// Stream finish hook: full text → () (persist / auto write-back callback).
+/// Frame builder: answer + reasoning + pending → Item (chat streams and AI command streams each have
+/// their own card shape; the answer is the body, the reasoning rides the payload for the UI).
+pub(crate) type FrameBuilder = Arc<dyn Fn(&str, &str, bool) -> Item + Send + Sync>;
+/// Stream finish hook: the final answer → () (persist / completion callback).
 pub(crate) type StreamFinish = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Full specification of one streaming request (shared by chat streams and AI command streams, ADR-0024).
@@ -238,6 +246,99 @@ pub(crate) struct StreamRequest {
 /// No-op finish hook (streams with no persistence and no completion callback).
 pub(crate) fn noop_sink(_text: &str) {}
 
+/// Reasoning tags some models wrap their chain of thought in. The XML-ish pairs are unambiguous
+/// anywhere in the text; MiniMax/DeepSeek-style `…` reuses the **same** delimiter on both ends and is
+/// handled separately (only at the very start — an ellipsis in prose is ordinary text).
+const THINK_OPENERS: [&str; 2] = ["<thinking>", " thinking"];
+const THINK_CLOSERS: [&str; 2] = ["</thinking>", " response"];
+/// The same-delimiter opener/closer (MiniMax/DeepSeek style).
+const SAME_DELIM: &str = "…";
+
+/// The earliest tag from `tags` in `text`: (byte index, tag length).
+fn first_tag(tags: &[&str], text: &str) -> Option<(usize, usize)> {
+    tags.iter()
+        .filter_map(|tag| text.find(tag).map(|at| (at, tag.len())))
+        .min_by_key(|(at, _)| *at)
+}
+
+/// Append one reasoning piece; blocks are separated by a blank line, each trimmed.
+fn push_reasoning(reasoning: &mut String, piece: &str) {
+    let piece = piece.trim();
+    if piece.is_empty() {
+        return;
+    }
+    if !reasoning.is_empty() {
+        reasoning.push_str("\n\n");
+    }
+    reasoning.push_str(piece);
+}
+
+/// Split an accumulated completion into (reasoning, answer): the answer is what streams, persists, is
+/// copied and written back; the reasoning only rides the frame payload to the UI's Thinking block.
+/// Works on partial text: an unterminated block means "still thinking" (the answer stays empty), and
+/// a closing tag without an opener (servers that drop it) makes everything before it reasoning.
+pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
+    // MiniMax/DeepSeek style: `…` … `…`. The tag is ambiguous (it is also the ordinary ellipsis), so
+    // it only counts at the very start — a reasoning block always opens the message, while an
+    // ellipsis in the answer is just text. Consecutive blocks keep their own closers.
+    let trimmed = raw.trim_start();
+    if let Some(body) = trimmed.strip_prefix(SAME_DELIM) {
+        let mut reasoning = String::new();
+        let mut tail = body;
+        let answer = loop {
+            let Some((block, after)) = tail.split_once(SAME_DELIM) else {
+                // Unterminated block: still thinking (the answer must stay empty)
+                push_reasoning(&mut reasoning, tail);
+                break String::new();
+            };
+            push_reasoning(&mut reasoning, block);
+            // Another block may open right after the closer ("…one……two…answer")
+            match after.strip_prefix(SAME_DELIM) {
+                Some(next) => tail = next,
+                None => break after.to_string(),
+            }
+        };
+        return (reasoning, answer.trim().to_string());
+    }
+
+    let mut reasoning = String::new();
+    let mut answer = String::new();
+    let mut rest = raw;
+    loop {
+        let Some((open, open_len)) = first_tag(&THINK_OPENERS, rest) else {
+            // No opener: a lone closer means the server dropped the opening tag (everything before
+            // it was reasoning); with neither tag the rest is the answer.
+            match first_tag(&THINK_CLOSERS, rest) {
+                Some((close, close_len)) => {
+                    push_reasoning(&mut reasoning, &rest[..close]);
+                    rest = &rest[close + close_len..];
+                }
+                None => {
+                    answer.push_str(rest);
+                    break;
+                }
+            }
+            continue;
+        };
+        let after = &rest[open + open_len..];
+        match first_tag(&THINK_CLOSERS, after) {
+            // Unterminated block: still thinking (the answer must stay empty)
+            None => {
+                answer.push_str(&rest[..open]);
+                push_reasoning(&mut reasoning, after);
+                break;
+            }
+            Some((close_rel, close_len)) => {
+                let close = open + open_len + close_rel;
+                answer.push_str(&rest[..open]);
+                push_reasoning(&mut reasoning, &rest[open + open_len..close]);
+                rest = &rest[close + close_len..];
+            }
+        }
+    }
+    (reasoning.trim().to_string(), answer.trim().to_string())
+}
+
 /// Request + SSE loop: emits each incremental chunk (pending=true); on natural completion it persists and calls `on_done`.
 /// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
 pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
@@ -252,15 +353,15 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
         on_done,
     } = request;
     let cancel = begin_stream(&stream_key);
-    let emit = |text: String, pending: bool| {
+    let emit = |text: String, reasoning: String, pending: bool| {
         emitter.emit(CommandEvent::ItemUpdated {
             command_id: command_id.clone(),
-            item: item_of(&text, pending),
+            item: item_of(&text, &reasoning, pending),
         });
     };
     let fail = |text: String| {
         persist(&text);
-        emit(text, false);
+        emit(text, String::new(), false);
     };
 
     let client = match reqwest::blocking::Client::builder()
@@ -303,7 +404,7 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
         return;
     }
 
-    let mut acc = String::new();
+    let mut raw = String::new();
     let mut stopped = false;
     for line in BufReader::new(response).lines() {
         if cancel
@@ -316,29 +417,32 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
         let Ok(line) = line else { break };
         match sse_delta(&line) {
             SseLine::Delta(delta) => {
-                acc.push_str(&delta);
-                emit(acc.clone(), true);
+                raw.push_str(&delta);
+                // The model's chain of thought is never the answer: it rides the payload, not the body
+                let (reasoning, answer) = split_reasoning(&raw);
+                emit(answer, reasoning, true);
             }
             SseLine::Done => break,
             SseLine::Ignore => {}
         }
     }
     end_stream(&stream_key);
+    let (reasoning, answer) = split_reasoning(&raw);
 
     if stopped {
-        let text = if acc.is_empty() {
+        let text = if answer.trim().is_empty() {
             "(generation stopped)".to_string()
         } else {
-            format!("{acc}\n\n_(generation stopped)_")
+            format!("{answer}\n\n_(generation stopped)_")
         };
         persist(&text);
-        emit(text, false);
-    } else if acc.is_empty() {
+        emit(text, reasoning, false);
+    } else if answer.trim().is_empty() {
         fail("(the endpoint returned no content)".into());
     } else {
-        persist(&acc);
-        emit(acc.clone(), false);
-        on_done(&acc);
+        persist(&answer);
+        emit(answer.clone(), reasoning, false);
+        on_done(&answer);
     }
 }
 
@@ -516,7 +620,9 @@ impl AiShell {
         let stream_key = conversation.clone();
         let item_of: FrameBuilder = {
             let conversation = conversation.clone();
-            Arc::new(move |text, pending| answer_item(text, Some(&conversation), pending))
+            Arc::new(move |text, reasoning, pending| {
+                answer_item(text, reasoning, Some(&conversation), pending)
+            })
         };
         let persist: StreamFinish = {
             let conversation = conversation.clone();
@@ -839,7 +945,9 @@ impl Extension for AiShell {
         let stream_key = conversation.clone();
         let item_of: FrameBuilder = {
             let conversation = conversation.clone();
-            Arc::new(move |text, pending| answer_item(text, Some(&conversation), pending))
+            Arc::new(move |text, reasoning, pending| {
+                answer_item(text, reasoning, Some(&conversation), pending)
+            })
         };
         let persist: StreamFinish = {
             let conversation = conversation.clone();
@@ -913,6 +1021,47 @@ mod tests {
     use super::*;
     use moe_core::contract::Extension;
     use std::time::Instant;
+
+    /// Thinking blocks (MOE-0008): the reasoning never reaches the answer, whatever the tag shape.
+    #[test]
+    fn split_reasoning_separates_thought_from_answer() {
+        assert_eq!(split_reasoning(""), (String::new(), String::new()));
+        // No tags: everything is the answer
+        assert_eq!(
+            split_reasoning("just an answer"),
+            (String::new(), "just an answer".into())
+        );
+        // MiniMax/DeepSeek style: the same delimiter on both ends
+        assert_eq!(
+            split_reasoning("\u{2026}weighing options\u{2026}Improved text"),
+            ("weighing options".into(), "Improved text".into())
+        );
+        // The same delimiter only counts at the very start: an ellipsis in the prose is text
+        assert_eq!(
+            split_reasoning("just an answer\u{2026}maybe"),
+            (String::new(), "just an answer\u{2026}maybe".into())
+        );
+        // The XML-ish pair
+        assert_eq!(
+            split_reasoning("<thinking>hmm</thinking>done"),
+            ("hmm".into(), "done".into())
+        );
+        // A lone closing tag (servers that drop the opener): everything before it is reasoning
+        assert_eq!(
+            split_reasoning("thought so far</thinking>answer"),
+            ("thought so far".into(), "answer".into())
+        );
+        // Unterminated (still streaming): the reasoning grows, the answer stays empty
+        assert_eq!(
+            split_reasoning("\u{2026}still thinking"),
+            ("still thinking".into(), String::new())
+        );
+        // Multiple same-delimiter blocks join; the answer is what follows the last closer
+        assert_eq!(
+            split_reasoning("\u{2026}one\u{2026}\u{2026}two\u{2026}the answer"),
+            ("one\n\ntwo".into(), "the answer".into())
+        );
+    }
 
     /// Same guard: the id synthesized by fallback must be routable; the title strips attachment mentions (IIE4AD-358).
     #[test]
@@ -1123,7 +1272,7 @@ mod tests {
         assert_eq!(
             result,
             ActionResult::OpenSideView {
-                payload: serde_json::json!({ "conversationId": "7" })
+                payload: serde_json::json!({ "conversationId": "7", "reasoning": "" })
             }
         );
     }
@@ -1195,8 +1344,9 @@ mod tests {
         std::thread::spawn(move || {
             // Nonexistent conversation: persistence is a no-op (dangling-row protection at the db layer), so real history stays clean
             let conversation = "stop-e2e";
-            let item_of: FrameBuilder =
-                Arc::new(move |text, pending| answer_item(text, Some(conversation), pending));
+            let item_of: FrameBuilder = Arc::new(move |text, reasoning, pending| {
+                answer_item(text, reasoning, Some(conversation), pending)
+            });
             let persist: StreamFinish =
                 Arc::new(move |text| persist_assistant(Some(conversation), text));
             run_stream(
@@ -1253,8 +1403,9 @@ mod tests {
     /// The answer item's ⌘J (materialize) also carries the conversation id back, so the side view locates the same conversation.
     #[test]
     fn answer_item_carries_conversation_id_on_materialize() {
-        let item = answer_item("body", Some("9"), false);
+        let item = answer_item("body", "weighing it", Some("9"), false);
         assert_eq!(item.payload["conversationId"], "9");
+        assert_eq!(item.payload["reasoning"], "weighing it");
         let action = item
             .actions
             .iter()
@@ -1266,7 +1417,7 @@ mod tests {
         assert_eq!(
             result,
             ActionResult::OpenSideView {
-                payload: serde_json::json!({ "conversationId": "9" })
+                payload: serde_json::json!({ "conversationId": "9", "reasoning": "weighing it" })
             }
         );
     }
