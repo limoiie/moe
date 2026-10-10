@@ -188,17 +188,39 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   theme = "system"     # system | light | dark (system follows the OS; also switchable from the About card, ADR-0035)
 
   [ai]
-  base_url = "https://api.deepseek.com/v1"  # any OpenAI-compatible endpoint
-  model = "deepseek-chat"
+  provider = "deepseek"                     # an official provider id, or a [ai.providers.*] key
+  model = "deepseek-flash"                  # required with a provider (a wrong name lists the models)
   tools = true                              # conversations may search the web / fetch pages / read files
   searxng_url = "http://localhost:8080"     # optional: a SearXNG instance with JSON output enabled
   fetch_fallback = "jina"                   # jina | none — keyless reader retry for blocked/empty pages
+
+  # Custom endpoints add a provider block and speak one of three protocols (ADR-0040).
+  # [ai.providers.my-gateway]
+  # name = "My Gateway"
+  # protocol = "anthropic"                  # openai-chat | openai-responses | anthropic
+  # api_url = "https://gateway.example.com/anthropic"
+  # models = ["claude-sonnet-5-5"]
+  # reasoning = true                        # opt in to thinking blocks / reasoning summaries
+
+  # The legacy single-endpoint form keeps working (an implicit `default` provider):
+  # base_url = "https://api.deepseek.com/v1"
+  # model = "deepseek-chat"
   ```
 
-  The API key lives in `~/Library/Application Support/moe/api-key` (0600, never echoed;
-  an unsigned app triggers repeated keychain prompts, see ADR-0019). Type `key <your-key>` in
-  the panel, or set the `MOE_AI_API_KEY` environment variable; keys stored by older versions
-  in the keychain migrate to the file automatically.
+  **Providers** (ADR-0040): official ids — `deepseek`, `openai`, `anthropic`, `google`, `xai`,
+  `mistral`, `groq`, `openrouter`, `perplexity`, `togetherai`, `cohere`, `alibaba`, `meta`,
+  `moonshotai`, `zai`, `zhipuai`, `lmstudio`, `ollama` — need no block: the base URL, the key
+  variables and the model list come from the embedded model catalog (refreshed daily), and each
+  model's context window, output limit, tool/image/reasoning support and pricing are catalogued.
+  Custom endpoints state `protocol` + `api_url` + `models`. Tool-using (agentic) conversations run
+  on `openai-chat` only; the other protocols open plain conversations.
+
+  The API key lives per provider in `~/Library/Application Support/moe/keys/<provider-id>` (0600,
+  never echoed; the implicit `default` provider keeps the legacy `api-key` file; an unsigned app
+  triggers repeated keychain prompts, see ADR-0019). Type `key <your-key>` in the panel — it saves
+  the active provider's key — or set `MOE_AI_API_KEY` (any provider, last); the official providers'
+  own variables (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, …) are checked too; keys stored by older
+  versions in the keychain migrate to the legacy file automatically.
 
   **Web search (optional)**: with `searxng_url` set, conversations may call `web_search`; page
   fetching and file reading need no service. SearXNG's stock `settings.yml` serves HTML only —
@@ -284,7 +306,8 @@ regenerates the bundle set (`.icns` / `.ico` / sizes).
   ```
 
 - **AI errors**: the answer card shows what the endpoint returned; check the `[ai]`
-  base_url/model, that the key is saved, and that the endpoint supports the chosen model
+  provider/model (or the legacy base_url), that the active provider's key is saved, and that the
+  endpoint supports the chosen model
   (images need vision).
 
 Milestone acceptance criteria live in `docs/adr/0009-milestone-scope.md`.

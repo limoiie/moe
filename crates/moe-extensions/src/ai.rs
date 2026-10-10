@@ -19,14 +19,14 @@ use moe_core::contract::{
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_core::keymap::{SystemKey, display_of};
-use moe_platform::config::MoeConfig;
+use moe_platform::config::{MoeConfig, Protocol};
 use moe_platform::db::Db;
-use moe_platform::keychain;
 
 use crate::agent::{AgentTurnRequest, MessageSink, ToolCallView, run_agentic_turn};
+use crate::ai_client::providers::{self, ActiveProvider};
 use crate::ai_client::{
-    SseLine, ToolCall, ToolCallFragment, chat_body_from_messages, chat_completions_url,
-    merge_tool_call_fragments, sse_delta,
+    ChatRequest, SseLine, ToolCall, ToolCallFragment, authenticate, endpoint_url,
+    merge_tool_call_fragments, request_body, sse_line,
 };
 use crate::attachment;
 use crate::recency;
@@ -260,6 +260,7 @@ pub(crate) type StreamFinish = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Full specification of one streaming request (shared by chat streams and AI command streams, ADR-0024).
 pub(crate) struct StreamRequest {
+    pub protocol: Protocol,
     pub base_url: String,
     pub key: String,
     pub body: serde_json::Value,
@@ -268,6 +269,8 @@ pub(crate) struct StreamRequest {
     pub item_of: FrameBuilder,
     pub persist: StreamFinish,
     pub on_done: StreamFinish,
+    /// The provider's model list for 4xx cards (a wrong model name is fixable in place).
+    pub model_hint: Option<String>,
 }
 
 /// No-op finish hook (streams with no persistence and no completion callback).
@@ -458,6 +461,7 @@ fn prefer_reasoning(field: &str, tagged: String) -> String {
 /// The caller owns cancellation registration: `begin_stream`/`end_stream` around one round
 /// (plain chat) or around the whole turn (the agentic runner).
 pub(crate) struct RoundRequest {
+    pub protocol: Protocol,
     pub base_url: String,
     pub key: String,
     pub body: serde_json::Value,
@@ -465,6 +469,8 @@ pub(crate) struct RoundRequest {
     pub item_of: FrameBuilder,
     /// The turn's cancellation flag (`None` = the empty key was never registered).
     pub cancel: Option<Arc<AtomicBool>>,
+    /// The provider's model list for 4xx cards (`None` = nothing known to list).
+    pub model_hint: Option<String>,
 }
 
 /// How one streamed round ended; the caller persists and decides whether another round follows.
@@ -485,12 +491,14 @@ pub(crate) enum RoundEnd {
 /// outcome for the caller to settle (or to continue an agentic turn).
 pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> RoundEnd {
     let RoundRequest {
+        protocol,
         base_url,
         key,
         body,
         command_id,
         item_of,
         cancel,
+        model_hint,
     } = request;
     let emit = |text: String, reasoning: String, pending: bool| {
         emitter.emit(CommandEvent::ItemUpdated {
@@ -511,11 +519,13 @@ pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> R
             ));
         }
     };
-    let response = match client
-        .post(chat_completions_url(&base_url))
-        .bearer_auth(&key)
-        .json(&body)
-        .send()
+    let response = match authenticate(
+        protocol,
+        client.post(endpoint_url(protocol, &base_url)),
+        &key,
+    )
+    .json(&body)
+    .send()
     {
         Ok(response) => response,
         Err(err) => return RoundEnd::Failed(format!("## Request failed\n\n```\n{err}\n```")),
@@ -528,7 +538,16 @@ pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> R
             .chars()
             .take(500)
             .collect();
-        return RoundEnd::Failed(format!("## Endpoint returned {status}\n\n```\n{body}\n```"));
+        let mut card = format!("## Endpoint returned {status}\n\n```\n{body}\n```");
+        // A 4xx while a model was in play is usually a wrong model name: name what the provider
+        // lists, so it is fixable in place (ADR-0040).
+        if status.is_client_error()
+            && let Some(hint) = model_hint.as_deref()
+        {
+            card.push_str("\n\n");
+            card.push_str(hint);
+        }
+        return RoundEnd::Failed(card);
     }
 
     let mut raw = String::new();
@@ -544,7 +563,7 @@ pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> R
             break;
         }
         let Ok(line) = line else { break };
-        match sse_delta(&line) {
+        match sse_line(protocol, &line) {
             SseLine::Delta(delta) => {
                 raw.push_str(&delta);
                 // The model's chain of thought is never the answer: it rides the payload, not the body
@@ -581,6 +600,7 @@ pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> R
 /// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
 pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     let StreamRequest {
+        protocol,
         base_url,
         key,
         body,
@@ -589,6 +609,7 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
         item_of,
         persist,
         on_done,
+        model_hint,
     } = request;
     let cancel = begin_stream(&stream_key);
     let emit = {
@@ -605,12 +626,14 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
 
     let outcome = stream_once(
         RoundRequest {
+            protocol,
             base_url,
             key,
             body,
             command_id,
             item_of,
             cancel,
+            model_hint,
         },
         emitter,
     );
@@ -650,18 +673,14 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
 
 /// Guidance card for a not-yet-configured endpoint (shared by AI Q&A and AI Commands, ADR-0024).
 pub(crate) const SETUP_MD: &str = "## No AI endpoint configured yet\n\n\
-1. Run the command \"Open Config File\" and fill in:\n\n\
+1. Run the command \"Open Config File\" and pick a provider:\n\n\
 ```toml\n\
 [ai]\n\
-base_url = \"https://api.deepseek.com/v1\"\n\
-model = \"deepseek-chat\"\n\
+provider = \"deepseek\"   # or openai, anthropic, google, xai, mistral, groq, openrouter, ollama, …\n\
+model = \"deepseek-flash\"\n\
 ```\n\n\
-2. Store an API key: type `key <your-key>` and press Enter (stored only in a local key file, never echoed; you can also set the `MOE_AI_API_KEY` environment variable).\n\n\
-Works with any OpenAI-compatible endpoint (DeepSeek / OpenRouter / local llama.cpp, etc.).";
-
-/// Guidance card for a missing API key (shared as above).
-pub(crate) const KEY_MISSING_MD: &str = "## Endpoint configured, but the API key is missing\n\n\
-Type `key <your-key>` and press Enter to store it in a local key file (0600, never echoed); you can also set the `MOE_AI_API_KEY` environment variable.";
+2. Store the API key: type `key <your-key>` and press Enter (its own local key file per provider, never echoed; you can also set the `MOE_AI_API_KEY` environment variable).\n\n\
+Custom endpoints (OpenAI Chat / OpenAI Responses / Anthropic protocols) and the legacy `[ai] base_url` are documented in the README.";
 
 /// Length limit (in characters) for selected text used as context.
 const SELECTION_LIMIT: usize = 4000;
@@ -688,30 +707,33 @@ fn question_with_selection(question: &str, selection: Option<&str>) -> String {
     )
 }
 
-/// Request body for a panel/side continuation: the stored history ends with the new question
-/// (attachments expanded, ADR-0010).
-fn chat_body_of(model: &str, messages: Vec<Message>) -> serde_json::Value {
-    chat_body_from_messages(
-        model,
-        messages.iter().map(attachment::expand_message).collect(),
-    )
+/// The shared request for a chat turn: the stored history ends with the new question
+/// (attachments expanded, ADR-0010); the provider supplies its model, reasoning opt-in and
+/// `max_tokens` (ADR-0040).
+fn chat_request(provider: &ActiveProvider, messages: Vec<Message>, stream: bool) -> ChatRequest {
+    ChatRequest {
+        model: provider.model.clone(),
+        messages: messages.iter().map(attachment::expand_message).collect(),
+        stream,
+        reasoning: provider.reasoning,
+        max_tokens: provider.max_tokens,
+    }
 }
 
 /// One chat turn's transport: plain Conversations stream as today (one round, no tools); Agentic
 /// Conversations run the tool loop (MOE-0017). Both receive the record ending in the new question
 /// and emit `ai.quick-ask` / `ai.side` events; the conversation id is the stream key (Stop scope).
-#[allow(clippy::too_many_arguments)]
+/// The tool loop is gated to `openai-chat` (ADR-0040) — the callers decide `agentic` accordingly.
 fn spawn_chat_turn(
     config: &MoeConfig,
-    base_url: String,
-    key: String,
-    model: String,
+    provider: ActiveProvider,
     conversation: String,
     messages: Vec<Message>,
     agentic: bool,
     command_id: &'static str,
     emitter: Arc<dyn Emitter>,
 ) {
+    let model_hint = provider.model_hint();
     if agentic {
         let tool_ctx = tools::ToolContext::new(
             config.ai.searxng_url.clone(),
@@ -735,9 +757,9 @@ fn spawn_chat_turn(
         std::thread::spawn(move || {
             run_agentic_turn(
                 AgentTurnRequest {
-                    base_url,
-                    key,
-                    model,
+                    base_url: provider.api_url,
+                    key: provider.key,
+                    model: provider.model,
                     record: messages,
                     tool_specs,
                     tools: tool_ctx,
@@ -746,13 +768,14 @@ fn spawn_chat_turn(
                     item_of,
                     views,
                     persist,
+                    model_hint,
                     on_done: Arc::new(noop_sink),
                 },
                 emitter,
             );
         });
     } else {
-        let body = chat_body_of(&model, messages);
+        let body = request_body(provider.protocol, &chat_request(&provider, messages, true));
         let stream_key = conversation.clone();
         let item_of: FrameBuilder = {
             let conversation = conversation.clone();
@@ -767,19 +790,34 @@ fn spawn_chat_turn(
         std::thread::spawn(move || {
             run_stream(
                 StreamRequest {
-                    base_url,
-                    key,
+                    protocol: provider.protocol,
+                    base_url: provider.api_url,
+                    key: provider.key,
                     body,
                     command_id: command_id.to_string(),
                     stream_key,
                     item_of,
                     persist,
                     on_done: Arc::new(noop_sink),
+                    model_hint,
                 },
                 emitter,
             );
         });
     }
+}
+
+/// ADR-0040: the tool loop is gated to `openai-chat`. A stored agentic Conversation can only be
+/// continued on it — the record replays Tool Calls that the other protocols cannot express.
+fn continue_agentic(stored: Option<bool>, provider: &ActiveProvider) -> Result<bool, MoeError> {
+    if stored == Some(true) && provider.protocol != Protocol::OpenAiChat {
+        return Err(MoeError::Internal(format!(
+            "this conversation replays Tool results and needs an openai-chat provider: switch \
+             [ai] provider back, or start a new chat (the active provider uses {})",
+            provider.protocol.as_str()
+        )));
+    }
+    Ok(stored.unwrap_or(false))
 }
 
 impl AiShell {
@@ -863,23 +901,26 @@ impl AiShell {
         let (display, attachments) = Self::panel_message(message, selection)?;
 
         let config = MoeConfig::load();
-        if !config.ai.configured() {
-            return Err(MoeError::Internal(
-                "AI endpoint not configured yet: run Open Config File (⌘,) and fill in [ai] base_url and model".into(),
-            ));
-        }
-        let Some(key) = keychain::ai_api_key() else {
-            return Err(MoeError::Internal(
-                "API key missing: type `key <your-key>` in the panel and press Enter".into(),
-            ));
-        };
+        let provider = providers::resolve(&config).map_err(MoeError::Internal)?;
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
+        let stored_agentic = if starting {
+            None
+        } else {
+            db.conversation_agentic(conversation_id)
+                .map_err(MoeError::Internal)?
+        };
+        let replayable = continue_agentic(stored_agentic, &provider)?;
+        let agentic = if starting {
+            config.ai.tools && provider.protocol == Protocol::OpenAiChat
+        } else {
+            replayable
+        };
         let conversation_id = if starting {
             db.create_conversation(
                 "ai",
                 &title_for(&display, &attachments),
-                config.ai.tools,
+                agentic,
                 SystemTime::now(),
             )
             .map_err(MoeError::Internal)?
@@ -909,20 +950,9 @@ impl AiShell {
             ..Message::default()
         });
 
-        let base_url = config.ai.base_url.clone().unwrap_or_default();
-        let model = config.ai.model_or_default().to_string();
-        let agentic = if starting {
-            config.ai.tools
-        } else {
-            db.conversation_agentic(&conversation_id)
-                .map_err(MoeError::Internal)?
-                .unwrap_or(false)
-        };
         spawn_chat_turn(
             &config,
-            base_url,
-            key,
-            model,
+            provider,
             conversation_id.clone(),
             messages,
             agentic,
@@ -1188,16 +1218,7 @@ impl Extension for AiShell {
             return Err(MoeError::Internal("Message is empty".into()));
         }
         let config = MoeConfig::load();
-        if !config.ai.configured() {
-            return Err(MoeError::Internal(
-                "AI endpoint not configured yet (run \"Open Config File\" in the palette)".into(),
-            ));
-        }
-        let Some(key) = keychain::ai_api_key() else {
-            return Err(MoeError::Internal(
-                "API key missing (type key <your-key> in the palette and press Enter)".into(),
-            ));
-        };
+        let provider = providers::resolve(&config).map_err(MoeError::Internal)?;
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
 
@@ -1205,11 +1226,23 @@ impl Extension for AiShell {
         let (display, attachments) = Self::split_message(message);
 
         let starting = conversation_id.trim().is_empty();
+        let stored_agentic = if starting {
+            None
+        } else {
+            db.conversation_agentic(conversation_id)
+                .map_err(MoeError::Internal)?
+        };
+        let replayable = continue_agentic(stored_agentic, &provider)?;
+        let agentic = if starting {
+            config.ai.tools && provider.protocol == Protocol::OpenAiChat
+        } else {
+            replayable
+        };
         let conversation_id = if starting {
             db.create_conversation(
                 "ai",
                 &title_for(&display, &attachments),
-                config.ai.tools,
+                agentic,
                 SystemTime::now(),
             )
             .map_err(MoeError::Internal)?
@@ -1237,20 +1270,9 @@ impl Extension for AiShell {
             ..Message::default()
         });
 
-        let base_url = config.ai.base_url.clone().unwrap_or_default();
-        let model = config.ai.model_or_default().to_string();
-        let agentic = if starting {
-            config.ai.tools
-        } else {
-            db.conversation_agentic(&conversation_id)
-                .map_err(MoeError::Internal)?
-                .unwrap_or(false)
-        };
         spawn_chat_turn(
             &config,
-            base_url,
-            key,
-            model,
+            provider,
             conversation_id.clone(),
             messages,
             agentic,
@@ -1710,6 +1732,7 @@ This is a test case, do you know?"#;
                 Arc::new(move |text| persist_assistant(Some(conversation), text));
             run_stream(
                 StreamRequest {
+                    protocol: Protocol::OpenAiChat,
                     base_url,
                     key: "test-key".into(),
                     body: serde_json::json!({}),
@@ -1718,6 +1741,7 @@ This is a test case, do you know?"#;
                     item_of,
                     persist,
                     on_done: Arc::new(noop_sink),
+                    model_hint: None,
                 },
                 emitter,
             );
@@ -1791,6 +1815,7 @@ This is a test case, do you know?"#;
                 Arc::new(move |text| persist_assistant(Some(conversation), text));
             run_stream(
                 StreamRequest {
+                    protocol: Protocol::OpenAiChat,
                     base_url,
                     key: "test-key".into(),
                     body: serde_json::json!({}),
@@ -1799,6 +1824,7 @@ This is a test case, do you know?"#;
                     item_of,
                     persist,
                     on_done: Arc::new(noop_sink),
+                    model_hint: None,
                 },
                 emitter,
             );
@@ -2044,13 +2070,15 @@ This is a test case, do you know?"#;
     /// Request body assembly for the panel page: history + the new question (with selection context) both go into the body.
     #[test]
     fn panel_body_carries_history_and_selection_context() {
+        let provider = providers::test_provider(Protocol::OpenAiChat, "http://x/v1");
         let history = vec![Message {
             role: Role::User,
             content: question_with_selection("translate", Some("hello world")),
             attachments: vec![],
             ..Message::default()
         }];
-        let text = chat_body_of("m", history).to_string();
+        let text =
+            request_body(provider.protocol, &chat_request(&provider, history, true)).to_string();
         assert!(
             text.contains("translate"),
             "question is in the body: {text}"
@@ -2060,14 +2088,18 @@ This is a test case, do you know?"#;
             "selection is in the body: {text}"
         );
         // No selection → no context wrapper
-        let plain = chat_body_of(
-            "m",
-            vec![Message {
-                role: Role::User,
-                content: "translate".into(),
-                attachments: vec![],
-                ..Message::default()
-            }],
+        let plain = request_body(
+            provider.protocol,
+            &chat_request(
+                &provider,
+                vec![Message {
+                    role: Role::User,
+                    content: "translate".into(),
+                    attachments: vec![],
+                    ..Message::default()
+                }],
+                true,
+            ),
         )
         .to_string();
         assert!(
@@ -2176,5 +2208,268 @@ This is a test case, do you know?"#;
                 payload: serde_json::json!({})
             }
         );
+    }
+
+    /// Read one full HTTP request (raw head + body) from the mock socket.
+    fn read_raw_request(socket: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_end = loop {
+            let read = socket.read(&mut chunk).expect("read request");
+            assert!(read > 0, "connection closed before the headers");
+            buf.extend_from_slice(&chunk[..read]);
+            if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..header_end]).to_ascii_lowercase();
+        let content_length: usize = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        let mut body = buf[header_end..].to_vec();
+        while body.len() < content_length {
+            let read = socket.read(&mut chunk).expect("read body");
+            if read == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..read]);
+        }
+        format!("{head}\n{}", String::from_utf8_lossy(&body))
+    }
+
+    /// A complete mock SSE response (the client stops at the protocol's terminal event).
+    fn event_stream(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// Wait until the recorder's last frame settles (no `on_done` hook on chat turns).
+    fn wait_for_settled(items: &std::sync::Mutex<Vec<Item>>) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if items
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|item| !item.pending)
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the turn should settle within the window");
+    }
+
+    /// A custom provider on the Anthropic protocol (ADR-0040): the turn posts its own wire
+    /// (`POST /v1/messages`, `x-api-key` + `anthropic-version`), the body has no `tools` field —
+    /// the loop is gated to openai-chat — and `thinking` deltas ride the same payload the UI's
+    /// Thinking row renders.
+    #[test]
+    fn anthropic_turn_streams_with_thinking_and_without_tools() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        use std::io::Write as _;
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+
+        struct Recorder(Mutex<Vec<Item>>);
+        impl Emitter for Recorder {
+            fn emit(&self, event: CommandEvent) {
+                match event {
+                    CommandEvent::ItemUpdated { item, .. } => self.0.lock().unwrap().push(item),
+                    CommandEvent::WriteBack { .. } => {}
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let captured = Arc::new(Mutex::new(String::new()));
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                *captured.lock().unwrap() = read_raw_request(&mut socket);
+                let events = concat!(
+                    "event: message_start\ndata: {\"type\":\"message_start\"}\n\n",
+                    "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weighing\"}}\n\n",
+                    "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
+                    "data: {\"type\":\"message_stop\"}\n\n",
+                );
+                let _ = socket.write_all(event_stream(events).as_bytes());
+            })
+        };
+
+        let config = MoeConfig::from_toml(&format!(
+            "[ai]\nprovider = \"lab\"\nmodel = \"claude-x\"\n\
+             [ai.providers.lab]\nname = \"Lab\"\nprotocol = \"anthropic\"\n\
+             api_url = \"http://{addr}\"\nmodels = [\"claude-x\"]\nreasoning = true\n"
+        ))
+        .expect("config parses");
+        let provider =
+            providers::resolve_with(&config, moe_platform::model_catalog::embedded(), |_, _| {
+                Some("sk-lab".into())
+            })
+            .expect("resolves");
+        assert_eq!(provider.protocol, Protocol::Anthropic);
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        spawn_chat_turn(
+            &config,
+            provider,
+            "anthropic-e2e".into(),
+            vec![Message {
+                role: Role::User,
+                content: "hi".into(),
+                ..Message::default()
+            }],
+            false, // non-chat protocols open plain conversations
+            "ai.quick-ask",
+            emitter,
+        );
+        wait_for_settled(&recorder.0);
+        server.join().expect("mock server thread");
+
+        let request = captured.lock().unwrap().clone();
+        assert!(
+            request.contains("post /v1/messages http/1.1"),
+            "the Anthropic endpoint: {request}"
+        );
+        assert!(request.contains("x-api-key: sk-lab"), "{request}");
+        assert!(
+            request.contains("anthropic-version: 2023-06-01"),
+            "{request}"
+        );
+        let body: serde_json::Value = serde_json::from_str(
+            request
+                .split_once("\r\n\r\n")
+                .expect("head + body")
+                .1
+                .trim_start_matches('\n'),
+        )
+        .expect("request body is json");
+        assert!(
+            body.get("tools").is_none(),
+            "no tools field on a non-openai-chat protocol: {body}"
+        );
+        assert_eq!(body["stream"], true);
+        assert!(body["max_tokens"].as_u64().is_some(), "{body}");
+        assert_eq!(body["thinking"]["type"], "enabled", "the reasoning opt-in");
+        assert_eq!(body["messages"][0]["role"], "user");
+
+        let items = recorder.0.lock().unwrap();
+        let last = items.last().expect("frames");
+        assert!(!last.pending);
+        assert_eq!(last.detail.as_deref(), Some("Hello"));
+        assert_eq!(last.payload["reasoning"], "weighing");
+    }
+
+    /// A custom provider on the OpenAI Responses protocol (ADR-0040): `POST /responses` with
+    /// bearer auth and `store: false`, no `tools` field, and reasoning-summary deltas in the
+    /// Thinking payload.
+    #[test]
+    fn responses_turn_streams_with_summaries_and_without_tools() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        use std::io::Write as _;
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+
+        struct Recorder(Mutex<Vec<Item>>);
+        impl Emitter for Recorder {
+            fn emit(&self, event: CommandEvent) {
+                match event {
+                    CommandEvent::ItemUpdated { item, .. } => self.0.lock().unwrap().push(item),
+                    CommandEvent::WriteBack { .. } => {}
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let captured = Arc::new(Mutex::new(String::new()));
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                *captured.lock().unwrap() = read_raw_request(&mut socket);
+                let events = concat!(
+                    "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"pondering\"}\n\n",
+                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n",
+                    "data: {\"type\":\"response.completed\"}\n\n",
+                );
+                let _ = socket.write_all(event_stream(events).as_bytes());
+            })
+        };
+
+        let config = MoeConfig::from_toml(&format!(
+            "[ai]\nprovider = \"gateway\"\nmodel = \"gpt-5.2\"\n\
+             [ai.providers.gateway]\nprotocol = \"openai-responses\"\n\
+             api_url = \"http://{addr}/v1\"\nmodels = [\"gpt-5.2\"]\nreasoning = true\n"
+        ))
+        .expect("config parses");
+        let provider =
+            providers::resolve_with(&config, moe_platform::model_catalog::embedded(), |_, _| {
+                Some("sk-gateway".into())
+            })
+            .expect("resolves");
+        assert_eq!(provider.protocol, Protocol::OpenAiResponses);
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        spawn_chat_turn(
+            &config,
+            provider,
+            "responses-e2e".into(),
+            vec![Message {
+                role: Role::User,
+                content: "hi".into(),
+                ..Message::default()
+            }],
+            false,
+            "ai.quick-ask",
+            emitter,
+        );
+        wait_for_settled(&recorder.0);
+        server.join().expect("mock server thread");
+
+        let request = captured.lock().unwrap().clone();
+        assert!(
+            request.contains("post /v1/responses http/1.1"),
+            "the Responses endpoint: {request}"
+        );
+        assert!(
+            request.contains("authorization: bearer sk-gateway"),
+            "{request}"
+        );
+        let body: serde_json::Value = serde_json::from_str(
+            request
+                .split_once("\r\n\r\n")
+                .expect("head + body")
+                .1
+                .trim_start_matches('\n'),
+        )
+        .expect("request body is json");
+        assert!(
+            body.get("tools").is_none(),
+            "no tools field on a non-openai-chat protocol: {body}"
+        );
+        assert_eq!(body["store"], false);
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+
+        let items = recorder.0.lock().unwrap();
+        let last = items.last().expect("frames");
+        assert!(!last.pending);
+        assert_eq!(last.detail.as_deref(), Some("Hi"));
+        assert_eq!(last.payload["reasoning"], "pondering");
     }
 }

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use moe_core::contract::{CommandEvent, Emitter};
 use moe_core::conversation::{Message, Role, ToolCall};
+use moe_platform::config::Protocol;
 use serde::Serialize;
 
 use crate::ai::{
@@ -115,6 +116,8 @@ pub(crate) struct AgentTurnRequest {
     pub views: Arc<Mutex<Vec<ToolCallView>>>,
     pub persist: MessageSink,
     pub on_done: StreamFinish,
+    /// The provider's model list for 4xx cards (ADR-0040); `None` = nothing known to list.
+    pub model_hint: Option<String>,
 }
 
 /// Persists one record message (the agentic record is written as the turn progresses).
@@ -146,6 +149,7 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
         item_of,
         views,
         persist,
+        model_hint,
         on_done,
     } = request;
     let cancel = begin_stream(&stream_key);
@@ -187,12 +191,16 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
         let body = chat_body_with_tools(&model, wire, &tool_specs, true);
         let outcome = stream_once(
             RoundRequest {
+                // The loop's wire is OpenAI chat completions by construction (MOE-0017); tool
+                // deltas for the other protocols are the follow-up that generalizes it (ADR-0040).
+                protocol: Protocol::OpenAiChat,
                 base_url: base_url.clone(),
                 key: key.clone(),
                 body,
                 command_id: command_id.clone(),
                 item_of: item_of.clone(),
                 cancel: cancel.clone(),
+                model_hint: model_hint.clone(),
             },
             emitter.clone(),
         );
@@ -614,6 +622,7 @@ mod tests {
                     item_of,
                     views,
                     persist,
+                    model_hint: None,
                     on_done: Arc::new(move |_| {
                         done_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                     }),
@@ -726,6 +735,7 @@ mod tests {
                     item_of,
                     views,
                     persist,
+                    model_hint: None,
                     on_done: Arc::new(move |_| {
                         done_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                     }),
@@ -827,6 +837,7 @@ mod tests {
                     item_of,
                     views: runner_views,
                     persist,
+                    model_hint: None,
                     // Stop paths do not call `on_done` (matching the plain stream's contract);
                     // this test waits on the settled frame instead.
                     on_done: Arc::new(crate::ai::noop_sink),

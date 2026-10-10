@@ -1,34 +1,61 @@
-//! Request construction and SSE parsing for OpenAI-compatible endpoints (pure functions, testable).
+//! The OpenAI Chat Completions adapter (ADR-0005; kept byte-compatible for MOE-0017's tool loop):
+//! endpoint URL, request bodies, SSE parsing, and the blocking-response text extractor.
 
-pub use moe_core::conversation::ToolCall;
+use super::{SseLine, ToolCallFragment};
+use crate::ai_client::ChatRequest;
+
+pub fn chat_completions_url(base_url: &str) -> String {
+    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+}
+
+pub fn chat_body(model: &str, question: &str) -> serde_json::Value {
+    chat_body_from_messages(
+        model,
+        vec![serde_json::json!({ "role": "user", "content": question })],
+    )
+}
+
+/// Request body: messages are already built in OpenAI format (multimodal parts with attachments,
+/// ADR-0010); history is passed to the endpoint in chronological order.
+pub fn chat_body_from_messages(model: &str, messages: Vec<serde_json::Value>) -> serde_json::Value {
+    chat_body_with_stream(model, messages, true)
+}
+
+/// Same as above, but streaming can be disabled (`stream: false` for blocking one-shot requests, the AI commands invoke path, ADR-0024).
+pub fn chat_body_with_stream(
+    model: &str,
+    messages: Vec<serde_json::Value>,
+    stream: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "stream": stream,
+        "messages": messages,
+    })
+}
+
+/// Same as `chat_body_with_stream`, plus the advertised tool definitions when any are present
+/// (MOE-0017): only Agentic Conversations carry `tools`; plain requests look exactly as before.
+pub fn chat_body_with_tools(
+    model: &str,
+    messages: Vec<serde_json::Value>,
+    tools: &[serde_json::Value],
+    stream: bool,
+) -> serde_json::Value {
+    let mut body = chat_body_with_stream(model, messages, stream);
+    if !tools.is_empty() {
+        body["tools"] = serde_json::Value::Array(tools.to_vec());
+    }
+    body
+}
+
+/// The shared request → this protocol's body: exactly `chat_body_with_stream` (the other request
+/// fields are protocol options this dialect does not use — MOE-0017's wire stays untouched).
+pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
+    chat_body_with_stream(&request.model, request.messages.clone(), request.stream)
+}
 
 /// Outcome of processing one SSE line.
-#[derive(Debug, PartialEq, Eq)]
-pub enum SseLine {
-    /// Incremental text carried by this line (`delta.content`).
-    Delta(String),
-    /// Incremental reasoning (`delta.reasoning_content`, DeepSeek-style).
-    Reasoning(String),
-    /// `delta.tool_calls` fragments; accumulate by index via [`merge_tool_call_fragments`] (the
-    /// request must have advertised tools — MOE-0017).
-    ToolCalls(Vec<ToolCallFragment>),
-    /// Stream end (`[DONE]`).
-    Done,
-    /// Ignore (heartbeats, empty lines, non-JSON, first packet without content, etc.).
-    Ignore,
-}
-
-/// One streamed tool-call fragment: the first chunk of a call carries `id` and the function
-/// `name`; later chunks carry only `arguments` slices, keyed by `index`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCallFragment {
-    pub index: u64,
-    pub id: Option<String>,
-    pub name: Option<String>,
-    pub arguments: String,
-}
-
-/// Merge streamed fragments into complete calls, one per index, in index order: `id`/`name` come
 pub fn sse_delta(line: &str) -> SseLine {
     let Some(payload) = line.strip_prefix("data:") else {
         return SseLine::Ignore;
@@ -82,75 +109,19 @@ pub fn sse_delta(line: &str) -> SseLine {
     SseLine::Ignore
 }
 
-/// Merge streamed fragments into complete calls, one per index, in index order: `id`/`name` come
-/// from the fragment that carries them; `arguments` concatenates in arrival order (MOE-0017).
-pub fn merge_tool_call_fragments(fragments: &[ToolCallFragment]) -> Vec<ToolCall> {
-    let mut merged: std::collections::BTreeMap<u64, ToolCall> = std::collections::BTreeMap::new();
-    for fragment in fragments {
-        let call = merged.entry(fragment.index).or_insert_with(|| ToolCall {
-            id: String::new(),
-            name: String::new(),
-            arguments: String::new(),
-        });
-        if let Some(id) = &fragment.id {
-            call.id.clone_from(id);
-        }
-        if let Some(name) = &fragment.name {
-            call.name.clone_from(name);
-        }
-        call.arguments.push_str(&fragment.arguments);
-    }
-    merged.into_values().collect()
-}
-
-pub fn chat_completions_url(base_url: &str) -> String {
-    format!("{}/chat/completions", base_url.trim_end_matches('/'))
-}
-
-pub fn chat_body(model: &str, question: &str) -> serde_json::Value {
-    chat_body_from_messages(
-        model,
-        vec![serde_json::json!({ "role": "user", "content": question })],
-    )
-}
-
-/// Request body: messages are already built in OpenAI format (multimodal parts with attachments,
-/// ADR-0010); history is passed to the endpoint in chronological order.
-pub fn chat_body_from_messages(model: &str, messages: Vec<serde_json::Value>) -> serde_json::Value {
-    chat_body_with_stream(model, messages, true)
-}
-
-/// Same as above, but streaming can be disabled (`stream: false` for blocking one-shot requests, the AI commands invoke path, ADR-0024).
-pub fn chat_body_with_stream(
-    model: &str,
-    messages: Vec<serde_json::Value>,
-    stream: bool,
-) -> serde_json::Value {
-    serde_json::json!({
-        "model": model,
-        "stream": stream,
-        "messages": messages,
-    })
-}
-
-/// Same as `chat_body_with_stream`, plus the advertised tool definitions when any are present
-/// (MOE-0017): only Agentic Conversations carry `tools`; plain requests look exactly as before.
-pub fn chat_body_with_tools(
-    model: &str,
-    messages: Vec<serde_json::Value>,
-    tools: &[serde_json::Value],
-    stream: bool,
-) -> serde_json::Value {
-    let mut body = chat_body_with_stream(model, messages, stream);
-    if !tools.is_empty() {
-        body["tools"] = serde_json::Value::Array(tools.to_vec());
-    }
-    body
+/// Non-streaming response parsing (the blocking invoke path): `choices[0].message.content`.
+pub fn completion_text(payload: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(payload).ok()?;
+    json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(str::to_string)
+        .filter(|text| !text.is_empty())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_client::ToolCallFragment;
 
     #[test]
     fn parses_sse_delta_lines() {
@@ -278,53 +249,6 @@ mod tests {
         );
     }
 
-    /// Index accumulation assembles complete calls from fragments, in index order (MOE-0017).
-    #[test]
-    fn merges_tool_call_fragments_in_index_order() {
-        let fragments = vec![
-            ToolCallFragment {
-                index: 1,
-                id: Some("call_b".into()),
-                name: Some("web_fetch".into()),
-                arguments: String::new(),
-            },
-            ToolCallFragment {
-                index: 0,
-                id: Some("call_a".into()),
-                name: Some("web_search".into()),
-                arguments: "{\"query\":\"ru".into(),
-            },
-            ToolCallFragment {
-                index: 1,
-                id: None,
-                name: None,
-                arguments: "{\"url\":\"https://x\"}".into(),
-            },
-            ToolCallFragment {
-                index: 0,
-                id: None,
-                name: None,
-                arguments: "st\"}".into(),
-            },
-        ];
-        assert_eq!(
-            merge_tool_call_fragments(&fragments),
-            vec![
-                ToolCall {
-                    id: "call_a".into(),
-                    name: "web_search".into(),
-                    arguments: "{\"query\":\"rust\"}".into(),
-                },
-                ToolCall {
-                    id: "call_b".into(),
-                    name: "web_fetch".into(),
-                    arguments: "{\"url\":\"https://x\"}".into(),
-                },
-            ]
-        );
-        assert!(merge_tool_call_fragments(&[]).is_empty());
-    }
-
     /// `tools` ride the body only when advertised (MOE-0017): none → no `tools` key at all.
     #[test]
     fn builds_tools_carrying_body() {
@@ -348,6 +272,23 @@ mod tests {
         assert!(
             plain.get("tools").is_none(),
             "no advertised tools → no tools field"
+        );
+    }
+
+    /// The blocking path reads `choices[0].message.content` (moved here from ai_commands, MOE-0018).
+    #[test]
+    fn completion_text_reads_message_content() {
+        let payload =
+            r#"{"choices":[{"message":{"role":"assistant","content":"the rewritten text"}}]}"#;
+        assert_eq!(
+            completion_text(payload).as_deref(),
+            Some("the rewritten text")
+        );
+        assert_eq!(completion_text(r#"{"choices":[]}"#), None);
+        assert_eq!(completion_text("not-json"), None);
+        assert_eq!(
+            completion_text(r#"{"choices":[{"message":{"content":""}}]}"#),
+            None
         );
     }
 }

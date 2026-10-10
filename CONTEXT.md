@@ -254,6 +254,20 @@ _Avoid_: paste (pasting is just one way to implement a write back)
 One continuous question-and-answer record inside the AI Chat Extension, owned by its Namespace.
 _Avoid_: chat
 
+**Provider**:
+The AI endpoint behind a Conversation and the AI Commands (ADR-0040): an official id from the
+embedded model catalog (base URL, key variable names and model list from the catalog; the protocol
+from the checked-in table) or a custom `[ai.providers.<id>]` block. One active provider per config
+(`[ai] provider` + `model`); its key lives in its own file (`keys/<id>`; the implicit `default`
+provider of legacy configs keeps the `api-key` file).
+_Avoid_: backend, account
+
+**Protocol**:
+The wire dialect a Provider speaks (ADR-0040): `openai-chat` (the only one carrying Tools in v1),
+`openai-responses`, or `anthropic`. Adapters normalize all three into one delta vocabulary, so the
+chat pipeline never branches per protocol.
+_Avoid_: API version, driver
+
 **Quick Ask**:
 A conversation hosted in the Command Panel (ADR-0036): applying the Quick Ask row opens the page
 (the search text is never sent as its first question — only the capturing row does that); the Input

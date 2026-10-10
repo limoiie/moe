@@ -99,13 +99,14 @@ impl Extension for Moe {
                 if key.is_empty() {
                     return Ok(ActionResult::detail(vec![info_item(
                         "Type the API key right after `key`, e.g. `key sk-xxxx`.\n\n\
-                         The key is only stored in a local key file (0600 permissions), never echoed, never written to the config file; you can also set the `MOE_AI_API_KEY` environment variable.",
+                         The key is stored in the active provider's own key file (0600 permissions), never echoed, never written to the config file; you can also set the `MOE_AI_API_KEY` environment variable.",
                     )]));
                 }
                 keychain::set_ai_api_key(&key).map_err(MoeError::Internal)?;
-                Ok(ActionResult::detail(vec![info_item(
-                    "✅ AI API Key saved (0600 key file, never echoed). You can ask questions now.",
-                )]))
+                let provider = keychain::active_provider_id();
+                Ok(ActionResult::detail(vec![info_item(&format!(
+                    "✅ AI API key saved for provider \"{provider}\" (0600 key file, never echoed). You can ask questions now."
+                ))]))
             }
             _ => Err(MoeError::NotFound),
         }
