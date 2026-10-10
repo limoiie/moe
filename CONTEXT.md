@@ -254,6 +254,12 @@ _Avoid_: paste (pasting is just one way to implement a write back)
 One continuous question-and-answer record inside the AI Chat Extension, owned by its Namespace.
 _Avoid_: chat
 
+**Model Catalog**:
+The embedded models.dev snapshot (refreshed daily, MOE-0016) behind the Provider defaults and the
+model picker (MOE-0019): per-model limits, modalities, capabilities and pricing; an official
+provider's base URL, key variables and model list come from it.
+_Avoid_: model list, registry (the command Registry is a different thing)
+
 **Provider**:
 The AI endpoint behind a Conversation and the AI Commands (ADR-0040): an official id from the
 embedded model catalog (base URL, key variable names and model list from the catalog; the protocol

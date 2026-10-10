@@ -6,6 +6,7 @@ pub mod agent;
 pub mod ai;
 pub mod ai_client;
 pub mod ai_commands;
+pub mod ai_models;
 pub mod attachment;
 pub mod echo;
 pub mod moe;

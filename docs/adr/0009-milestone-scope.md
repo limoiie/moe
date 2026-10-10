@@ -8,3 +8,12 @@
 - **M4**：Linux/X11 一等验证、Wayland 降级说明、macOS dmg + Linux deb/AppImage 打包。
 
 显式排除（v1 不做）：设置 UI（用「Moe: 打开配置文件」Command 代替）、主题市场（默认深色 + 可跟系统）、Windows 实质实现（仅保留 cfg 桩）、运行时扩展加载、云同步账号。
+
+## 增补：模型选择器（ADR-0040 / MOE-0019）
+
+「v1 不做设置 UI」的范围收窄一个例外：**模型目录浏览器**（`ai.choose-model` / Set AI Model）允许在
+面板内浏览 model catalog 的全部模型及其属性（上下文窗口、最大输出、模态、tools/vision/reasoning、
+价格、文档链接），选中即写回 `[ai] provider` / `model`（注释保持的原地编辑，与主题切换同一机制）。
+除此之外仍无设置 UI：key 继续用 `key <value>` 保存，provider 块继续手写 config.toml。理由：
+catalog（MOE-0016）的事实只有被看见才有价值，而手抄 model id 与属性正是多 provider 工作要消除的
+摩擦；选择器只读目录 + 单键切换，不承担管理职责，因此不构成通用设置面板的前例。

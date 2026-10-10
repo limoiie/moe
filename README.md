@@ -131,6 +131,14 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   it, truncated when overlong; history stores only the question itself). **Files selected in Finder
   before summoning automatically become attachments** (deduplicated with `@path` by path; the first
   use asks for Automation permission, ADR-0021).
+- **AI Models (catalog)**: type **Set AI Model** to browse every model the embedded daily-refreshed
+  catalog knows — context window and max output, modalities (text / image), tool calls, reasoning,
+  pricing, docs — plus your custom providers' models. The list is searchable (model name, provider,
+  or a capability like `vision tools`); Enter switches the active `[ai] provider` / `model` in
+  config.toml in place (comments untouched) and reports the provider's key state — where the key
+  file is, or exactly how to save one. Existing conversations use the new model on their next
+  message; new chats (⌘N) start with it. Selecting is all it does: keys stay `key <value>`, and
+  providers stay config blocks.
 - **AI Commands (text transforms, ADR-0024)**: 12 one-shot transform commands — Improve Writing /
   Fix Spelling & Grammar / Make Shorter / Make Longer / Simplify Language / Summarize /
   Translate to English / Translate to Chinese / Tone: Professional / Tone: Friendly /

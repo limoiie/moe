@@ -480,22 +480,63 @@ fn theme_line(theme: Theme) -> String {
     format!("theme = \"{}\"", theme.as_str())
 }
 
-/// Whether a config line assigns the `theme` key (a commented line never counts).
-fn is_theme_assignment(line: &str) -> bool {
+/// One TOML basic-string value: values come from config input (provider ids, model ids), so quotes
+/// and backslashes escape — the written file must always parse.
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Whether a config line assigns `key` (a commented line never counts).
+fn is_key_assignment(line: &str, key: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.starts_with('#') {
         return false;
     }
     trimmed
         .split_once('=')
-        .is_some_and(|(key, _)| key.trim() == "theme")
+        .is_some_and(|(found, _)| found.trim() == key)
 }
 
-/// Replace (or add) the `theme` key inside the `[ui]` section of config.toml text, keeping every
-/// other line — comments included — byte for byte (ADR-0035 amendment): the file is the user's, so
-/// the app never re-serializes it. Pure, so the surgery is unit-tested.
-pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
-    let key_line = theme_line(theme);
+/// Insert or replace one assignment inside `[section]`, keeping every other line byte for byte.
+/// A missing section is appended after a blank line.
+fn set_section_assignment(
+    mut lines: Vec<String>,
+    section: &str,
+    key: &str,
+    line: &str,
+) -> Vec<String> {
+    let header = format!("[{section}]");
+    match lines
+        .iter()
+        .position(|candidate| candidate.trim() == header)
+    {
+        Some(start) => {
+            let end = lines[start + 1..]
+                .iter()
+                .position(|candidate| candidate.trim_start().starts_with('['))
+                .map_or(lines.len(), |offset| start + 1 + offset);
+            match (start + 1..end).find(|&i| is_key_assignment(&lines[i], key)) {
+                Some(at) => lines[at] = line.to_string(),
+                None => lines.insert(start + 1, line.to_string()),
+            }
+        }
+        None => {
+            if lines
+                .last()
+                .is_some_and(|candidate| !candidate.trim().is_empty())
+            {
+                lines.push(String::new());
+            }
+            lines.push(header);
+            lines.push(line.to_string());
+        }
+    }
+    lines
+}
+
+/// Edit several assignments of one section in place (each call recomputes the section, so the
+/// replacements compose); reversed iteration makes fresh insertions land in the given order.
+fn edit_section(text: &str, section: &str, assignments: &[(&str, String)]) -> String {
     let mut lines: Vec<String> = if text.is_empty() {
         Vec::new()
     } else {
@@ -505,33 +546,48 @@ pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();
     }
-    match lines.iter().position(|line| line.trim() == "[ui]") {
-        Some(start) => {
-            let end = lines[start + 1..]
-                .iter()
-                .position(|line| line.trim_start().starts_with('['))
-                .map_or(lines.len(), |offset| start + 1 + offset);
-            match (start + 1..end).find(|&i| is_theme_assignment(&lines[i])) {
-                Some(at) => lines[at] = key_line,
-                None => lines.insert(start + 1, key_line),
-            }
-        }
-        None => {
-            if lines.last().is_some_and(|line| !line.trim().is_empty()) {
-                lines.push(String::new());
-            }
-            lines.push("[ui]".to_string());
-            lines.push(key_line);
-        }
+    for (key, line) in assignments.iter().rev() {
+        lines = set_section_assignment(lines, section, key, line);
     }
     let mut out = lines.join("\n");
     out.push('\n');
     out
 }
 
+/// Replace (or add) the `theme` key inside the `[ui]` section of config.toml text, keeping every
+/// other line — comments included — byte for byte (ADR-0035 amendment): the file is the user's, so
+/// the app never re-serializes it. Pure, so the surgery is unit-tested.
+pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
+    edit_section(text, "ui", &[("theme", theme_line(theme))])
+}
+
+/// Replace (or add) the `provider` and `model` keys inside the `[ai]` section (the picker's
+/// apply, MOE-0019): the same comment-preserving in-place surgery as the theme writer.
+pub fn set_ai_selection_in_toml(text: &str, provider: &str, model: &str) -> String {
+    edit_section(
+        text,
+        "ai",
+        &[
+            ("provider", format!("provider = {}", toml_string(provider))),
+            ("model", format!("model = {}", toml_string(model))),
+        ],
+    )
+}
+
 /// Persist the appearance preference to `config.toml` (a missing file is created from the default
 /// template first, so its comments teach the other settings too).
 pub fn store_theme(theme: Theme) -> std::io::Result<()> {
+    edit_config_file(|text| set_theme_in_toml(text, theme))
+}
+
+/// Persist the picked provider/model pair (the model picker's apply, MOE-0019) with the same rule:
+/// the file's comments and every unrelated line survive byte for byte.
+pub fn store_ai_selection(provider: &str, model: &str) -> std::io::Result<()> {
+    edit_config_file(|text| set_ai_selection_in_toml(text, provider, model))
+}
+
+/// Read config.toml (creating it from the default template when missing) and write back an edit.
+fn edit_config_file(edit: impl FnOnce(&str) -> String) -> std::io::Result<()> {
     let path = config_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -541,7 +597,7 @@ pub fn store_theme(theme: Theme) -> std::io::Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => DEFAULT_TEMPLATE.to_string(),
         Err(err) => return Err(err),
     };
-    std::fs::write(&path, set_theme_in_toml(&text, theme))
+    std::fs::write(&path, edit(&text))
 }
 
 #[cfg(test)]
@@ -759,6 +815,61 @@ mod tests {
     fn default_template_parses_and_matches_defaults() {
         let cfg = MoeConfig::from_toml(DEFAULT_TEMPLATE).unwrap();
         assert_eq!(cfg, MoeConfig::default());
+    }
+
+    /// The picker's apply (MOE-0019): `provider`/`model` are written in place, comments and every
+    /// unrelated line survive, and a commented sample is not mistaken for an assignment.
+    #[test]
+    fn set_ai_selection_replaces_in_place_and_keeps_everything_else() {
+        let text = "# mine\n[summon]\nkey = \"double-option\"\n\n[ai]\n# provider = \"openai\"\nbase_url = \"https://x/v1\"\nmodel = \"old\"\n";
+        let out = set_ai_selection_in_toml(text, "deepseek", "deepseek-flash");
+        assert!(out.contains("provider = \"deepseek\""));
+        assert!(out.contains("model = \"deepseek-flash\""));
+        assert!(!out.contains("model = \"old\""));
+        assert!(out.contains("# mine"), "comments survive: {out}");
+        assert!(out.contains("# provider = \"openai\""), "{out}");
+        assert!(out.contains("base_url = \"https://x/v1\""), "{out}");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("deepseek"));
+        assert_eq!(cfg.ai.model.as_deref(), Some("deepseek-flash"));
+        assert_eq!(cfg.summon.key, SummonKey::DoubleTap(Modifier::Alt));
+    }
+
+    /// Fresh insertions land under the `[ai]` header in the given order; a missing section is
+    /// appended (the template already carries commented samples, so the write replaces them).
+    #[test]
+    fn set_ai_selection_inserts_both_keys_in_order() {
+        let out = set_ai_selection_in_toml("[summon]\nkey = \"double-cmd\"\n", "lab", "m");
+        assert!(
+            out.ends_with("[ai]\nprovider = \"lab\"\nmodel = \"m\"\n"),
+            "{out}"
+        );
+
+        let out = set_ai_selection_in_toml("[ai]\nbase_url = \"https://x\"\n", "lab", "m");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("lab"));
+        assert_eq!(cfg.ai.model.as_deref(), Some("m"));
+        assert_eq!(cfg.ai.base_url.as_deref(), Some("https://x"));
+        assert!(
+            out.contains("[ai]\nprovider = \"lab\"\nmodel = \"m\"\nbase_url"),
+            "{out}"
+        );
+
+        // The template's commented provider samples are replaced by real assignments
+        let out = set_ai_selection_in_toml(DEFAULT_TEMPLATE, "ollama", "llama3.2");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("ollama"));
+        assert!(cfg.ai.configured());
+    }
+
+    /// Values escape so the written file always parses, even with quotes or backslashes (custom
+    /// provider ids and model names are user input).
+    #[test]
+    fn set_ai_selection_escapes_values() {
+        let out = set_ai_selection_in_toml("", "x\"y", "m\\n");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("x\"y"));
+        assert_eq!(cfg.ai.model.as_deref(), Some("m\\n"));
     }
 
     #[test]

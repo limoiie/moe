@@ -1089,6 +1089,21 @@ impl Extension for AiShell {
                 extension_title: None,
                 kind: None,
             },
+            CommandMeta {
+                id: "ai.choose-model".into(),
+                extension_id: "ai".into(),
+                title: "Set AI Model".into(),
+                subtitle: Some(
+                    "Browse the model catalog — context window, tools, vision, pricing — and switch the active provider/model"
+                        .into(),
+                ),
+                icon: Some("sparkles".into()),
+                input: InputKind::Query,
+                live: true,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
+            },
         ]
     }
 
@@ -1106,6 +1121,8 @@ impl Extension for AiShell {
             "ai.side-chat" => Ok(ActionResult::OpenSideView {
                 payload: serde_json::json!({}),
             }),
+            // The model picker (MOE-0019): live list from the catalog; Apply writes config.toml.
+            "ai.choose-model" => Ok(crate::ai_models::choose_model(query.unwrap_or_default())),
             _ => Err(MoeError::NotFound),
         }
     }
@@ -1182,10 +1199,14 @@ impl Extension for AiShell {
 
     fn run_item_action(
         &self,
-        _command_id: &str,
+        command_id: &str,
         item: &Item,
         action: &Action,
     ) -> Result<ActionResult, MoeError> {
+        // The model picker's rows carry their own actions (MOE-0019).
+        if command_id == "ai.choose-model" {
+            return crate::ai_models::run_action(item, action);
+        }
         match action.id.as_str() {
             // Write back the full text (the title is fixed, the body is in detail)
             "write-back" => Ok(ActionResult::WriteBack {
@@ -2064,6 +2085,44 @@ This is a test case, do you know?"#;
             ext.new_command().unwrap().id,
             "ai.quick-ask",
             "New Chat folded into Quick Ask (ADR-0036 amendment)"
+        );
+    }
+
+    /// The model picker (MOE-0019): the command is routable and returns the searchable catalog
+    /// list (the embedded catalog always carries DeepSeek); actions route through
+    /// `run_item_action` to the picker's handler (an unknown action → NotFound, no config write).
+    #[test]
+    fn choose_model_is_routable_and_lists_the_catalog() {
+        let result = AiShell
+            .invoke("ai.choose-model", Some("deepseek"), None)
+            .expect("ai.choose-model is routable");
+        let items = match result {
+            ActionResult::List { items, detail_full } => {
+                assert!(!detail_full, "the picker is a list + detail page");
+                items
+            }
+            other => panic!("expected a list, got {other:?}"),
+        };
+        assert!(!items.is_empty(), "the catalog lists DeepSeek models");
+        let first = &items[0];
+        assert_eq!(first.actions[0].id, "use");
+        assert_eq!(first.actions[0].kind, ActionKind::Primary);
+        assert!(
+            first.detail.is_some(),
+            "the detail pane carries the properties"
+        );
+
+        let unknown = Action {
+            id: "nope".into(),
+            title: "Nope".into(),
+            kind: ActionKind::Secondary,
+            keybinding: None,
+        };
+        assert!(
+            AiShell
+                .run_item_action("ai.choose-model", first, &unknown)
+                .is_err(),
+            "picker actions route to ai_models"
         );
     }
 

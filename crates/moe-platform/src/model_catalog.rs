@@ -345,6 +345,12 @@ impl Catalog {
         self.0.values()
     }
 
+    /// Provider id + entry pairs: the id is the map key, which is authoritative (the embedded
+    /// entry's own `id` field may be absent — a hand-built or overlaid entry need not carry it).
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &Provider)> {
+        self.0.iter().map(|(id, provider)| (id.as_str(), provider))
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
