@@ -1,10 +1,11 @@
 # M7x: the model catalog stays fresh — scheduled snapshot PR + runtime ETag refresh
 
 - **ID**: MOE-0016
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ready-for-agent
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
+- **Commit**: 8bb4441
 
 The provider/model picker must show current models with limits, capabilities and prices without
 the app shipping a new build for every model release, and without hand-curating provider lists.
@@ -67,3 +68,7 @@ Attribution: models.dev is MIT (Copyright (c) 2025 models.dev) — recorded next
   overlay precedence, corrupt-cache fallback, a mock-server 200 → cache write → fresh-cache no-request
   → 304 stamp-bump sequence, and error retention). Pending commit — no GUI run made (would trigger a
   real refresh request).
+- 2026-10-10 (agent): delivered in `8bb4441` (pipeline, runtime refresh, tests — one commit).
+  GitHub-side activation remains user action: enable "Allow GitHub Actions to create and approve
+  pull requests", then run the workflow once via `workflow_dispatch`; the daily cron keeps the
+  snapshot fresh afterwards (auto-disables after ~60 days idle — documented in the workflow).
