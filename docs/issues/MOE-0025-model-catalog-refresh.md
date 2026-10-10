@@ -1,11 +1,11 @@
-# M7x: the model catalog stays fresh — scheduled snapshot PR + runtime ETag refresh
+# M8g: the model catalog stays fresh — scheduled snapshot PR + runtime ETag refresh
 
-- **ID**: MOE-0016
+- **ID**: MOE-0025
 - **State**: done
 - **Labels**: feature, ready-for-agent
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
-- **Commit**: 8bb4441
+- **Commit**: 5b42e34
 
 The provider/model picker must show current models with limits, capabilities and prices without
 the app shipping a new build for every model release, and without hand-curating provider lists.
@@ -72,3 +72,7 @@ Attribution: models.dev is MIT (Copyright (c) 2025 models.dev) — recorded next
   GitHub-side activation remains user action: enable "Allow GitHub Actions to create and approve
   pull requests", then run the workflow once via `workflow_dispatch`; the daily cron keeps the
   snapshot fresh afterwards (auto-disables after ~60 days idle — documented in the workflow).
+- 2026-10-10 (agent): renumbered to **MOE-0025 / M8g** after rebasing this branch onto main (main
+  had concurrently allocated its own MOE-0016–0024 to the UI workstream); the sweep covered the
+  ADRs, the research notes, code comments, and the config template. The rebase also rewrote the
+  delivery commit: `8bb4441` → `5b42e34` (the sha in the comment above predates the rebase).

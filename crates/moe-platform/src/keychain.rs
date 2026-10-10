@@ -1,4 +1,4 @@
-//! AI API key storage (ADR-0019 amending ADR-0005; per-provider since ADR-0040/MOE-0018):
+//! AI API key storage (ADR-0019 amending ADR-0005; per-provider since ADR-0040/MOE-0027):
 //! 0600 local files, not the config file.
 //!
 //! Why not the system keychain: for unsigned apps, macOS treats every keychain access as an "unknown app"

@@ -1,4 +1,4 @@
-//! The v1 read-only Tools (ADR-0039 / MOE-0017): Web Search (self-hosted SearXNG), Web Fetch,
+//! The v1 read-only Tools (ADR-0039 / MOE-0026): Web Search (self-hosted SearXNG), Web Fetch,
 //! Read File. Specs are advertised per request (config-driven); execution is blocking with a 20 s
 //! budget, results are truncated to ~8k characters with a note, and cancellation is cooperative —
 //! the runner's flag is checked before each network step.
@@ -13,7 +13,7 @@ use moe_platform::config::FetchFallback;
 
 use crate::attachment;
 
-/// Per-result character cap; truncation is noted inside the result (MOE-0017).
+/// Per-result character cap; truncation is noted inside the result (MOE-0026).
 pub const TOOL_RESULT_CHARS: usize = 8_000;
 /// Byte cap for a fetched page (before extraction).
 pub const FETCH_BYTE_CAP: u64 = 1024 * 1024;
@@ -292,7 +292,7 @@ fn read_file(raw_path: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
-/// The v1 secrets blocklist (MOE-0017): `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/Library/Keychains`,
+/// The v1 secrets blocklist (MOE-0026): `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/Library/Keychains`,
 /// and `.env*` files anywhere. Evaluated on the canonical path.
 fn blocked_path(path: &Path) -> bool {
     let components: Vec<&str> = path

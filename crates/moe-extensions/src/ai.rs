@@ -83,7 +83,7 @@ fn answer_item(
 }
 
 /// Item payload: the conversation id (passed back as-is on Apply/⌘J — the UI does not interpret it),
-/// the model's thinking, and the turn's tool-call activity stack (MOE-0017; absent on surfaces
+/// the model's thinking, and the turn's tool-call activity stack (MOE-0026; absent on surfaces
 /// without tools).
 fn conversation_payload(
     conversation_id: Option<&str>,
@@ -448,7 +448,7 @@ pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
 }
 
 /// Structured `reasoning_content` deltas win over tag-style reasoning extracted from the content:
-/// endpoints stream one or the other (MOE-0017).
+/// endpoints stream one or the other (MOE-0026).
 fn prefer_reasoning(field: &str, tagged: String) -> String {
     if field.trim().is_empty() {
         tagged
@@ -457,7 +457,7 @@ fn prefer_reasoning(field: &str, tagged: String) -> String {
     }
 }
 
-/// One HTTP round (MOE-0017's loop reuses this for every round of a turn).
+/// One HTTP round (MOE-0026's loop reuses this for every round of a turn).
 /// The caller owns cancellation registration: `begin_stream`/`end_stream` around one round
 /// (plain chat) or around the whole turn (the agentic runner).
 pub(crate) struct RoundRequest {
@@ -721,7 +721,7 @@ fn chat_request(provider: &ActiveProvider, messages: Vec<Message>, stream: bool)
 }
 
 /// One chat turn's transport: plain Conversations stream as today (one round, no tools); Agentic
-/// Conversations run the tool loop (MOE-0017). Both receive the record ending in the new question
+/// Conversations run the tool loop (MOE-0026). Both receive the record ending in the new question
 /// and emit `ai.quick-ask` / `ai.side` events; the conversation id is the stream key (Stop scope).
 /// The tool loop is gated to `openai-chat` (ADR-0040) — the callers decide `agentic` accordingly.
 fn spawn_chat_turn(
@@ -1121,7 +1121,7 @@ impl Extension for AiShell {
             "ai.side-chat" => Ok(ActionResult::OpenSideView {
                 payload: serde_json::json!({}),
             }),
-            // The model picker (MOE-0019): live list from the catalog; Apply writes config.toml.
+            // The model picker (MOE-0028): live list from the catalog; Apply writes config.toml.
             "ai.choose-model" => Ok(crate::ai_models::choose_model(query.unwrap_or_default())),
             _ => Err(MoeError::NotFound),
         }
@@ -1203,7 +1203,7 @@ impl Extension for AiShell {
         item: &Item,
         action: &Action,
     ) -> Result<ActionResult, MoeError> {
-        // The model picker's rows carry their own actions (MOE-0019).
+        // The model picker's rows carry their own actions (MOE-0028).
         if command_id == "ai.choose-model" {
             return crate::ai_models::run_action(item, action);
         }
@@ -1691,7 +1691,7 @@ This is a test case, do you know?"#;
         assert!(begin_stream("").is_none());
     }
 
-    /// Structured reasoning wins over tag extraction (MOE-0017).
+    /// Structured reasoning wins over tag extraction (MOE-0026).
     #[test]
     fn structured_reasoning_wins_over_tags() {
         assert_eq!(prefer_reasoning("thinking", "tagged".into()), "thinking");
@@ -1699,7 +1699,7 @@ This is a test case, do you know?"#;
     }
 
     /// End to end: `delta.reasoning_content` deltas stream into the Thinking payload beside the
-    /// answer (MOE-0017) — before this, the field was ignored entirely.
+    /// answer (MOE-0026) — before this, the field was ignored entirely.
     #[test]
     fn reasoning_content_streams_into_the_thinking_payload() {
         let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
@@ -2088,7 +2088,7 @@ This is a test case, do you know?"#;
         );
     }
 
-    /// The model picker (MOE-0019): the command is routable and returns the searchable catalog
+    /// The model picker (MOE-0028): the command is routable and returns the searchable catalog
     /// list (the embedded catalog always carries DeepSeek); actions route through
     /// `run_item_action` to the picker's handler (an unknown action → NotFound, no config write).
     #[test]

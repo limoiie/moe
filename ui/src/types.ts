@@ -76,11 +76,11 @@ export interface AttachmentRef {
   path: string;
 }
 
-// Tool Call row state (MOE-0017): "running" while the call executes, then one settled state.
+// Tool Call row state (MOE-0026): "running" while the call executes, then one settled state.
 export type ToolCallStatus = "running" | "ok" | "error" | "stopped";
 
 /**
- * One Tool Call (MOE-0017). Stream frames carry the full view (`status`, and `result` once
+ * One Tool Call (MOE-0026). Stream frames carry the full view (`status`, and `result` once
  * settled); the stored record carries the call alone — its result lives in the following `tool`
  * message, and the row derives the settled status from it when the record re-renders.
  */

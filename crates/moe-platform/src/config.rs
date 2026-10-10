@@ -127,11 +127,11 @@ pub struct AiConfig {
     pub base_url: Option<String>,
     /// Provider overrides / custom providers by id (ADR-0040); `BTreeMap` for stable iteration.
     pub providers: BTreeMap<String, ProviderConfig>,
-    /// Agentic Conversations advertise Tools; a kill-switch for new conversations (MOE-0017).
+    /// Agentic Conversations advertise Tools; a kill-switch for new conversations (MOE-0026).
     pub tools: bool,
     /// The self-hosted SearXNG base URL; unset → `web_search` is not advertised at all.
     pub searxng_url: Option<String>,
-    /// The `web_fetch` fallback when local extraction fails (MOE-0017).
+    /// The `web_fetch` fallback when local extraction fails (MOE-0026).
     pub fetch_fallback: FetchFallback,
 }
 
@@ -154,7 +154,7 @@ pub struct ProviderConfig {
 }
 
 /// The wire protocols Moe speaks (ADR-0040): the OpenAI Chat Completions dialect (today's code;
-/// MOE-0017's tool loop is gated to it), the OpenAI Responses API, and Anthropic Messages.
+/// MOE-0026's tool loop is gated to it), the OpenAI Responses API, and Anthropic Messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
     OpenAiChat,
@@ -195,7 +195,7 @@ impl Default for AiConfig {
     }
 }
 
-/// The `web_fetch` fallback when the local GET/extraction fails (MOE-0017).
+/// The `web_fetch` fallback when the local GET/extraction fails (MOE-0026).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FetchFallback {
     /// Retry through the keyless r.jina.ai reader (default).
@@ -562,7 +562,7 @@ pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
 }
 
 /// Replace (or add) the `provider` and `model` keys inside the `[ai]` section (the picker's
-/// apply, MOE-0019): the same comment-preserving in-place surgery as the theme writer.
+/// apply, MOE-0028): the same comment-preserving in-place surgery as the theme writer.
 pub fn set_ai_selection_in_toml(text: &str, provider: &str, model: &str) -> String {
     edit_section(
         text,
@@ -580,7 +580,7 @@ pub fn store_theme(theme: Theme) -> std::io::Result<()> {
     edit_config_file(|text| set_theme_in_toml(text, theme))
 }
 
-/// Persist the picked provider/model pair (the model picker's apply, MOE-0019) with the same rule:
+/// Persist the picked provider/model pair (the model picker's apply, MOE-0028) with the same rule:
 /// the file's comments and every unrelated line survive byte for byte.
 pub fn store_ai_selection(provider: &str, model: &str) -> std::io::Result<()> {
     edit_config_file(|text| set_ai_selection_in_toml(text, provider, model))
@@ -817,7 +817,7 @@ mod tests {
         assert_eq!(cfg, MoeConfig::default());
     }
 
-    /// The picker's apply (MOE-0019): `provider`/`model` are written in place, comments and every
+    /// The picker's apply (MOE-0028): `provider`/`model` are written in place, comments and every
     /// unrelated line survive, and a commented sample is not mistaken for an assignment.
     #[test]
     fn set_ai_selection_replaces_in_place_and_keeps_everything_else() {

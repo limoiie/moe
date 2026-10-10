@@ -1,25 +1,25 @@
-# M7z: three protocols, many providers — the AI layer learns Anthropic and Responses
+# M8i: three protocols, many providers — the AI layer learns Anthropic and Responses
 
-- **ID**: MOE-0018
+- **ID**: MOE-0027
 - **State**: done
 - **Labels**: ready-for-agent, feature
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
-- **Blocked by**: MOE-0017 (done)
+- **Blocked by**: MOE-0026 (done)
 - **Assignee**: agent
-- **Commit**: 10e0917
+- **Commit**: 6f29793
 
 The owner's direction: official providers (DeepSeek, OpenAI, Anthropic, Google, xAI, Mistral, Groq,
 OpenRouter, Ollama, …) plus custom providers speaking one of three protocols — OpenAI Chat
 Completions, OpenAI Responses, Anthropic Messages — with the model list and its properties coming
-from the embedded/refreshed catalog (MOE-0016). Decision and rationale: **ADR-0040** (supersedes
+from the embedded/refreshed catalog (MOE-0025). Decision and rationale: **ADR-0040** (supersedes
 ADR-0005's "OpenAI-compatible only" clause; amends ADR-0019 for per-provider key files). Facts:
 `docs/research/ai-provider-libraries-rust.md`, `docs/research/ai-model-catalogs.md`,
 `docs/research/zed-ai-provider-layer.md`.
 
-**Sequencing:** this issue rewrites the same files as MOE-0017 (`ai_client.rs`, `ai.rs`,
+**Sequencing:** this issue rewrites the same files as MOE-0026 (`ai_client.rs`, `ai.rs`,
 `config.rs`), so it is deliberately **blocked by the tool loop**; the `openai-chat` backend must
-keep MOE-0017's SSE tool parsing and message-array construction byte-compatible — the dsh
+keep MOE-0026's SSE tool parsing and message-array construction byte-compatible — the dsh
 economics of ADR-0039 (prefix-cache hits, `reasoning_content` echo) depend on the request body
 staying exactly as the loop builds it.
 
@@ -78,28 +78,27 @@ staying exactly as the loop builds it.
 - Per-provider keys: switching `[ai] provider` uses that provider's key file; `MOE_AI_API_KEY` is
   the last-resort fallback; `key <value>` writes the active provider's file.
 - `[ai] provider` on `anthropic`/`openai-responses`: new conversations are plain — a
-  request-capture test proves no `tools` field is sent; `openai-chat` keeps MOE-0017's agentic
+  request-capture test proves no `tools` field is sent; `openai-chat` keeps MOE-0026's agentic
   behavior and all of its tests stay green.
 - `cargo test` green; no regression in the AI Commands (tool-free) path.
 
 ## References
 
 - **ADR-0040** (this work's decision), ADR-0039 (tool loop, the blocker), ADR-0005 + its two
-  amendments, ADR-0019 (amended for per-provider keys), MOE-0016 (catalog).
+  amendments, ADR-0019 (amended for per-provider keys), MOE-0025 (catalog).
 - Research: `docs/research/ai-provider-libraries-rust.md`, `docs/research/ai-model-catalogs.md`,
   `docs/research/zed-ai-provider-layer.md`.
 
 ## Comments
 
-- 2026-10-10 (agent): filed. Renumbered to MOE-0018 / M7z because MOE-0017 / M7y was allocated
-  concurrently by the tool-loop workstream (its own comment records the 0016/0017 renumbering).
-  `Blocked by: MOE-0017` — same files, and the openai-chat wire behavior must not move underneath
-  it; the `Blocks` line was added to MOE-0017's header. Design specifics (config shape, per-provider
+- 2026-10-10 (agent): filed (initially numbered MOE-0018; see the last comment for the final
+  renumbering after the rebase onto main). `Blocked by: MOE-0026` — same files, and the openai-chat wire behavior must not move underneath
+  it; the `Blocks` line was added to MOE-0026's header. Design specifics (config shape, per-provider
   keys, tools gating) are proposals in ADR-0040 from the owner's three-protocol direction — amend
   via comments here if any should change before implementation starts.
 - 2026-10-10 (agent): **done** (10e0917; schema + keys in 18fa99e). `ai_client` is a module tree:
   `mod.rs` (shared delta vocabulary + `ChatRequest` + dispatch), `openai_chat.rs` (moved as-is,
-  bodies byte-identical — all MOE-0017 tests green), `anthropic.rs` / `openai_responses.rs` (pure
+  bodies byte-identical — all MOE-0026 tests green), `anthropic.rs` / `openai_responses.rs` (pure
   adapters: system→`system`/`instructions`, multimodal parts, the reasoning opt-in, SSE
   normalization, blocking-response text, with recorded-fixture tests; two subagents landed them in
   parallel), `providers.rs` (the citation table + `resolve`/`resolve_with`). `config.rs` gained
@@ -128,3 +127,8 @@ staying exactly as the loop builds it.
   change needed). Manual acceptance against live endpoints (real provider keys, image attachments,
   per-provider key switching) still needs the owner; the legacy path was verified by the resolve
   and keychain tests (base_url + legacy `api-key` resolve to the implicit `default` provider).
+- 2026-10-10 (agent): renumbered to **MOE-0027 / M8i** after rebasing this branch onto main (main
+  had concurrently allocated its own MOE-0016–0024 to the UI workstream); the sweep covered the
+  ADRs, the research notes, code comments, and the config template. The rebase also rewrote the
+  delivery commits: `10e0917` → `6f29793` (the adapter tree) and `18fa99e` → `29ff372` (schema +
+  keys); the shas in the comments above predate the rebase.

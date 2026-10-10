@@ -25,7 +25,7 @@ pub struct AttachmentRef {
 }
 
 /// One tool call in the shape the wire uses (`id` / `function.name` / `function.arguments`) and the
-/// record persists (MOE-0017).
+/// record persists (MOE-0026).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCall {
@@ -46,7 +46,7 @@ pub struct Message {
     /// copied or written back (the Thinking block renders it, ADR-0024 amendments).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
-    /// Assistant-round tool calls, replayed verbatim when the conversation is agentic (MOE-0017).
+    /// Assistant-round tool calls, replayed verbatim when the conversation is agentic (MOE-0026).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
     /// On `Role::Tool` result messages: the call they answer (wire `tool_call_id`).

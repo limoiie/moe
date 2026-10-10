@@ -482,7 +482,7 @@ mod tests {
 
     /// The transform request in the shared vocabulary: system instruction first, user text second;
     /// openai-chat passes them through unchanged, stream can be off (the blocking path); the
-    /// provider supplies model / reasoning opt-in / max_tokens (MOE-0018).
+    /// provider supplies model / reasoning opt-in / max_tokens (MOE-0027).
     #[test]
     fn prompt_request_puts_instruction_before_text() {
         let provider = providers::test_provider(Protocol::OpenAiChat, "http://x/v1");

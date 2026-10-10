@@ -88,7 +88,7 @@ const ICONS: Record<string, IconNode> = {
   monitor: Monitor,
   sun: Sun,
   moon: Moon,
-  // Tool Call rows (MOE-0017)
+  // Tool Call rows (MOE-0026)
   "file-text": FileText,
   globe: Globe,
   "rotate-cw": RotateCw,

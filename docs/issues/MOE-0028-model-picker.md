@@ -1,15 +1,15 @@
-# M8a: pick a model — the catalog reaches the palette
+# M8j: pick a model — the catalog reaches the palette
 
-- **ID**: MOE-0019
+- **ID**: MOE-0028
 - **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
 - **Assignee**: agent
-- **Commit**: 10f5ad4
+- **Commit**: 0675cc4
 
 The owner's original ask included browsing models with their properties (context window, max
-output, tools, images, reasoning, …). MOE-0016 embedded the catalog and MOE-0018 built the provider
+output, tools, images, reasoning, …). MOE-0025 embedded the catalog and MOE-0027 built the provider
 layer, but both are config-file driven: the catalog's facts are still invisible in the product.
 ADR-0009 excluded a settings UI from v1; this issue narrows that exclusion to one catalog browser +
 pair selector (amendment recorded at delivery) — keys and provider blocks stay file-managed.
@@ -74,8 +74,8 @@ pair selector (amendment recorded at delivery) — keys and provider blocks stay
 
 ## Comments
 
-- 2026-10-10 (agent): filed + claimed per the owner's go-ahead ("file it as MOE-0019 and start on
-  it"), immediately after MOE-0018. No grilling round this time: the decisions above are the
+- 2026-10-10 (agent): filed + claimed per the owner's go-ahead ("file it as MOE-0028 and start on
+  it"), immediately after MOE-0027. No grilling round this time: the decisions above are the
   natural continuation of ADR-0040's "the picker command that consumes the catalog comes later" and
   ADR-0009's excluded-settings-UI clause (narrowed here); they are recorded as settled for this
   implementation and can be amended in comments if the owner wants a different surface later.
@@ -99,3 +99,9 @@ pair selector (amendment recorded at delivery) — keys and provider blocks stay
   Remaining manual: a visual pass in the running app (the row subtitle/detail layout, the search
   feel with the 730-model catalog) and selecting against a live key; the config write is covered
   by unit tests but has not been exercised through the real IPC path.
+- 2026-10-10 (agent): renumbered to **MOE-0028 / M8j** after rebasing this branch onto main (main
+  had concurrently allocated its own MOE-0016–0024 to the UI workstream); the sweep covered the
+  ADRs, the research notes, code comments, and the config template. The rebase also rewrote the
+  delivery commit: `10f5ad4` → `0675cc4`, and the picker now rides main's `Item.group` template
+  (rows group by provider, headers are non-focusable). The sha in the comment above predates the
+  rebase.

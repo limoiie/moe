@@ -1400,7 +1400,7 @@ fn main() {
                 });
             });
 
-            // Model-catalog freshness (MOE-0016): at most one conditional GET per day, on a
+            // Model-catalog freshness (MOE-0025): at most one conditional GET per day, on a
             // worker thread; failures keep the cached copy and the embedded baseline.
             std::thread::spawn(|| {
                 let now = std::time::SystemTime::now()

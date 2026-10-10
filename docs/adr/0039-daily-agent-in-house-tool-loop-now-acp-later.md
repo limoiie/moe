@@ -12,7 +12,7 @@ in-house loop with daily-life tools and adopted MCP/Skills but **not** ACP.
 
 ## Decision
 
-- **Phase 1 (this ADR; MOE-0017): a minimal in-house tool loop on the existing pipeline.**
+- **Phase 1 (this ADR; MOE-0026): a minimal in-house tool loop on the existing pipeline.**
   Conversations created from now on are **Agentic Conversations**: the request advertises Tools,
   the model may call them mid-turn, and Moe orchestrates the Rounds on top of the existing
   HTTP/SSE machinery (`ai::run_stream`) — guard-railed at 8 Rounds per turn, 20 s per tool call,

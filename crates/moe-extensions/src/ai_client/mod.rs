@@ -3,7 +3,7 @@
 //!
 //! Adapters are pure functions in the existing style: an endpoint URL, a request body built from
 //! OpenAI-shaped wire messages (ADR-0010), an SSE line parser, and a blocking-response text
-//! extractor. `openai-chat` is today's code, kept byte-compatible — MOE-0017's tool loop and its
+//! extractor. `openai-chat` is today's code, kept byte-compatible — MOE-0026's tool loop and its
 //! dsh replay economics depend on the wire staying exactly as it was.
 
 pub mod anthropic;
@@ -29,7 +29,7 @@ pub enum SseLine {
     /// reasoning-summary deltas).
     Reasoning(String),
     /// Tool-call fragments; accumulate by index via [`merge_tool_call_fragments`] (the request must
-    /// have advertised tools — MOE-0017; only `openai-chat` produces these in v1).
+    /// have advertised tools — MOE-0026; only `openai-chat` produces these in v1).
     ToolCalls(Vec<ToolCallFragment>),
     /// Stream end (`[DONE]`, `message_stop`, `response.completed`).
     Done,
@@ -48,7 +48,7 @@ pub struct ToolCallFragment {
 }
 
 /// Merge streamed fragments into complete calls, one per index, in index order: `id`/`name` come
-/// from the fragment that carries them; `arguments` concatenates in arrival order (MOE-0017).
+/// from the fragment that carries them; `arguments` concatenates in arrival order (MOE-0026).
 pub fn merge_tool_call_fragments(fragments: &[ToolCallFragment]) -> Vec<ToolCall> {
     let mut merged: std::collections::BTreeMap<u64, ToolCall> = std::collections::BTreeMap::new();
     for fragment in fragments {
@@ -136,7 +136,7 @@ pub fn authenticate(
 mod tests {
     use super::*;
 
-    /// Index accumulation assembles complete calls from fragments, in index order (MOE-0017).
+    /// Index accumulation assembles complete calls from fragments, in index order (MOE-0026).
     #[test]
     fn merges_tool_call_fragments_in_index_order() {
         let fragments = vec![

@@ -7,7 +7,7 @@ deepseek-harness repo and docs) fetched live on 2026-10-10; exact quotes are ver
 
 ## Context
 
-MOE-0017 adds a multi-round tool loop to AI conversations, forcing a history question: **collapse**
+MOE-0026 adds a multi-round tool loop to AI conversations, forcing a history question: **collapse**
 each agentic turn (persist only question + final answer, replay a clean transcript) or **persist
 faithfully** (store and replay every round, append-only). The owner's objection to collapse was a
 KV-cache intuition — DeepSeek's automatic context caching prices prefix hits at 1/50 of misses, and
@@ -139,7 +139,7 @@ exist at each request boundary.
 - **Caveat:** caching is best-effort with a TTL of "a few hours to a few days" — (B)'s advantage
   holds within a warm-cache window, not indefinitely.
 
-## Fit for Moe (decision recorded in ADR-0039 / MOE-0017)
+## Fit for Moe (decision recorded in ADR-0039 / MOE-0026)
 
 - **Persist faithfully, dsh-style:** the conversation record is append-only — questions, answers,
   reasoning, tool calls, tool results — and every request for an Agentic Conversation replays it

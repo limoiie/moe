@@ -255,8 +255,8 @@ One continuous question-and-answer record inside the AI Chat Extension, owned by
 _Avoid_: chat
 
 **Model Catalog**:
-The embedded models.dev snapshot (refreshed daily, MOE-0016) behind the Provider defaults and the
-model picker (MOE-0019): per-model limits, modalities, capabilities and pricing; an official
+The embedded models.dev snapshot (refreshed daily, MOE-0025) behind the Provider defaults and the
+model picker (MOE-0028): per-model limits, modalities, capabilities and pricing; an official
 provider's base URL, key variables and model list come from it.
 _Avoid_: model list, registry (the command Registry is a different thing)
 

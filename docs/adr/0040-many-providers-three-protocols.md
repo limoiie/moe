@@ -5,7 +5,7 @@ Moe's AI speaks exactly one wire today: an OpenAI-compatible chat endpoint, one 
 (ADR-0039 — in-house, chat completions, dsh-style faithful replay). The owner's direction: official
 providers (DeepSeek, OpenAI, Anthropic, Google, xAI, Mistral, Groq, OpenRouter, Ollama, …) plus
 custom providers speaking one of **three protocols** — OpenAI Chat Completions, OpenAI Responses,
-Anthropic Messages — with the model picker fed by the embedded/refreshed model catalog (MOE-0016).
+Anthropic Messages — with the model picker fed by the embedded/refreshed model catalog (MOE-0025).
 
 The research is settled: `docs/research/ai-provider-libraries-rust.md` (crate landscape; `genai` is
 the best standalone multi-provider crate, `rig` is an agent framework), `docs/research/ai-model-catalogs.md`
@@ -33,7 +33,7 @@ study, never copy).
 - **Providers are config; official defaults come from the model catalog.** `[ai] provider` +
   `[ai] model` select the active pair; `[ai.providers.<id>]` blocks override or define endpoints.
   An official provider works with an empty block: base URL, key env names, docs link, and the model
-  list with properties come from the catalog (MOE-0016); the protocol comes from a small app-side
+  list with properties come from the catalog (MOE-0025); the protocol comes from a small app-side
   mapping table with a citation per provider (the catalog's `npm` is the hint, hand-checked at
   implementation). Custom providers state `protocol`, `api_url`, and `models` — nothing about them
   can be catalogued.
@@ -54,7 +54,7 @@ study, never copy).
   reasoning summaries normalize into the existing reasoning payload the UI already renders
   (ADR-0024/MOE-0008); image attachments go out as each protocol's multimodal parts; the
   tag-stripping `split_reasoning` remains the `openai-chat` fallback.
-- **Sequencing.** The implementation (MOE-0018) rewrites the same files as MOE-0017 and is blocked
+- **Sequencing.** The implementation (MOE-0027) rewrites the same files as MOE-0026 and is blocked
   by it: the refactor wraps the loop's `openai-chat` parser and message-array construction unchanged.
 
 ## Config shape (v1)

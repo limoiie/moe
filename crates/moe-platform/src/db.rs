@@ -72,7 +72,7 @@ impl Db {
                  ON messages(conversation_id);",
         )
         .map_err(|err| err.to_string())?;
-        // Legacy DB upgrades (IIE4AD-358 attachments, MOE-0017 agentic record): add the columns
+        // Legacy DB upgrades (IIE4AD-358 attachments, MOE-0026 agentic record): add the columns
         // later versions introduced, keeping history intact.
         for (table, column, ddl) in [
             (
@@ -129,7 +129,7 @@ impl Db {
     }
 
     /// Append a message (append-only) and touch the conversation's `updated_unix`; attachments store
-    /// only references (ADR-0010); reasoning/tool fields are the Agentic record (MOE-0017).
+    /// only references (ADR-0010); reasoning/tool fields are the Agentic record (MOE-0026).
     pub fn append_message(
         &self,
         conversation_id: &str,
@@ -492,7 +492,7 @@ mod tests {
         );
     }
 
-    /// The faithful record: the agentic flag, reasoning and tool rounds round-trip (MOE-0017).
+    /// The faithful record: the agentic flag, reasoning and tool rounds round-trip (MOE-0026).
     #[test]
     fn agentic_record_round_trips() {
         let db = db();

@@ -20,7 +20,7 @@ Harness for that) and **not** for coding (Zed). The decision on the table:
 > Build a small agent loop in-house on the existing pipeline, **or** become an ACP (Agent Client
 > Protocol) client and connect existing agents (Zed's externals, pi, Codex, DeepSeek Harness, …)?
 
-**Outcome (2026-10-10):** the staged hybrid below was adopted — **ADR-0039**, issue **MOE-0017** —
+**Outcome (2026-10-10):** the staged hybrid below was adopted — **ADR-0039**, issue **MOE-0026** —
 with two amendments from the design grilling: search is **self-hosted SearXNG** (not a free-tier
 API; see `free-web-search-options.md`) and agentic history **persists faithfully** for DeepSeek's
 prefix cache (see `deepseek-context-caching-and-dsh.md`).

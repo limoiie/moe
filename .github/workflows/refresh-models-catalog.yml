@@ -45,7 +45,7 @@ jobs:
             [models.dev](https://models.dev/api.json) (MIT licence).
 
             The snapshot covers the official providers and the fields the
-            provider/model picker needs; the runtime refresh (MOE-0016) fetches
+            provider/model picker needs; the runtime refresh (MOE-0025) fetches
             the full catalog over HTTP with an ETag check.
 
             Review the diff for unexpectedly missing providers or models before

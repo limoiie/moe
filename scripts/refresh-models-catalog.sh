@@ -6,7 +6,7 @@
 #            the official providers, and only the model fields the picker needs.
 # - Run by:  .github/workflows/refresh-models-catalog.yml (daily PR); safe to run
 #            locally. The runtime app additionally refreshes the full catalog over
-#            HTTP with an ETag check (docs/issues/MOE-0016-model-catalog-refresh.md);
+#            HTTP with an ETag check (docs/issues/MOE-0025-model-catalog-refresh.md);
 #            this snapshot is the offline baseline embedded in the binary.
 #            Set MOE_MODELS_SRC to a local api.json path to regenerate offline.
 set -euo pipefail

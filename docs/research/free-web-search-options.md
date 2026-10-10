@@ -7,7 +7,7 @@ Claims not verified against a live primary source are marked in
 
 ## Context
 
-MOE-0017 gives Agentic Conversations two web Tools: `web_search(query)` and `web_fetch(url)`
+MOE-0026 gives Agentic Conversations two web Tools: `web_search(query)` and `web_fetch(url)`
 (HTML → readable markdown). The owner's hard constraint: **$0 ongoing cost** — no paid API, no
 per-query spend, no card-gated free tiers; keyless or free-key only. The backend is a Rust/Tauri
 desktop app making plain HTTPS calls for a single user. This note is the comparison behind the
@@ -77,7 +77,7 @@ server with "**14 unkeyed backends with automatic fallback. Works from any IP**"
 of fallback-chain products is itself evidence that single-endpoint DDG scraping breaks often
 (crates.io API).
 
-## Fit for Moe (decision recorded in ADR-0039 / MOE-0017)
+## Fit for Moe (decision recorded in ADR-0039 / MOE-0026)
 
 - **Chosen: self-hosted SearXNG** (owner's decision). Durable, private, $0, keyless; the JSON API
   is one settings line (`formats: [html, json]`); Moe consumes `GET {url}/search?q=…&format=json`

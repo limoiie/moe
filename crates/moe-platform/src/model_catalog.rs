@@ -1,5 +1,5 @@
 //! Model catalog: the embedded models.dev snapshot, the runtime cache, and the
-//! daily ETag-conditional refresh (MOE-0016, `docs/research/ai-model-catalogs.md`).
+//! daily ETag-conditional refresh (MOE-0025, `docs/research/ai-model-catalogs.md`).
 //!
 //! Read precedence: the cached copy (`data_dir/moe/models-catalog.json`) overlays the
 //! embedded baseline (`data/`, reduced fields, official providers); a provider present
@@ -231,7 +231,7 @@ pub struct Provider {
     /// Documentation link.
     #[serde(default)]
     pub doc: Option<String>,
-    /// The AI SDK package upstream uses; a protocol hint (see MOE-0016 research notes).
+    /// The AI SDK package upstream uses; a protocol hint (see MOE-0025 research notes).
     #[serde(default)]
     pub npm: Option<String>,
     #[serde(default)]

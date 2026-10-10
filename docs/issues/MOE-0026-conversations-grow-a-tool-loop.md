@@ -1,13 +1,13 @@
-# M7y: conversations grow a tool loop — the daily agent, faithfully persisted
+# M8h: conversations grow a tool loop — the daily agent, faithfully persisted
 
-- **ID**: MOE-0017
+- **ID**: MOE-0026
 - **State**: done
 - **Labels**: ready-for-agent, feature
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
-- **Blocks**: MOE-0018
+- **Blocks**: MOE-0027
 - **Assignee**: agent
-- **Commit**: 82833b4
+- **Commit**: 1d9eef3
 
 The owner wants Moe's AI to serve daily work — researching, answering, querying, explaining —
 which needs the model to consult the web and read files mid-turn. Writing and coding stay outside
@@ -134,11 +134,11 @@ are in `docs/research/free-web-search-options.md` and
   conversations stay plain), Q5 stop/guardrails, Q6 docs packaging, Q7 SearXNG shape, Q8 Jina
   fallback default-on, Q9 glossary, Q10 Tool Call row UI. Direction in ADR-0039; facts in the
   three research notes. Implementation not started.
-- 2026-10-10 (agent): renumbered — the MOE-0016 / M7x slot was allocated concurrently by
-  `MOE-0016-model-catalog-refresh` (already in-progress in this worktree); this issue is MOE-0017
-  / M7y. Cross-references (ADR-0039, the ADR-0005 amendment, both research notes) point at the
-  new id.
-- 2026-10-10 (agent): **Blocks**: MOE-0018 added — the provider layer (three protocols, ADR-0040)
+- 2026-10-10 (agent): renumbered (twice — see the last comment): the slot first allocated to this
+  issue had been taken concurrently by the catalog workstream (`MOE-0025-model-catalog-refresh`,
+  already in-progress in this worktree); this issue is MOE-0026 / M8h. Cross-references (ADR-0039,
+  the ADR-0005 amendment, both research notes) point at the new id.
+- 2026-10-10 (agent): **Blocks**: MOE-0027 added — the provider layer (three protocols, ADR-0040)
   rewrites `ai_client.rs` / `ai.rs` / `config.rs` and is sequenced after this loop so the
   openai-chat wire behavior (tool-call parsing, message-array construction, reasoning echo) stays
   byte-compatible.
@@ -202,4 +202,8 @@ are in `docs/research/free-web-search-options.md` and
   ADR-0005 amendment already landed with the direction commit. Validation: `pnpm -C ui build`
   green, `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test --workspace`
   green (app 5, core 50, extensions 73, platform 60). Manual acceptance (SearXNG flow, stop
-  mid-round, reopen with cache-hit `usage`) still needs a live endpoint; MOE-0018 is unblocked.
+  mid-round, reopen with cache-hit `usage`) still needs a live endpoint; MOE-0027 is unblocked.
+- 2026-10-10 (agent): renumbered to **MOE-0026 / M8h** after rebasing this branch onto main (main
+  had concurrently allocated its own MOE-0016–0024 to the UI workstream); the sweep covered the
+  ADRs, the research notes, code comments, and the config template. The rebase also rewrote the
+  delivery commit: `82833b4` → `1d9eef3` (the shas in the comments above predate the rebase).

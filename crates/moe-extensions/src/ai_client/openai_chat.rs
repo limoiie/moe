@@ -1,4 +1,4 @@
-//! The OpenAI Chat Completions adapter (ADR-0005; kept byte-compatible for MOE-0017's tool loop):
+//! The OpenAI Chat Completions adapter (ADR-0005; kept byte-compatible for MOE-0026's tool loop):
 //! endpoint URL, request bodies, SSE parsing, and the blocking-response text extractor.
 
 use super::{SseLine, ToolCallFragment};
@@ -35,7 +35,7 @@ pub fn chat_body_with_stream(
 }
 
 /// Same as `chat_body_with_stream`, plus the advertised tool definitions when any are present
-/// (MOE-0017): only Agentic Conversations carry `tools`; plain requests look exactly as before.
+/// (MOE-0026): only Agentic Conversations carry `tools`; plain requests look exactly as before.
 pub fn chat_body_with_tools(
     model: &str,
     messages: Vec<serde_json::Value>,
@@ -50,7 +50,7 @@ pub fn chat_body_with_tools(
 }
 
 /// The shared request → this protocol's body: exactly `chat_body_with_stream` (the other request
-/// fields are protocol options this dialect does not use — MOE-0017's wire stays untouched).
+/// fields are protocol options this dialect does not use — MOE-0026's wire stays untouched).
 pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
     chat_body_with_stream(&request.model, request.messages.clone(), request.stream)
 }
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(body["messages"][2]["content"][1]["type"], "image_url");
     }
 
-    /// DeepSeek-style separate reasoning field (MOE-0017).
+    /// DeepSeek-style separate reasoning field (MOE-0026).
     #[test]
     fn parses_reasoning_content_deltas() {
         assert_eq!(
@@ -217,7 +217,7 @@ mod tests {
     }
 
     /// OpenAI-style tool-call fragments: the first chunk carries id/name, later chunks carry
-    /// argument slices keyed by index (MOE-0017).
+    /// argument slices keyed by index (MOE-0026).
     #[test]
     fn parses_tool_call_fragments() {
         assert_eq!(
@@ -249,7 +249,7 @@ mod tests {
         );
     }
 
-    /// `tools` ride the body only when advertised (MOE-0017): none → no `tools` key at all.
+    /// `tools` ride the body only when advertised (MOE-0026): none → no `tools` key at all.
     #[test]
     fn builds_tools_carrying_body() {
         let tools =
@@ -275,7 +275,7 @@ mod tests {
         );
     }
 
-    /// The blocking path reads `choices[0].message.content` (moved here from ai_commands, MOE-0018).
+    /// The blocking path reads `choices[0].message.content` (moved here from ai_commands, MOE-0027).
     #[test]
     fn completion_text_reads_message_content() {
         let payload =

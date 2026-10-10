@@ -13,4 +13,4 @@ dates, canonical id).
 
 or run the **Refresh model catalog** workflow, which regenerates it daily and opens a PR. Set
 `MOE_MODELS_SRC` to a local `api.json` path to regenerate offline. Design and acceptance live in
-`docs/issues/MOE-0016-model-catalog-refresh.md`.
+`docs/issues/MOE-0025-model-catalog-refresh.md`.

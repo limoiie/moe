@@ -22,7 +22,7 @@ export interface ConversationView {
    * dot animation is never restarted. `reasoning` (a model's thinking block) renders as the muted
    * ChatGPT-style row above the answer, never inside the body (MOE-0008/0011). `toolCalls` (an
    * agentic turn's activity stack) replaces the rendered rows when present — frames carry the full
-   * list in arrival order — and leaves them untouched when absent (MOE-0017).
+   * list in arrival order — and leaves them untouched when absent (MOE-0026).
    */
   updateStreaming(
     text: string,
@@ -56,7 +56,7 @@ interface StreamingBubble {
   reasoning: HTMLDetailsElement;
   reasoningLabel: HTMLElement;
   reasoningBody: HTMLElement;
-  /** The Tool Call activity stack: one row per call, above the answer (MOE-0017). */
+  /** The Tool Call activity stack: one row per call, above the answer (MOE-0026). */
   activity: HTMLElement;
   body: HTMLElement;
   indicator: HTMLElement;
@@ -116,7 +116,7 @@ export function reasoningEl(
   return details;
 }
 
-// ---- Tool Call rows (MOE-0017): one row per call, chronological, never aggregated ----
+// ---- Tool Call rows (MOE-0026): one row per call, chronological, never aggregated ----
 
 /** The runner persists stopped results with this exact text and prefixes failures with `Error: `
  * (`crates/moe-extensions/src/agent.rs` / `tools.rs`); a record-derived row reads its state from it. */
@@ -152,7 +152,7 @@ function shortUrl(raw: string): string {
   }
 }
 
-/** Row copy (MOE-0017): `Searched «query»`, `Fetched example.com/path`, `Read ~/x.log`. */
+/** Row copy (MOE-0026): `Searched «query»`, `Fetched example.com/path`, `Read ~/x.log`. */
 function toolCallLabel(call: ToolCall): { icon: string; label: string } {
   const args = toolArguments(call.arguments);
   switch (call.name) {
@@ -190,7 +190,7 @@ function setToolRowStatus(row: ToolRow, status: ToolCallStatus | undefined) {
 /**
  * One Tool Call row: the Thinking row's anatomy (borderless, muted, collapsed, chevron) with the
  * tool's icon + plain label; expanding shows the truncated result as muted markdown. One row per
- * call — a "used N tools" aggregate is rejected (observability over magic, MOE-0017).
+ * call — a "used N tools" aggregate is rejected (observability over magic, MOE-0026).
  */
 function toolRowEl(call: ToolCall): ToolRow {
   const details = document.createElement("details");
@@ -311,7 +311,7 @@ export function createConversationView(container: HTMLElement): ConversationView
       return callRow?.details ?? document.createElement("div");
     } else {
       row.className = "md text-sm text-fg";
-      // Reasoning + Tool Call rows re-render from the record (MOE-0017): Thinking first, then the
+      // Reasoning + Tool Call rows re-render from the record (MOE-0026): Thinking first, then the
       // turn's calls in arrival order, above the round's answer text.
       if (message.reasoning?.trim()) {
         row.append(reasoningEl(message.reasoning, false));
