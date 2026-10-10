@@ -1,5 +1,6 @@
 //! Parsing and defaults for `config.toml` (ADR-0008: the summon key is configurable).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -29,6 +30,23 @@ theme = \"system\"
 # tools = true                           # conversations may search the web / fetch pages / read files (the tool loop)
 # searxng_url = \"http://localhost:8080\"  # a SearXNG instance with JSON enabled; unset = no web_search tool
 # fetch_fallback = \"jina\"                # jina | none — keyless r.jina.ai retry when a page fetch is blocked or empty
+
+# Multi-provider (ADR-0040): pick an official provider by catalog id (deepseek, openai, anthropic,
+# google, xai, mistral, groq, openrouter, …) and a model from its catalog list; the key file is
+# keys/<provider>. Legacy base_url above keeps working (it is an implicit `default` provider).
+# provider = \"deepseek\"
+# model = \"deepseek-flash\"
+#
+# [ai.providers.openai]       # official providers: overrides only
+# protocol = \"openai-responses\"   # openai-chat | openai-responses | anthropic
+# models = [\"gpt-5.2\"]            # restrict the picker list (an unknown-model error lists these)
+# reasoning = false                # opt in/out of thinking blocks / reasoning summaries
+#
+# [ai.providers.my-gateway]   # custom endpoints state protocol, api_url and models
+# name = \"My Gateway\"
+# protocol = \"anthropic\"
+# api_url = \"https://gateway.example.com/anthropic\"
+# models = [\"claude-sonnet-5-5\"]
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,8 +119,14 @@ impl Default for SummonConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiConfig {
-    pub base_url: Option<String>,
+    /// Active provider id (ADR-0040): an official (catalog) id or a `[ai.providers.*]` key.
+    /// `None` = legacy mode (see `base_url`).
+    pub provider: Option<String>,
     pub model: Option<String>,
+    /// Legacy (ADR-0005): an OpenAI-compatible base URL; sugar for an implicit `default` provider.
+    pub base_url: Option<String>,
+    /// Provider overrides / custom providers by id (ADR-0040); `BTreeMap` for stable iteration.
+    pub providers: BTreeMap<String, ProviderConfig>,
     /// Agentic Conversations advertise Tools; a kill-switch for new conversations (MOE-0017).
     pub tools: bool,
     /// The self-hosted SearXNG base URL; unset → `web_search` is not advertised at all.
@@ -111,11 +135,59 @@ pub struct AiConfig {
     pub fetch_fallback: FetchFallback,
 }
 
+/// One `[ai.providers.<id>]` block: official providers use it for overrides; custom providers
+/// state `protocol` + `api_url` + `models` (ADR-0040).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProviderConfig {
+    /// Display name (custom providers; official ones default to the catalog name).
+    pub name: Option<String>,
+    /// Override the protocol (e.g. OpenAI defaults to `openai-chat`; opt in to `openai-responses`).
+    pub protocol: Option<Protocol>,
+    /// Override the catalog/table base URL (required for custom providers).
+    pub api_url: Option<String>,
+    /// The model ids: the picker list for custom providers, an optional restriction for official
+    /// ones; also what an unknown-model error lists.
+    pub models: Option<Vec<String>>,
+    /// Override the reasoning opt-in (Anthropic `thinking` / Responses summaries); unset = the
+    /// catalogued model's flag (official providers) or off (custom).
+    pub reasoning: Option<bool>,
+}
+
+/// The wire protocols Moe speaks (ADR-0040): the OpenAI Chat Completions dialect (today's code;
+/// MOE-0017's tool loop is gated to it), the OpenAI Responses API, and Anthropic Messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    OpenAiChat,
+    OpenAiResponses,
+    Anthropic,
+}
+
+impl Protocol {
+    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "openai-chat" => Ok(Self::OpenAiChat),
+            "openai-responses" => Ok(Self::OpenAiResponses),
+            "anthropic" => Ok(Self::Anthropic),
+            _ => Err(ConfigError::UnknownProtocol(raw.to_string())),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiChat => "openai-chat",
+            Self::OpenAiResponses => "openai-responses",
+            Self::Anthropic => "anthropic",
+        }
+    }
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
-            base_url: None,
+            provider: None,
             model: None,
+            base_url: None,
+            providers: BTreeMap::new(),
             tools: true,
             searxng_url: None,
             fetch_fallback: FetchFallback::Jina,
@@ -151,13 +223,19 @@ impl FetchFallback {
 }
 
 impl AiConfig {
-    /// AI commands are unavailable when no endpoint is configured (a setup item answers instead).
+    /// AI surfaces answer with a setup card when no provider is selected (ADR-0040) and no legacy
+    /// `base_url` is set (ADR-0005).
     pub fn configured(&self) -> bool {
-        self.base_url
+        self.provider
             .as_deref()
-            .is_some_and(|url| !url.trim().is_empty())
+            .is_some_and(|id| !id.trim().is_empty())
+            || self
+                .base_url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty())
     }
 
+    /// The legacy mode's model default (base_url without a model keeps working unchanged).
     pub fn model_or_default(&self) -> &str {
         self.model
             .as_deref()
@@ -221,11 +299,23 @@ struct RawUi {
 
 #[derive(Deserialize, Default)]
 struct RawAi {
+    provider: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
+    #[serde(default)]
+    providers: BTreeMap<String, RawProvider>,
     tools: Option<bool>,
     searxng_url: Option<String>,
     fetch_fallback: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawProvider {
+    name: Option<String>,
+    protocol: Option<String>,
+    api_url: Option<String>,
+    models: Option<Vec<String>>,
+    reasoning: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -250,18 +340,39 @@ impl MoeConfig {
             }
         }
         let ai = match raw.ai {
-            Some(raw_ai) => AiConfig {
-                base_url: raw_ai.base_url,
-                model: raw_ai.model,
-                tools: raw_ai.tools.unwrap_or(true),
-                searxng_url: raw_ai.searxng_url,
-                fetch_fallback: raw_ai
-                    .fetch_fallback
-                    .as_deref()
-                    .map(FetchFallback::parse)
-                    .transpose()?
-                    .unwrap_or_default(),
-            },
+            Some(raw_ai) => {
+                let providers = raw_ai
+                    .providers
+                    .into_iter()
+                    .map(|(id, raw)| {
+                        let protocol = raw.protocol.as_deref().map(Protocol::parse).transpose()?;
+                        Ok((
+                            id,
+                            ProviderConfig {
+                                name: raw.name,
+                                protocol,
+                                api_url: raw.api_url,
+                                models: raw.models,
+                                reasoning: raw.reasoning,
+                            },
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+                AiConfig {
+                    provider: raw_ai.provider,
+                    model: raw_ai.model,
+                    base_url: raw_ai.base_url,
+                    providers,
+                    tools: raw_ai.tools.unwrap_or(true),
+                    searxng_url: raw_ai.searxng_url,
+                    fetch_fallback: raw_ai
+                        .fetch_fallback
+                        .as_deref()
+                        .map(FetchFallback::parse)
+                        .transpose()?
+                        .unwrap_or_default(),
+                }
+            }
             None => AiConfig::default(),
         };
         let ui = match raw.ui {
@@ -307,6 +418,7 @@ pub enum ConfigError {
     DoubleTapRange(u64),
     UnknownTheme(String),
     UnknownFetchFallback(String),
+    UnknownProtocol(String),
     Toml(String),
 }
 
@@ -328,6 +440,10 @@ impl fmt::Display for ConfigError {
             Self::UnknownFetchFallback(raw) => {
                 write!(f, "unknown fetch_fallback: {raw} (expected jina | none)")
             }
+            Self::UnknownProtocol(raw) => write!(
+                f,
+                "unknown protocol: {raw} (expected openai-chat | openai-responses | anthropic)"
+            ),
             Self::Toml(msg) => write!(f, "invalid config.toml: {msg}"),
         }
     }
@@ -493,6 +609,79 @@ mod tests {
         let cfg = MoeConfig::from_toml("[ai]\nbase_url = \"https://x/v1\"\n").unwrap();
         assert!(cfg.ai.configured());
         assert_eq!(cfg.ai.model_or_default(), "gpt-4o-mini");
+
+        // A provider counts as configured without a legacy base_url (ADR-0040)
+        let cfg =
+            MoeConfig::from_toml("[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-flash\"\n")
+                .unwrap();
+        assert!(cfg.ai.configured());
+        assert_eq!(cfg.ai.provider.as_deref(), Some("deepseek"));
+    }
+
+    /// The multi-provider schema (ADR-0040): provider + model select the pair, `[ai.providers.*]`
+    /// blocks override official defaults or define custom endpoints.
+    #[test]
+    fn provider_blocks_parse_and_validate_protocol() {
+        let cfg = MoeConfig::from_toml(
+            "[ai]\nprovider = \"my-gateway\"\nmodel = \"claude-sonnet-5-5\"\n\
+             [ai.providers.my-gateway]\nname = \"My Gateway\"\nprotocol = \"anthropic\"\n\
+             api_url = \"https://gateway.example.com/anthropic\"\nmodels = [\"claude-sonnet-5-5\"]\n\
+             reasoning = true\n",
+        )
+        .unwrap();
+        let provider = cfg.ai.providers.get("my-gateway").unwrap();
+        assert_eq!(provider.name.as_deref(), Some("My Gateway"));
+        assert_eq!(provider.protocol, Some(Protocol::Anthropic));
+        assert_eq!(
+            provider.api_url.as_deref(),
+            Some("https://gateway.example.com/anthropic")
+        );
+        assert_eq!(
+            provider.models.as_deref(),
+            Some(&["claude-sonnet-5-5".to_string()][..])
+        );
+        assert_eq!(provider.reasoning, Some(true));
+
+        // Unknown protocol strings fail at parse time, naming the vocabulary
+        let err = MoeConfig::from_toml(
+            "[ai.providers.x]\nprotocol = \"gemini\"\napi_url = \"https://x\"\n",
+        )
+        .unwrap_err();
+        assert_eq!(err, ConfigError::UnknownProtocol("gemini".into()));
+        assert!(
+            err.to_string()
+                .contains("openai-chat | openai-responses | anthropic")
+        );
+
+        // Protocol round-trips its config spelling
+        for (raw, protocol) in [
+            ("openai-chat", Protocol::OpenAiChat),
+            ("openai-responses", Protocol::OpenAiResponses),
+            ("anthropic", Protocol::Anthropic),
+        ] {
+            assert_eq!(Protocol::parse(raw).unwrap(), protocol);
+            assert_eq!(protocol.as_str(), raw);
+        }
+        assert!(
+            Protocol::parse(" OpenAI-Chat ").is_ok(),
+            "trimmed, case-insensitive"
+        );
+    }
+
+    /// An empty `[ai.providers.*]` block is legal (official providers are overrides-only).
+    #[test]
+    fn provider_block_shape_is_optional() {
+        let cfg = MoeConfig::from_toml(
+            "[ai]\nprovider = \"openai\"\n\n[ai.providers.openai]\nmodels = [\"gpt-5.2\"]\n",
+        )
+        .unwrap();
+        let provider = cfg.ai.providers.get("openai").unwrap();
+        assert_eq!(provider.protocol, None);
+        assert_eq!(provider.reasoning, None);
+        assert_eq!(
+            provider.models.as_deref(),
+            Some(&["gpt-5.2".to_string()][..])
+        );
     }
 
     #[test]

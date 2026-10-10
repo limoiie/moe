@@ -1,21 +1,54 @@
-//! AI API key storage (ADR-0019 amending ADR-0005): a 0600 local file, not the config file.
+//! AI API key storage (ADR-0019 amending ADR-0005; per-provider since ADR-0040/MOE-0018):
+//! 0600 local files, not the config file.
 //!
 //! Why not the system keychain: for unsigned apps, macOS treats every keychain access as an "unknown app"
 //! and repeatedly prompts "Improve security / enter login keychain password" — the keychain ACL is bound to the app's code signature,
 //! which we don't have (ADR-0011). Raycast doesn't prompt because it has an Apple Developer ID signature.
 //! A 0600 file is how the gh CLI stores tokens: readable only by the current user, good enough for a local desktop app.
 //!
-//! Read order: file → (macOS one-time migration) legacy keychain → environment variable `MOE_AI_API_KEY`.
+//! Paths: `data_dir/moe/keys/<provider-id>` (0600); the implicit `default` provider of legacy
+//! `[ai] base_url` configs keeps the legacy `data_dir/moe/api-key` file (zero-edit compatibility).
+//! Resolution per provider: its file → the provider's `env[]` names (official providers; from the
+//! catalog) → `MOE_AI_API_KEY` (any provider, last). The macOS one-time keychain migration applies
+//! to the legacy file only.
 
 use std::path::{Path, PathBuf};
 
-#[cfg(target_os = "macos")]
-const SERVICE: &str = "moe";
-#[cfg(target_os = "macos")]
-const ACCOUNT: &str = "ai.api-key";
+/// The implicit provider of legacy `[ai] base_url` configs (ADR-0040).
+pub const DEFAULT_PROVIDER_ID: &str = "default";
 
-fn key_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("moe").join("api-key"))
+/// Environment fallback accepted for any provider.
+const ENV_FALLBACK: &str = "MOE_AI_API_KEY";
+
+/// `moe/` under the platform data directory.
+fn data_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join("moe"))
+}
+
+/// Provider ids become file names: keep the safe ASCII set, fold everything else to `_`
+/// (config keys are user-written; a key must never escape `keys/`).
+fn key_file_name(provider_id: &str) -> String {
+    provider_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// The key file for a provider: `keys/<id>`, except the implicit `default` provider, whose file is
+/// the legacy `api-key` path.
+pub fn provider_key_path(provider_id: &str) -> Option<PathBuf> {
+    let base = data_dir()?;
+    if provider_id == DEFAULT_PROVIDER_ID {
+        Some(base.join("api-key"))
+    } else {
+        Some(base.join("keys").join(key_file_name(provider_id)))
+    }
 }
 
 fn read_key_file_at(path: &Path) -> Option<String> {
@@ -43,16 +76,33 @@ fn write_key_file_at(path: &Path, key: &str) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-pub fn ai_api_key() -> Option<String> {
-    if let Some(path) = key_path()
-        && let Some(key) = read_key_file_at(&path)
+/// The resolution order (ADR-0040), pure for tests: the provider's file → its `env[]` names →
+/// `MOE_AI_API_KEY` (last resort, any provider).
+fn resolve_key(
+    path: Option<&Path>,
+    env_names: &[String],
+    env: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if let Some(path) = path
+        && let Some(key) = read_key_file_at(path)
     {
         return Some(key);
     }
-    // One-time migration: older versions stored the key in the system keychain. Persist it to disk when found,
-    // so the unsigned app no longer triggers keychain permission prompts.
+    for name in env_names {
+        if let Some(key) = env(name).filter(|key| !key.trim().is_empty()) {
+            return Some(key);
+        }
+    }
+    env(ENV_FALLBACK).filter(|key| !key.trim().is_empty())
+}
+
+/// One provider's key: its file → its env names → `MOE_AI_API_KEY`.
+pub fn ai_api_key_for(provider_id: &str, env_names: &[String]) -> Option<String> {
+    let path = provider_key_path(provider_id);
+    // One-time migration: older versions stored the (single) key in the system keychain. Persist it
+    // to the legacy file when found, so the unsigned app no longer triggers keychain permission prompts.
     #[cfg(target_os = "macos")]
-    {
+    if provider_id == DEFAULT_PROVIDER_ID && path.as_deref().is_none_or(|p| !p.exists()) {
         let migrated = keyring::Entry::new(SERVICE, ACCOUNT)
             .ok()
             .and_then(|entry| {
@@ -60,24 +110,57 @@ pub fn ai_api_key() -> Option<String> {
                 if secret.trim().is_empty() {
                     return None;
                 }
-                match (key_path(), write_key_file_at(key_path().as_ref()?, &secret)) {
-                    (Some(path), Ok(())) => read_key_file_at(&path),
-                    _ => None,
+                let path = path.as_deref()?;
+                match write_key_file_at(path, &secret) {
+                    Ok(()) => read_key_file_at(path),
+                    Err(_) => None,
                 }
             });
         if migrated.is_some() {
             return migrated;
         }
     }
-    std::env::var("MOE_AI_API_KEY")
-        .ok()
-        .filter(|key| !key.trim().is_empty())
+    resolve_key(path.as_deref(), env_names, |name| std::env::var(name).ok())
 }
 
+fn catalog_env_names(provider_id: &str) -> Vec<String> {
+    crate::model_catalog::load()
+        .get(provider_id)
+        .map(|provider| provider.env.clone())
+        .unwrap_or_default()
+}
+
+/// The active provider's id: `[ai] provider`, or the implicit `default` of legacy configs.
+pub fn active_provider_id() -> String {
+    crate::config::MoeConfig::load()
+        .ai
+        .provider
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string())
+}
+
+/// The key of the provider the config selects (the surfaces resolving a provider use
+/// [`ai_api_key_for`] directly — this is the no-config-context entry, e.g. `key <value>`).
+pub fn ai_api_key() -> Option<String> {
+    let id = active_provider_id();
+    let env_names = if id == DEFAULT_PROVIDER_ID {
+        Vec::new()
+    } else {
+        catalog_env_names(&id)
+    };
+    ai_api_key_for(&id, &env_names)
+}
+
+/// Save a key for the active provider (`key <value>` / Moe: Save AI Key).
 pub fn set_ai_api_key(key: &str) -> Result<(), String> {
-    let path = key_path().ok_or_else(|| "no data dir".to_string())?;
+    let path = provider_key_path(&active_provider_id()).ok_or_else(|| "no data dir".to_string())?;
     write_key_file_at(&path, key)
 }
+
+#[cfg(target_os = "macos")]
+const SERVICE: &str = "moe";
+#[cfg(target_os = "macos")]
+const ACCOUNT: &str = "ai.api-key";
 
 #[cfg(test)]
 mod tests {
@@ -100,6 +183,54 @@ mod tests {
                 "key file must be readable/writable only by the current user"
             );
         }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Per-provider paths (ADR-0040): `keys/<id>`, the legacy file for the implicit `default`.
+    #[test]
+    fn provider_key_paths_are_per_provider_and_safe() {
+        let base = data_dir().expect("data dir");
+        assert_eq!(
+            provider_key_path(DEFAULT_PROVIDER_ID),
+            Some(base.join("api-key"))
+        );
+        assert_eq!(
+            provider_key_path("deepseek"),
+            Some(base.join("keys").join("deepseek"))
+        );
+        // A config id can never escape the keys directory
+        assert_eq!(key_file_name("../../etc/passwd"), ".._.._etc_passwd");
+        let escaped = provider_key_path("../../etc/passwd").unwrap();
+        assert!(escaped.starts_with(base.join("keys")));
+    }
+
+    /// Resolution order: the provider's file wins over env names, `MOE_AI_API_KEY` is last.
+    #[test]
+    fn key_resolution_order_is_file_then_env_names_then_fallback() {
+        let path = std::env::temp_dir().join(format!("moe-key-order-{}.tmp", std::process::id()));
+        let env = |name: &str| match name {
+            "DEEPSEEK_API_KEY" => Some("sk-env".to_string()),
+            "MOE_AI_API_KEY" => Some("sk-fallback".to_string()),
+            _ => None,
+        };
+        let names = vec!["DEEPSEEK_API_KEY".to_string()];
+
+        // No file: the provider's env name wins over the generic fallback
+        assert_eq!(
+            resolve_key(Some(&path), &names, env).as_deref(),
+            Some("sk-env")
+        );
+        // Unknown provider (no env names): the fallback still works
+        assert_eq!(
+            resolve_key(Some(&path), &[], env).as_deref(),
+            Some("sk-fallback")
+        );
+        // The provider's file wins over everything
+        write_key_file_at(&path, "sk-file").expect("write");
+        assert_eq!(
+            resolve_key(Some(&path), &names, env).as_deref(),
+            Some("sk-file")
+        );
         let _ = std::fs::remove_file(&path);
     }
 }
