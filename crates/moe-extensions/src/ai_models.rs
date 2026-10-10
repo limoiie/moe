@@ -1,4 +1,4 @@
-//! The model picker (MOE-0019): the model catalog (MOE-0016) reaches the palette — every model
+//! The model picker (MOE-0028): the model catalog (MOE-0025) reaches the palette — every model
 //! with its properties, searchable, and one Enter switches the active provider/model
 //! (`[ai] provider` + `model` in config.toml, ADR-0040).
 //!
@@ -55,11 +55,13 @@ pub fn choose_model_with(
 ) -> ActionResult {
     let mut rows = all_rows(config, catalog);
     filter_rows(&mut rows, query);
+    // Provider-major so the list's group headers (`Item.group`, ADR-0018 amendment) never repeat:
+    // the active provider first, then every other provider by name; newest first within a group.
     rows.sort_by(|a, b| {
         b.current
             .cmp(&a.current)
-            .then_with(|| release_date(b).cmp(release_date(a)))
             .then_with(|| a.provider_name.cmp(b.provider_name))
+            .then_with(|| release_date(b).cmp(release_date(a)))
             .then_with(|| a.model_name.cmp(b.model_name))
     });
     rows.truncate(ROW_LIMIT);
@@ -296,20 +298,18 @@ fn model_item(row: &Row<'_>, has_key: &dyn Fn(&str) -> bool) -> Item {
     if let Some(status) = row.meta.and_then(|meta| meta.status.as_deref()) {
         facts.push(status.to_string());
     }
-    let mut subtitle = String::new();
-    if row.current {
-        subtitle.push_str("Current · ");
-    }
-    subtitle.push_str(row.provider_name);
-    for fact in facts {
-        subtitle.push_str(" · ");
-        subtitle.push_str(&fact);
-    }
+    let facts = facts.join(" · ");
 
     Item {
         id: format!("ai.model.{}.{}", row.provider_id, row.model_id),
         title: row.model_name.to_string(),
-        subtitle: Some(subtitle),
+        // The provider rides the group header (ADR-0018 amendment); the row carries the facts.
+        group: Some(if row.current {
+            format!("{} · Current", row.provider_name)
+        } else {
+            row.provider_name.to_string()
+        }),
+        subtitle: Some(facts).filter(|facts| !facts.is_empty()),
         icon: Some("sparkles".into()),
         actions: vec![Action {
             id: "use".into(),
@@ -492,6 +492,7 @@ fn card_item(markdown: &str) -> Item {
         id: "ai.model-card".into(),
         title: "Set AI Model".into(),
         subtitle: None,
+        group: None,
         icon: Some("sparkles".into()),
         actions: vec![],
         payload: serde_json::Value::Null,
@@ -506,6 +507,7 @@ fn no_match_item(query: &str) -> Item {
         id: "ai.model-none".into(),
         title: "No model matches".into(),
         subtitle: None,
+        group: None,
         icon: Some("search".into()),
         actions: vec![],
         payload: serde_json::Value::Null,
@@ -601,19 +603,30 @@ mod tests {
         );
         let first = &items[0];
         assert_eq!(first.title, "DeepSeek New");
-        let subtitle = first.subtitle.as_deref().unwrap();
-        assert!(
-            subtitle.contains("Current · DeepSeek · 1M ctx · tools · vision · reasoning · beta"),
-            "{subtitle}"
+        assert_eq!(first.group.as_deref(), Some("DeepSeek · Current"));
+        assert_eq!(
+            first.subtitle.as_deref(),
+            Some("1M ctx · tools · vision · reasoning · beta")
         );
         assert_eq!(first.actions[0].id, "use");
         assert_eq!(first.actions[0].kind, ActionKind::Primary);
         assert_eq!(first.payload["provider"], "deepseek");
         assert_eq!(first.payload["model"], "deepseek-new");
-        // A custom row: the provider's display name, no catalog facts
+        // Providers are contiguous groups (headers never repeat in the render)
+        let groups: Vec<Option<&str>> = items.iter().map(|item| item.group.as_deref()).collect();
+        assert_eq!(
+            groups,
+            vec![
+                Some("DeepSeek · Current"),
+                Some("DeepSeek · Current"),
+                Some("Beta"),
+                Some("My Gateway"),
+            ]
+        );
+        // A custom row: its provider rides the group header, and it has no catalog facts
         let custom = items.last().unwrap();
         assert_eq!(custom.title, "c1");
-        assert_eq!(custom.subtitle.as_deref(), Some("My Gateway"));
+        assert_eq!(custom.subtitle, None);
     }
 
     /// Search: every token must hit the haystack — names, ids, and capability words.
@@ -788,6 +801,7 @@ mod tests {
             id: "x".into(),
             title: "x".into(),
             subtitle: None,
+            group: None,
             icon: None,
             actions: vec![],
             payload: serde_json::Value::Null,

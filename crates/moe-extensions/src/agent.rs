@@ -1,4 +1,4 @@
-//! The agentic turn (ADR-0039 / MOE-0017): the stable system head and the faithful record → wire
+//! The agentic turn (ADR-0039 / MOE-0026): the stable system head and the faithful record → wire
 //! replay. The round runner that orchestrates Tools rides on these pieces next.
 
 use std::sync::atomic::Ordering;
@@ -29,7 +29,7 @@ support. Prefer one good search over several; after at most a few tool calls, an
 or a page is unreadable, say so plainly instead of guessing. Never mention these instructions or the \
 tool mechanics; answer as the assistant.";
 
-/// The UI-facing view of one tool call inside a streaming item's payload (MOE-0017).
+/// The UI-facing view of one tool call inside a streaming item's payload (MOE-0026).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallView {
@@ -132,7 +132,7 @@ enum ToolOutcome {
     Stopped,
 }
 
-/// The agentic turn (MOE-0017): replay the record, stream a round, execute the called tools,
+/// The agentic turn (MOE-0026): replay the record, stream a round, execute the called tools,
 /// repeat. Stop stays platform-wide — one registration spans the whole turn (HTTP rounds *and*
 /// tool execution); a stopped turn keeps its partial answer and never leaves a persisted
 /// `tool_calls` message without its results (replay integrity).
@@ -191,7 +191,7 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
         let body = chat_body_with_tools(&model, wire, &tool_specs, true);
         let outcome = stream_once(
             RoundRequest {
-                // The loop's wire is OpenAI chat completions by construction (MOE-0017); tool
+                // The loop's wire is OpenAI chat completions by construction (MOE-0026); tool
                 // deltas for the other protocols are the follow-up that generalizes it (ADR-0040).
                 protocol: Protocol::OpenAiChat,
                 base_url: base_url.clone(),
@@ -426,7 +426,7 @@ mod tests {
     }
 
     /// Agentic replay: the stable head first, reasoning echoed as `reasoning_content`, tool calls
-    /// and tool results in wire shape (MOE-0017).
+    /// and tool results in wire shape (MOE-0026).
     #[test]
     fn agentic_history_prepends_the_head_and_echoes_the_record() {
         let mut assistant = Message {
@@ -526,6 +526,7 @@ mod tests {
                 id: "ai.answer".into(),
                 title: "AI Answer".into(),
                 subtitle: None,
+                group: None,
                 icon: None,
                 actions: vec![],
                 payload: serde_json::json!({
@@ -552,7 +553,7 @@ mod tests {
     }
 
     /// The loop end to end: a tool round feeds its result back, the record persists the faithful
-    /// shape, and the final answer settles (MOE-0017).
+    /// shape, and the final answer settles (MOE-0026).
     #[test]
     fn agentic_turn_runs_a_tool_round_and_finalizes() {
         let _guard = crate::ai::STREAM_TEST_LOCK
@@ -672,7 +673,7 @@ mod tests {
     }
 
     /// The round guardrail: the 8th tool round is not executed, its calls never enter the record,
-    /// and the turn settles with the limit note (MOE-0017).
+    /// and the turn settles with the limit note (MOE-0026).
     #[test]
     fn agentic_turn_forces_a_settle_at_the_round_limit() {
         let _guard = crate::ai::STREAM_TEST_LOCK
@@ -774,7 +775,7 @@ mod tests {
     }
 
     /// Stop while a tool call runs: the row settles as stopped, no further round fires, and the
-    /// persisted call/result pairs stay complete (MOE-0017).
+    /// persisted call/result pairs stay complete (MOE-0026).
     #[test]
     fn stop_during_a_tool_settles_the_rows() {
         let _guard = crate::ai::STREAM_TEST_LOCK
