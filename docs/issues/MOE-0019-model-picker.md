@@ -1,11 +1,12 @@
 # M8a: pick a model — the catalog reaches the palette
 
 - **ID**: MOE-0019
-- **State**: in-progress
+- **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
 - **Assignee**: agent
+- **Commit**: 10f5ad4
 
 The owner's original ask included browsing models with their properties (context window, max
 output, tools, images, reasoning, …). MOE-0016 embedded the catalog and MOE-0018 built the provider
@@ -78,3 +79,23 @@ pair selector (amendment recorded at delivery) — keys and provider blocks stay
   natural continuation of ADR-0040's "the picker command that consumes the catalog comes later" and
   ADR-0009's excluded-settings-UI clause (narrowed here); they are recorded as settled for this
   implementation and can be amended in comments if the owner wants a different surface later.
+- 2026-10-10 (agent): **done** (10f5ad4). `crates/moe-extensions/src/ai_models.rs`: the picker
+  itself — `choose_model`/`choose_model_with` (rows from the catalog plus config-only custom
+  providers; active provider first, then release date desc; token AND-matching over
+  names/ids/capability words; 50-row cap), the detail formatter (limits/modalities/capabilities/
+  pricing/dates/docs + the key state), `token_count`, and `apply_selection`/`apply_selection_with`
+  (store injected; confirmation card reuses the detail). `config.rs` gained
+  `set_ai_selection_in_toml`/`store_ai_selection`, factored with the theme writer into one
+  comment-preserving `edit_section`/`set_section_assignment` editor (values escaped via
+  `toml_string`, so the written file always parses). `model_catalog.rs` gained `Catalog::entries()`
+  (key-preserving iteration — the fixture exposed that the entry's own `id` field is not
+  guaranteed). `ai.rs`: the live `ai.choose-model` command, invoke routing, and `run_item_action`
+  routing by command id. Docs: ADR-0009 amendment (the exception and why it is not a settings-
+  panel precedent), README (the picker bullet), CONTEXT (**Model Catalog** term). Validation:
+  `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` green
+  (app 5, core 50, extensions 103, platform 67); `pnpm -C ui build` green (no UI change needed —
+  the generic list + detail render the picker).
+
+  Remaining manual: a visual pass in the running app (the row subtitle/detail layout, the search
+  feel with the 730-model catalog) and selecting against a live key; the config write is covered
+  by unit tests but has not been exercised through the real IPC path.
