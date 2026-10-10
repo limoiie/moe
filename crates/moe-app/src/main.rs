@@ -1400,6 +1400,22 @@ fn main() {
                 });
             });
 
+            // Model-catalog freshness (MOE-0016): at most one conditional GET per day, on a
+            // worker thread; failures keep the cached copy and the embedded baseline.
+            std::thread::spawn(|| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                match moe_platform::model_catalog::refresh_if_stale(now) {
+                    Ok(moe_platform::model_catalog::RefreshOutcome::Updated) => {
+                        eprintln!("moe: model catalog updated from models.dev");
+                    }
+                    Ok(_) => {}
+                    Err(err) => eprintln!("moe: model catalog refresh failed: {err}"),
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {
