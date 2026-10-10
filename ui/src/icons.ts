@@ -13,6 +13,8 @@ import {
   Copy,
   CornerDownLeft,
   Expand,
+  FileText,
+  Globe,
   History,
   Info,
   KeyRound,
@@ -33,6 +35,7 @@ import {
   PenLine,
   Plus,
   Quote,
+  RotateCw,
   Search,
   Send,
   Settings2,
@@ -85,6 +88,10 @@ const ICONS: Record<string, IconNode> = {
   monitor: Monitor,
   sun: Sun,
   moon: Moon,
+  // Tool Call rows (MOE-0017)
+  "file-text": FileText,
+  globe: Globe,
+  "rotate-cw": RotateCw,
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
   "arrow-left": ArrowLeft,

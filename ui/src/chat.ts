@@ -12,7 +12,7 @@ import { conversationTitle, createConversationView } from "./messages";
 import { initPointerIntent } from "./pointer";
 import { streamCoalescer } from "./stream";
 import { initTheme } from "./theme";
-import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
+import type { CommandEventPayload, Conversation, Message, SideOpenPayload, ToolCall } from "./types";
 
 // ---- Appearance (ADR-0035): resolve the theme before the first render ----
 initTheme();
@@ -696,11 +696,11 @@ void listen("side-show", () => refreshWindow());
 // blocks ride the payload (MOE-0008) and render as the bubble's Thinking block.
 const frames = streamCoalescer<
   string,
-  { text: string; pending: boolean; reasoning: string }
+  { text: string; pending: boolean; reasoning: string; toolCalls?: ToolCall[] }
 >((batch) => {
   const frame = batch.get(conversationId ?? "");
   if (!frame) return;
-  log.updateStreaming(frame.text, frame.pending, frame.reasoning);
+  log.updateStreaming(frame.text, frame.pending, frame.reasoning, frame.toolCalls);
   log.scrollToEnd();
   if (generating !== frame.pending) {
     generating = frame.pending;
@@ -713,12 +713,17 @@ const frames = streamCoalescer<
 void listen<CommandEventPayload>("command-event", (event) => {
   const update = event.payload?.itemUpdated;
   if (!update) return;
-  const meta = update.item.payload as { conversationId?: string; reasoning?: string } | null;
+  const meta = update.item.payload as {
+    conversationId?: string;
+    reasoning?: string;
+    toolCalls?: ToolCall[];
+  } | null;
   if (!meta || meta.conversationId !== conversationId) return;
   frames.push(meta.conversationId, {
     text: update.item.detail ?? "",
     pending: update.item.pending === true,
     reasoning: meta.reasoning ?? "",
+    toolCalls: meta.toolCalls,
   });
 });
 

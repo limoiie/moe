@@ -7,7 +7,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
-import type { Message } from "./types";
+import type { Message, ToolCall, ToolCallStatus } from "./types";
 
 export interface ConversationView {
   /** Remove every message (loading another conversation / starting a new chat). */
@@ -20,9 +20,16 @@ export interface ConversationView {
    * Streaming frame: the full accumulated answer text + whether it is still being produced.
    * The body and the indicator are separate elements, so each frame only replaces the body and the
    * dot animation is never restarted. `reasoning` (a model's thinking block) renders as the muted
-   * ChatGPT-style row above the answer, never inside the body (MOE-0008/0011).
+   * ChatGPT-style row above the answer, never inside the body (MOE-0008/0011). `toolCalls` (an
+   * agentic turn's activity stack) replaces the rendered rows when present — frames carry the full
+   * list in arrival order — and leaves them untouched when absent (MOE-0017).
    */
-  updateStreaming(text: string, pending: boolean, reasoning?: string): void;
+  updateStreaming(
+    text: string,
+    pending: boolean,
+    reasoning?: string,
+    toolCalls?: ToolCall[],
+  ): void;
   /** Hide the generation indicator without touching the text (a user-requested stop); later frames still land here. */
   settleStreaming(): void;
   /** The last answer's text (null when there is none yet): the copy / write-back target. */
@@ -49,6 +56,8 @@ interface StreamingBubble {
   reasoning: HTMLDetailsElement;
   reasoningLabel: HTMLElement;
   reasoningBody: HTMLElement;
+  /** The Tool Call activity stack: one row per call, above the answer (MOE-0017). */
+  activity: HTMLElement;
   body: HTMLElement;
   indicator: HTMLElement;
 }
@@ -107,6 +116,155 @@ export function reasoningEl(
   return details;
 }
 
+// ---- Tool Call rows (MOE-0017): one row per call, chronological, never aggregated ----
+
+/** The runner persists stopped results with this exact text and prefixes failures with `Error: `
+ * (`crates/moe-extensions/src/agent.rs` / `tools.rs`); a record-derived row reads its state from it. */
+const STOPPED_RESULT = "(stopped by the user)";
+const ERROR_RESULT_PREFIX = "Error: ";
+
+/** A Tool Call row's parts: the details element plus the slots that change in place. */
+interface ToolRow {
+  details: HTMLDetailsElement;
+  label: HTMLElement;
+  /** The trailing slot before the chevron: a spinner while running, a word when failed/stopped. */
+  status: HTMLElement;
+  body: HTMLElement;
+}
+
+/** `arguments` arrive as a JSON string; fragments of an in-flight call may not parse yet. */
+function toolArguments(raw: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(raw);
+    return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** `https://example.com/path?q=1` → `example.com/path`: the label shows where it went, not the scheme. */
+function shortUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    return url.pathname && url.pathname !== "/" ? `${url.host}${url.pathname}` : url.host;
+  } catch {
+    return raw;
+  }
+}
+
+/** Row copy (MOE-0017): `Searched «query»`, `Fetched example.com/path`, `Read ~/x.log`. */
+function toolCallLabel(call: ToolCall): { icon: string; label: string } {
+  const args = toolArguments(call.arguments);
+  switch (call.name) {
+    case "web_search": {
+      const query = typeof args.query === "string" ? args.query.replace(/\s+/g, " ").trim() : "";
+      return { icon: "search", label: query ? `Searched «${query}»` : "Searched the web" };
+    }
+    case "web_fetch": {
+      const url = typeof args.url === "string" ? shortUrl(args.url) : "";
+      return { icon: "globe", label: url ? `Fetched ${url}` : "Fetched a page" };
+    }
+    case "read_file": {
+      const path = typeof args.path === "string" ? args.path : "";
+      return { icon: "file-text", label: path ? `Read ${path}` : "Read a file" };
+    }
+    default:
+      return { icon: "wand-2", label: `Used ${call.name}` };
+  }
+}
+
+/** The trailing status slot: spinner while running; failed/stopped calls say so; ok settles quietly. */
+function setToolRowStatus(row: ToolRow, status: ToolCallStatus | undefined) {
+  row.label.classList.toggle("moe-thinking-live", status === "running");
+  row.status.replaceChildren();
+  if (status === "running") {
+    row.status.append(iconEl("rotate-cw", { size: 12, className: "moe-tool-spin text-fg-faint" }));
+  } else if (status === "error" || status === "stopped") {
+    const word = document.createElement("span");
+    word.className = status === "error" ? "text-danger" : "text-fg-faint";
+    word.textContent = status === "error" ? "failed" : "stopped";
+    row.status.append(word);
+  }
+}
+
+/**
+ * One Tool Call row: the Thinking row's anatomy (borderless, muted, collapsed, chevron) with the
+ * tool's icon + plain label; expanding shows the truncated result as muted markdown. One row per
+ * call — a "used N tools" aggregate is rejected (observability over magic, MOE-0017).
+ */
+function toolRowEl(call: ToolCall): ToolRow {
+  const details = document.createElement("details");
+  details.className = "moe-thinking not-prose text-xs text-fg-subtle";
+  details.dataset.toolCallId = call.id;
+  const summary = document.createElement("summary");
+  summary.className =
+    "-mx-1.5 flex cursor-pointer select-none items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-surface-float";
+  const { icon, label } = toolCallLabel(call);
+  const labelEl = document.createElement("span");
+  labelEl.className = "min-w-0 truncate";
+  labelEl.textContent = label;
+  const status = document.createElement("span");
+  status.className = "flex shrink-0 items-center";
+  summary.append(
+    iconEl(icon, { size: 12, className: "text-fg-faint" }),
+    labelEl,
+    status,
+    iconEl("chevron-right", {
+      size: 12,
+      className: "moe-thinking-chevron ml-auto text-fg-faint",
+    }),
+  );
+  const body = document.createElement("div");
+  body.className = "moe-thinking-body md mt-1.5 pl-4 text-xs text-fg-muted";
+  details.append(summary, body);
+  const row: ToolRow = { details, label: labelEl, status, body };
+  setToolRowStatus(row, call.status);
+  if (call.result) body.innerHTML = markdown(call.result);
+  return row;
+}
+
+/** The settled state a stored result implies (the runner's stable strings; see agent.rs/tools.rs). */
+function toolResultStatus(result: string): ToolCallStatus {
+  if (result === STOPPED_RESULT) return "stopped";
+  if (result.startsWith(ERROR_RESULT_PREFIX)) return "error";
+  return "ok";
+}
+
+/** Fold a stored `tool` result into its call's row (reopen path): the row settles with its result. */
+function applyToolResult(row: ToolRow, result: string) {
+  row.body.innerHTML = markdown(result);
+  setToolRowStatus(row, toolResultStatus(result));
+}
+
+/**
+ * Rebuild the activity stack in place (every frame of an agentic turn carries the full call list).
+ * Each row's expand toggle is carried across the rebuild, keyed by call id (the MOE-0012 carry-over
+ * idea); rows already re-rendered from the record (a page opened mid-turn) never duplicate here.
+ */
+function renderActivity(container: HTMLElement, activity: HTMLElement, calls: ToolCall[]) {
+  const open = new Set<string>();
+  for (const el of Array.from(
+    activity.querySelectorAll<HTMLDetailsElement>("details[data-tool-call-id]"),
+  )) {
+    if (el.open && el.dataset.toolCallId) open.add(el.dataset.toolCallId);
+  }
+  const recorded = new Set<string>();
+  for (const el of Array.from(container.querySelectorAll<HTMLElement>("[data-tool-call-id]"))) {
+    if (!activity.contains(el) && el.dataset.toolCallId) recorded.add(el.dataset.toolCallId);
+  }
+  activity.replaceChildren(
+    ...calls
+      .filter((call) => !recorded.has(call.id))
+      .map((call) => {
+        const row = toolRowEl(call);
+        row.details.open = open.has(call.id);
+        return row.details;
+      }),
+  );
+  // An empty stack takes no space: the stack sits above the answer only when it has rows.
+  activity.classList.toggle("mb-2", activity.childElementCount > 0);
+}
+
 export function createConversationView(container: HTMLElement): ConversationView {
   /** The answer bubble being streamed into (created on the first event). */
   let streaming: StreamingBubble | null = null;
@@ -116,6 +274,8 @@ export function createConversationView(container: HTMLElement): ConversationView
   let lateCorrection: ReturnType<typeof setTimeout> | undefined;
   /** When reasoning first appeared: the settled label reports "Thought for N seconds" from it. */
   let thinkingStartedAt: number | null = null;
+  /** Tool rows re-rendered from the record, by call id: `tool` messages fold their result in. */
+  const recordRows = new Map<string, ToolRow>();
 
   function scrollToBottom() {
     container.scrollTop = container.scrollHeight;
@@ -143,9 +303,32 @@ export function createConversationView(container: HTMLElement): ConversationView
         }
         row.append(chips);
       }
+    } else if (message.role === "tool") {
+      // A tool result folds into its call's row (reopened record): it never renders as a bubble of
+      // its own. The record always stores the call before its results; an orphan is ignored.
+      const callRow = message.toolCallId ? recordRows.get(message.toolCallId) : undefined;
+      if (callRow) applyToolResult(callRow, message.content);
+      return callRow?.details ?? document.createElement("div");
     } else {
       row.className = "md text-sm text-fg";
-      row.innerHTML = markdown(message.content);
+      // Reasoning + Tool Call rows re-render from the record (MOE-0017): Thinking first, then the
+      // turn's calls in arrival order, above the round's answer text.
+      if (message.reasoning?.trim()) {
+        row.append(reasoningEl(message.reasoning, false));
+      }
+      if (message.toolCalls?.length) {
+        const activity = document.createElement("div");
+        activity.className = "mb-2 flex flex-col gap-0.5";
+        for (const call of message.toolCalls) {
+          const toolRow = toolRowEl(call);
+          activity.append(toolRow.details);
+          recordRows.set(call.id, toolRow);
+        }
+        row.append(activity);
+      }
+      const content = document.createElement("div");
+      content.innerHTML = markdown(message.content);
+      row.append(content);
       if (message.content.trim()) last = message.content;
     }
     container.append(row);
@@ -158,11 +341,12 @@ export function createConversationView(container: HTMLElement): ConversationView
       root.className = "md text-sm text-fg";
       const { details, label, body: reasoningBody } = reasoningParts();
       details.classList.add("hidden");
+      const activity = document.createElement("div");
+      activity.className = "flex flex-col gap-0.5";
       const body = document.createElement("div");
       const indicator = generatingEl();
-      root.append(details, body, indicator);
-      container.append(root);
-      streaming = { reasoning: details, reasoningLabel: label, reasoningBody, body, indicator };
+      root.append(details, activity, body, indicator);
+      streaming = { reasoning: details, reasoningLabel: label, reasoningBody, activity, body, indicator };
     }
     return streaming;
   }
@@ -173,13 +357,14 @@ export function createConversationView(container: HTMLElement): ConversationView
       streaming = null;
       last = null;
       thinkingStartedAt = null;
+      recordRows.clear();
     },
     append,
     beginAnswer() {
       streaming = null;
       thinkingStartedAt = null;
     },
-    updateStreaming(text, pending, reasoning = "") {
+    updateStreaming(text, pending, reasoning = "", toolCalls) {
       const bubble = ensureStreamingBubble();
       const hasReasoning = reasoning.trim().length > 0;
       bubble.reasoning.classList.toggle("hidden", !hasReasoning);
@@ -190,6 +375,7 @@ export function createConversationView(container: HTMLElement): ConversationView
         bubble.reasoningLabel.classList.toggle("moe-thinking-live", pending);
         bubble.reasoningBody.innerHTML = markdown(reasoning);
       }
+      if (toolCalls) renderActivity(container, bubble.activity, toolCalls);
       bubble.body.innerHTML = markdown(text);
       bubble.indicator.classList.toggle("hidden", !pending);
       if (text.trim()) last = text;

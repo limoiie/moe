@@ -911,4 +911,13 @@ body.moe-pointer-inside .moe-titlebar-title {
       background-position: -100% 0;
     }
   }
+  /* A running Tool Call row's spinner (MOE-0017): gated like the shimmer; static under reduced motion. */
+  .moe-tool-spin {
+    animation: moe-tool-spin 1s linear infinite;
+  }
+  @keyframes moe-tool-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 }

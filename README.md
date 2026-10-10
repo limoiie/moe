@@ -114,7 +114,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   Input Bar is the composer: **`⏎` sends** (input cleared) and answers stream into the conversation,
   the page following the answer down as it streams (a model's inline reasoning renders in a
   ChatGPT-style folding row above the answer — **Thinking** while it reasons, then **Thought for N
-  seconds** — never inside it);
+  seconds** — never inside it; so do the model's **tool calls** — web search, page fetches, file
+  reads — one folding row per call in arrival order, e.g. `Searched «…»`, shimmering while it runs;
+  Stop is the veto, and every call stays visible);
   **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
   **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step backward /
   forward through history (the previous, older conversation / the newer one), **`⌘P`** opens the
@@ -188,12 +190,24 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   [ai]
   base_url = "https://api.deepseek.com/v1"  # any OpenAI-compatible endpoint
   model = "deepseek-chat"
+  tools = true                              # conversations may search the web / fetch pages / read files
+  searxng_url = "http://localhost:8080"     # optional: a SearXNG instance with JSON output enabled
+  fetch_fallback = "jina"                   # jina | none — keyless reader retry for blocked/empty pages
   ```
 
   The API key lives in `~/Library/Application Support/moe/api-key` (0600, never echoed;
   an unsigned app triggers repeated keychain prompts, see ADR-0019). Type `key <your-key>` in
   the panel, or set the `MOE_AI_API_KEY` environment variable; keys stored by older versions
   in the keychain migrate to the file automatically.
+
+  **Web search (optional)**: with `searxng_url` set, conversations may call `web_search`; page
+  fetching and file reading need no service. SearXNG's stock `settings.yml` serves HTML only —
+  add `json` to `search.formats` and restart:
+
+  ```bash
+  docker run -d --name searxng -p 8080:8080 -v searxng:/etc/searxng searxng/searxng
+  # then add "json" under search.formats in the volume's settings.yml and restart the container
+  ```
 
 ## Structure
 

@@ -42,6 +42,7 @@ import type {
   Conversation,
   Item,
   Message,
+  ToolCall,
 } from "./types";
 
 // ---- Appearance (ADR-0035): the config theme override lands before the first render ----
@@ -2353,12 +2354,12 @@ bannerActionEl.addEventListener("click", () => {
 // re-renders at most every ~50 ms, and the newest frame per key is what lands.
 const chatFrames = streamCoalescer<
   string,
-  { text: string; pending: boolean; reasoning: string }
+  { text: string; pending: boolean; reasoning: string; toolCalls?: ToolCall[] }
 >((frames) => {
   const frame = frames.get(chatConversationId ?? "");
   if (!frame || view.get().mode !== "chat") return;
   const parts = ensureChatParts();
-  parts.view.updateStreaming(frame.text, frame.pending, frame.reasoning);
+  parts.view.updateStreaming(frame.text, frame.pending, frame.reasoning, frame.toolCalls);
   parts.view.scrollToEnd();
   chatGenerating = frame.pending;
   refreshChatChrome();
@@ -2387,13 +2388,18 @@ void listen<CommandEventPayload>("command-event", (event) => {
   if (!payload) return;
   const v = view.get();
   if (v.mode === "chat") {
-    const meta = payload.item.payload as { conversationId?: string; reasoning?: string } | null;
+    const meta = payload.item.payload as {
+      conversationId?: string;
+      reasoning?: string;
+      toolCalls?: ToolCall[];
+    } | null;
     const conversationId = meta?.conversationId;
     if (!conversationId || conversationId !== chatConversationId) return;
     chatFrames.push(conversationId, {
       text: payload.item.detail ?? "",
       pending: payload.item.pending === true,
       reasoning: meta.reasoning ?? "",
+      toolCalls: meta.toolCalls,
     });
     return;
   }

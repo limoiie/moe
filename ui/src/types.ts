@@ -76,10 +76,32 @@ export interface AttachmentRef {
   path: string;
 }
 
+// Tool Call row state (MOE-0017): "running" while the call executes, then one settled state.
+export type ToolCallStatus = "running" | "ok" | "error" | "stopped";
+
+/**
+ * One Tool Call (MOE-0017). Stream frames carry the full view (`status`, and `result` once
+ * settled); the stored record carries the call alone — its result lives in the following `tool`
+ * message, and the row derives the settled status from it when the record re-renders.
+ */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+  status?: ToolCallStatus;
+  result?: string;
+}
+
 export interface Message {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
   attachments?: AttachmentRef[];
+  /** The model's thinking (replayed to the model; the Thinking row re-renders it on reopen). */
+  reasoning?: string;
+  /** Assistant-round tool calls of an Agentic Conversation (absent when empty). */
+  toolCalls?: ToolCall[];
+  /** On `tool` messages: the call this result answers. */
+  toolCallId?: string;
 }
 
 export interface Conversation {
@@ -87,6 +109,8 @@ export interface Conversation {
   namespace: string;
   title: string;
   updatedUnix: number;
+  /** Agentic Conversations advertise tools and replay their record (fixed at creation, ADR-0039). */
+  agentic?: boolean;
 }
 
 /** Payload for opening the Side View with a conversation from the panel (⌘M) or the tray (empty = new conversation). */

@@ -26,6 +26,9 @@ theme = \"system\"
 # base_url = \"https://api.deepseek.com/v1\"
 # model = \"deepseek-chat\"
 # Don't put the API key here: store it in the keychain via the command \"key <your-key>\" (or set MOE_AI_API_KEY)
+# tools = true                           # conversations may search the web / fetch pages / read files (the tool loop)
+# searxng_url = \"http://localhost:8080\"  # a SearXNG instance with JSON enabled; unset = no web_search tool
+# fetch_fallback = \"jina\"                # jina | none — keyless r.jina.ai retry when a page fetch is blocked or empty
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
