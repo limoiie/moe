@@ -141,8 +141,10 @@ _Avoid_: quick ask (that is AI Chat), prompt
 
 **Thinking (reasoning block)**:
 The chain of thought some models stream inline (`…` / `<thinking>`-style wrappers): never the answer —
-the platform strips it from the streamed, persisted, copied and written-back text, carries it in the
-item payload, and the UI folds it into a ChatGPT-style row above the answer (`Thinking` while it
+the platform strips it from the streamed, copied and written-back answer text and carries it in the
+item payload — in an Agentic Conversation it is part of the record, replayed to the endpoint and
+re-rendered on reopen (ADR-0039), while in a plain Conversation it stays ephemeral — and the UI
+folds it into a ChatGPT-style row above the answer (`Thinking` while it
 streams, `Thought for N seconds` once settled; collapsed by default — ADR-0024 amendments).
 _Avoid_: reasoning text, chain of thought as content
 
@@ -279,3 +281,27 @@ multimodal content), history stores only the reference. Files selected in Finder
 attachments too (ADR-0021); a pure-attachment question shows guidance in the panel or a generic
 request sentence in the Side View — the raw path is never sent as the question.
 _Avoid_: upload, file object
+
+**Tool**:
+A named capability Moe executes on the model's behalf mid-turn (v1: Web Search, Web Fetch, Read
+File). Advertised per request from config, invoked by the model through function calling, and its
+result returns to the model — never written back to the host app.
+_Avoid_: plugin, skill, function (function calling is the wire mechanism, not the domain object)
+
+**Tool Call row**:
+The collapsible muted row in the message stream rendering one Tool invocation — icon, plain label,
+shimmer while running, expand for the truncated result; the same visual language as Thinking,
+stacked in arrival order above the answer.
+_Avoid_: activity card, step
+
+**Round**:
+One request→response exchange inside an agentic turn's loop; a turn runs at most a fixed number of
+Rounds (8 in v1) before it is force-settled.
+_Avoid_: iteration, step
+
+**Agentic Conversation**:
+A Conversation created with Tools offered: its record is append-only — questions, answers,
+reasoning, Tool Calls — and every later request replays it whole, keeping the endpoint's prefix
+cache warm (ADR-0039). Conversations created before Tools existed stay plain forever.
+_Avoid_: agent mode; the bare "Agent" is reserved for the future External Agent (an ACP
+subprocess), never for this capability
