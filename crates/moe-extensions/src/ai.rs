@@ -23,9 +23,14 @@ use moe_platform::config::MoeConfig;
 use moe_platform::db::Db;
 use moe_platform::keychain;
 
-use crate::ai_client::{SseLine, chat_body_from_messages, chat_completions_url, sse_delta};
+use crate::agent::{AgentTurnRequest, MessageSink, ToolCallView, run_agentic_turn};
+use crate::ai_client::{
+    SseLine, ToolCall, ToolCallFragment, chat_body_from_messages, chat_completions_url,
+    merge_tool_call_fragments, sse_delta,
+};
 use crate::attachment;
 use crate::recency;
+use crate::tools;
 
 pub struct AiShell;
 
@@ -41,6 +46,7 @@ const TITLE_CHARS: usize = 40;
 fn answer_item(
     detail: &str,
     reasoning: &str,
+    tools: &[ToolCallView],
     conversation_id: Option<&str>,
     pending: bool,
 ) -> Item {
@@ -70,25 +76,33 @@ fn answer_item(
                 keybinding: Some("⌘J".into()),
             },
         ],
-        payload: conversation_payload(conversation_id, reasoning),
+        payload: conversation_payload(conversation_id, reasoning, Some(tools)),
         detail: Some(detail.into()),
         pending,
     }
 }
 
-/// Item payload: the conversation id (passed back as-is on Apply/⌘J — the UI does not interpret it)
-/// plus the model's thinking, which the UI renders as the bubble's collapsible Thinking block
-/// (stripped from the body, MOE-0008).
-fn conversation_payload(conversation_id: Option<&str>, reasoning: &str) -> serde_json::Value {
-    serde_json::json!({
+/// Item payload: the conversation id (passed back as-is on Apply/⌘J — the UI does not interpret it),
+/// the model's thinking, and the turn's tool-call activity stack (MOE-0017; absent on surfaces
+/// without tools).
+fn conversation_payload(
+    conversation_id: Option<&str>,
+    reasoning: &str,
+    tools: Option<&[ToolCallView]>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
         "conversationId": conversation_id,
         "reasoning": reasoning,
-    })
+    });
+    if let Some(tools) = tools.filter(|tools| !tools.is_empty()) {
+        payload["toolCalls"] = serde_json::to_value(tools).unwrap_or_default();
+    }
+    payload
 }
 
 /// History/continuation list item: Apply opens that conversation in the side view; `preview` is a summary of the last answer (IIE4AD-370).
 fn history_item(conversation: Conversation, now_unix: u64, preview: Option<String>) -> Item {
-    let payload = conversation_payload(Some(&conversation.id), "");
+    let payload = conversation_payload(Some(&conversation.id), "", None);
     Item {
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
@@ -175,19 +189,27 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-/// Persists the answer; failures are silent (panel interaction unaffected).
-fn persist_assistant(conversation_id: Option<&str>, text: &str) {
+/// Persists one record message (assistant rounds and tool results alike); failures are silent
+/// (panel interaction unaffected).
+fn persist_message(conversation_id: Option<&str>, message: &Message) {
     let Some(conversation_id) = conversation_id else {
         return;
     };
     if let Ok(db) = Db::open_default() {
-        let message = Message {
+        let _ = db.append_message(conversation_id, message, SystemTime::now());
+    }
+}
+
+/// Persists the plain answer; failures are silent (panel interaction unaffected).
+fn persist_assistant(conversation_id: Option<&str>, text: &str) {
+    persist_message(
+        conversation_id,
+        &Message {
             role: Role::Assistant,
             content: text.to_string(),
             ..Message::default()
-        };
-        let _ = db.append_message(conversation_id, &message, SystemTime::now());
-    }
+        },
+    );
 }
 
 /// In-progress generation: registry key → cancellation flag (IIE4AD-365).
@@ -198,7 +220,7 @@ fn active_streams() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
 }
 
 /// Registers one generation (an empty key is not registered and cannot be interrupted; returns None).
-fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
+pub(crate) fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
     if key.is_empty() {
         return None;
     }
@@ -211,7 +233,7 @@ fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
 }
 
 /// Cleanup: removes from the registry (called when the worker finishes or is aborted).
-fn end_stream(key: &str) {
+pub(crate) fn end_stream(key: &str) {
     if key.is_empty() {
         return;
     }
@@ -432,29 +454,49 @@ fn prefer_reasoning(field: &str, tagged: String) -> String {
     }
 }
 
-/// Request + SSE loop: emits each incremental chunk (pending=true); on natural completion it persists and calls `on_done`.
-/// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
-pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
-    let StreamRequest {
+/// One HTTP round (MOE-0017's loop reuses this for every round of a turn).
+/// The caller owns cancellation registration: `begin_stream`/`end_stream` around one round
+/// (plain chat) or around the whole turn (the agentic runner).
+pub(crate) struct RoundRequest {
+    pub base_url: String,
+    pub key: String,
+    pub body: serde_json::Value,
+    pub command_id: String,
+    pub item_of: FrameBuilder,
+    /// The turn's cancellation flag (`None` = the empty key was never registered).
+    pub cancel: Option<Arc<AtomicBool>>,
+}
+
+/// How one streamed round ended; the caller persists and decides whether another round follows.
+pub(crate) enum RoundEnd {
+    /// The stream settled naturally (or was stopped mid-stream; tool calls are dropped when
+    /// stopped — unexecuted calls must never enter the record).
+    Settled {
+        answer: String,
+        reasoning: String,
+        tool_calls: Vec<ToolCall>,
+        stopped: bool,
+    },
+    /// The round could not run: the card the UI shows.
+    Failed(String),
+}
+
+/// Run one request and stream it (pending frames only); never persists. Returns the round's
+/// outcome for the caller to settle (or to continue an agentic turn).
+pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> RoundEnd {
+    let RoundRequest {
         base_url,
         key,
         body,
         command_id,
-        stream_key,
         item_of,
-        persist,
-        on_done,
+        cancel,
     } = request;
-    let cancel = begin_stream(&stream_key);
     let emit = |text: String, reasoning: String, pending: bool| {
         emitter.emit(CommandEvent::ItemUpdated {
             command_id: command_id.clone(),
             item: item_of(&text, &reasoning, pending),
         });
-    };
-    let fail = |text: String| {
-        persist(&text);
-        emit(text, String::new(), false);
     };
 
     let client = match reqwest::blocking::Client::builder()
@@ -464,25 +506,19 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     {
         Ok(client) => client,
         Err(err) => {
-            fail(format!(
+            return RoundEnd::Failed(format!(
                 "## Request failed\n\nFailed to initialize HTTP client: {err}"
             ));
-            end_stream(&stream_key);
-            return;
         }
     };
-    let response = client
+    let response = match client
         .post(chat_completions_url(&base_url))
         .bearer_auth(&key)
         .json(&body)
-        .send();
-    let response = match response {
+        .send()
+    {
         Ok(response) => response,
-        Err(err) => {
-            fail(format!("## Request failed\n\n```\n{err}\n```"));
-            end_stream(&stream_key);
-            return;
-        }
+        Err(err) => return RoundEnd::Failed(format!("## Request failed\n\n```\n{err}\n```")),
     };
     if !response.status().is_success() {
         let status = response.status();
@@ -492,13 +528,12 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
             .chars()
             .take(500)
             .collect();
-        fail(format!("## Endpoint returned {status}\n\n```\n{body}\n```"));
-        end_stream(&stream_key);
-        return;
+        return RoundEnd::Failed(format!("## Endpoint returned {status}\n\n```\n{body}\n```"));
     }
 
     let mut raw = String::new();
     let mut reasoning_field = String::new();
+    let mut fragments: Vec<ToolCallFragment> = Vec::new();
     let mut stopped = false;
     for line in BufReader::new(response).lines() {
         if cancel
@@ -521,32 +556,95 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
                 let (tagged, answer) = split_reasoning(&raw);
                 emit(answer, prefer_reasoning(&reasoning_field, tagged), true);
             }
-            // Tool calls arrive only once a request advertises tools; the loop consumes them
-            // (MOE-0017) — the parser itself is tested in `ai_client`.
-            SseLine::ToolCalls(_) => {}
+            SseLine::ToolCalls(batch) => fragments.extend(batch),
             SseLine::Done => break,
             SseLine::Ignore => {}
         }
     }
-    end_stream(&stream_key);
     let (tagged, answer) = split_reasoning(&raw);
     let reasoning = prefer_reasoning(&reasoning_field, tagged);
     log_unconsumed_tag(&reasoning, &answer);
-
-    if stopped {
-        let text = if answer.trim().is_empty() {
-            "(generation stopped)".to_string()
-        } else {
-            format!("{answer}\n\n_(generation stopped)_")
-        };
-        persist(&text);
-        emit(text, reasoning, false);
-    } else if answer.trim().is_empty() {
-        fail("(the endpoint returned no content)".into());
+    let tool_calls = if stopped {
+        Vec::new()
     } else {
-        persist(&answer);
-        emit(answer.clone(), reasoning, false);
-        on_done(&answer);
+        merge_tool_call_fragments(&fragments)
+    };
+    RoundEnd::Settled {
+        answer,
+        reasoning,
+        tool_calls,
+        stopped,
+    }
+}
+
+/// Request + SSE loop: emits each incremental chunk (pending=true); on natural completion it persists and calls `on_done`.
+/// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
+pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
+    let StreamRequest {
+        base_url,
+        key,
+        body,
+        command_id,
+        stream_key,
+        item_of,
+        persist,
+        on_done,
+    } = request;
+    let cancel = begin_stream(&stream_key);
+    let emit = {
+        let emitter = emitter.clone();
+        let item_of = item_of.clone();
+        let command_id = command_id.clone();
+        move |text: String, reasoning: String, pending: bool| {
+            emitter.emit(CommandEvent::ItemUpdated {
+                command_id: command_id.clone(),
+                item: item_of(&text, &reasoning, pending),
+            });
+        }
+    };
+
+    let outcome = stream_once(
+        RoundRequest {
+            base_url,
+            key,
+            body,
+            command_id,
+            item_of,
+            cancel,
+        },
+        emitter,
+    );
+    end_stream(&stream_key);
+
+    match outcome {
+        RoundEnd::Failed(card) => {
+            persist(&card);
+            emit(card, String::new(), false);
+        }
+        RoundEnd::Settled {
+            answer,
+            reasoning,
+            stopped,
+            ..
+        } => {
+            if stopped {
+                let text = if answer.trim().is_empty() {
+                    "(generation stopped)".to_string()
+                } else {
+                    format!("{answer}\n\n_(generation stopped)_")
+                };
+                persist(&text);
+                emit(text, reasoning, false);
+            } else if answer.trim().is_empty() {
+                let card = "(the endpoint returned no content)".to_string();
+                persist(&card);
+                emit(card, String::new(), false);
+            } else {
+                persist(&answer);
+                emit(answer.clone(), reasoning, false);
+                on_done(&answer);
+            }
+        }
     }
 }
 
@@ -597,6 +695,91 @@ fn chat_body_of(model: &str, messages: Vec<Message>) -> serde_json::Value {
         model,
         messages.iter().map(attachment::expand_message).collect(),
     )
+}
+
+/// One chat turn's transport: plain Conversations stream as today (one round, no tools); Agentic
+/// Conversations run the tool loop (MOE-0017). Both receive the record ending in the new question
+/// and emit `ai.quick-ask` / `ai.side` events; the conversation id is the stream key (Stop scope).
+#[allow(clippy::too_many_arguments)]
+fn spawn_chat_turn(
+    config: &MoeConfig,
+    base_url: String,
+    key: String,
+    model: String,
+    conversation: String,
+    messages: Vec<Message>,
+    agentic: bool,
+    command_id: &'static str,
+    emitter: Arc<dyn Emitter>,
+) {
+    if agentic {
+        let tool_ctx = tools::ToolContext::new(
+            config.ai.searxng_url.clone(),
+            config.ai.fetch_fallback,
+            None, // the runner installs its own cancellation flag
+        );
+        let tool_specs = tools::specs(&tool_ctx);
+        let views: Arc<Mutex<Vec<ToolCallView>>> = Arc::new(Mutex::new(Vec::new()));
+        let item_of: FrameBuilder = {
+            let conversation = conversation.clone();
+            let views = views.clone();
+            Arc::new(move |text, reasoning, pending| {
+                let tools = views.lock().expect("tool views poisoned").clone();
+                answer_item(text, reasoning, &tools, Some(&conversation), pending)
+            })
+        };
+        let persist: MessageSink = {
+            let conversation = conversation.clone();
+            Arc::new(move |message| persist_message(Some(&conversation), message))
+        };
+        std::thread::spawn(move || {
+            run_agentic_turn(
+                AgentTurnRequest {
+                    base_url,
+                    key,
+                    model,
+                    record: messages,
+                    tool_specs,
+                    tools: tool_ctx,
+                    command_id: command_id.to_string(),
+                    stream_key: conversation,
+                    item_of,
+                    views,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                },
+                emitter,
+            );
+        });
+    } else {
+        let body = chat_body_of(&model, messages);
+        let stream_key = conversation.clone();
+        let item_of: FrameBuilder = {
+            let conversation = conversation.clone();
+            Arc::new(move |text, reasoning, pending| {
+                answer_item(text, reasoning, &[], Some(&conversation), pending)
+            })
+        };
+        let persist: StreamFinish = {
+            let conversation = conversation.clone();
+            Arc::new(move |text| persist_assistant(Some(&conversation), text))
+        };
+        std::thread::spawn(move || {
+            run_stream(
+                StreamRequest {
+                    base_url,
+                    key,
+                    body,
+                    command_id: command_id.to_string(),
+                    stream_key,
+                    item_of,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                },
+                emitter,
+            );
+        });
+    }
 }
 
 impl AiShell {
@@ -728,34 +911,24 @@ impl AiShell {
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
         let model = config.ai.model_or_default().to_string();
-        let body = chat_body_of(&model, messages);
-        let conversation = conversation_id.clone();
-        let stream_key = conversation.clone();
-        let item_of: FrameBuilder = {
-            let conversation = conversation.clone();
-            Arc::new(move |text, reasoning, pending| {
-                answer_item(text, reasoning, Some(&conversation), pending)
-            })
+        let agentic = if starting {
+            config.ai.tools
+        } else {
+            db.conversation_agentic(&conversation_id)
+                .map_err(MoeError::Internal)?
+                .unwrap_or(false)
         };
-        let persist: StreamFinish = {
-            let conversation = conversation.clone();
-            Arc::new(move |text| persist_assistant(Some(&conversation), text))
-        };
-        std::thread::spawn(move || {
-            run_stream(
-                StreamRequest {
-                    base_url,
-                    key,
-                    body,
-                    command_id: "ai.quick-ask".into(),
-                    stream_key,
-                    item_of,
-                    persist,
-                    on_done: Arc::new(noop_sink),
-                },
-                emitter,
-            );
-        });
+        spawn_chat_turn(
+            &config,
+            base_url,
+            key,
+            model,
+            conversation_id.clone(),
+            messages,
+            agentic,
+            "ai.quick-ask",
+            emitter,
+        );
         Ok(conversation_id)
     }
 
@@ -1031,7 +1204,8 @@ impl Extension for AiShell {
         // Attachment mentions use the same syntax as quick ask (ADR-0010); attachments-only input gets a generic request sentence (IIE4AD-391).
         let (display, attachments) = Self::split_message(message);
 
-        let conversation_id = if conversation_id.trim().is_empty() {
+        let starting = conversation_id.trim().is_empty();
+        let conversation_id = if starting {
             db.create_conversation(
                 "ai",
                 &title_for(&display, &attachments),
@@ -1065,34 +1239,24 @@ impl Extension for AiShell {
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
         let model = config.ai.model_or_default().to_string();
-        let body = chat_body_of(&model, messages);
-        let conversation = conversation_id.clone();
-        let stream_key = conversation.clone();
-        let item_of: FrameBuilder = {
-            let conversation = conversation.clone();
-            Arc::new(move |text, reasoning, pending| {
-                answer_item(text, reasoning, Some(&conversation), pending)
-            })
+        let agentic = if starting {
+            config.ai.tools
+        } else {
+            db.conversation_agentic(&conversation_id)
+                .map_err(MoeError::Internal)?
+                .unwrap_or(false)
         };
-        let persist: StreamFinish = {
-            let conversation = conversation.clone();
-            Arc::new(move |text| persist_assistant(Some(&conversation), text))
-        };
-        std::thread::spawn(move || {
-            run_stream(
-                StreamRequest {
-                    base_url,
-                    key,
-                    body,
-                    command_id: SIDE_COMMAND_ID.into(),
-                    stream_key,
-                    item_of,
-                    persist,
-                    on_done: Arc::new(noop_sink),
-                },
-                emitter,
-            );
-        });
+        spawn_chat_turn(
+            &config,
+            base_url,
+            key,
+            model,
+            conversation_id.clone(),
+            messages,
+            agentic,
+            SIDE_COMMAND_ID,
+            emitter,
+        );
         Ok(conversation_id)
     }
 
@@ -1540,7 +1704,7 @@ This is a test case, do you know?"#;
             // Nonexistent conversation: persistence is a no-op (dangling-row protection)
             let conversation = "reasoning-e2e";
             let item_of: FrameBuilder = Arc::new(move |text, reasoning, pending| {
-                answer_item(text, reasoning, Some(conversation), pending)
+                answer_item(text, reasoning, &[], Some(conversation), pending)
             });
             let persist: StreamFinish =
                 Arc::new(move |text| persist_assistant(Some(conversation), text));
@@ -1621,7 +1785,7 @@ This is a test case, do you know?"#;
             // Nonexistent conversation: persistence is a no-op (dangling-row protection at the db layer), so real history stays clean
             let conversation = "stop-e2e";
             let item_of: FrameBuilder = Arc::new(move |text, reasoning, pending| {
-                answer_item(text, reasoning, Some(conversation), pending)
+                answer_item(text, reasoning, &[], Some(conversation), pending)
             });
             let persist: StreamFinish =
                 Arc::new(move |text| persist_assistant(Some(conversation), text));
@@ -1679,7 +1843,7 @@ This is a test case, do you know?"#;
     /// The answer item's ⌘J (materialize) also carries the conversation id back, so the side view locates the same conversation.
     #[test]
     fn answer_item_carries_conversation_id_on_materialize() {
-        let item = answer_item("body", "weighing it", Some("9"), false);
+        let item = answer_item("body", "weighing it", &[], Some("9"), false);
         assert_eq!(item.payload["conversationId"], "9");
         assert_eq!(item.payload["reasoning"], "weighing it");
         let action = item

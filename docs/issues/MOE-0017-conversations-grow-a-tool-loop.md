@@ -171,3 +171,18 @@ are in `docs/research/free-web-search-options.md` and
   (extensions 70, platform 60). Remaining: the round runner (stream_once refactor, 8-round
   guardrail, stop propagation into tools) wired into Quick Ask / Side View / panel_continue, the
   item payload's `toolCalls` frames, the UI activity stack, docs pass.
+- 2026-10-10 (agent): the round runner + wiring landed (this commit). `ai.rs` splits `run_stream`
+  into `stream_once` (one HTTP round: pending frames, tool-call accumulation, no persistence) plus
+  the plain settle wrapper (behavior unchanged; existing tests untouched); `RoundRequest` /
+  `RoundEnd` are the shared seam. `agent.rs` gains `run_agentic_turn`: `wire_messages` replay,
+  the 8-round guardrail with a forced settle (the 8th round's calls never enter the record),
+  a per-call 20 s budget with cancel polling, activity-stack updates (running → ok/error/stopped)
+  in the item payload's `toolCalls`, faithful per-message persistence (`MessageSink`), and
+  record-integrity rules (a persisted `tool_calls` message always gets its tool results — stopped
+  calls included). Quick Ask, the Side View, and `panel_continue` route through `spawn_chat_turn`:
+  new conversations are agentic per `[ai] tools`; existing ones keep their stored flag
+  (`db.conversation_agentic`). Three new runner tests: a two-round e2e (tool round → result fed
+  back → final answer, asserting the replayed request body), the round limit, and stop during
+  a tool call. clippy workspace clean; tests green (extensions 73, platform 60). Remaining for
+  this issue: the UI activity stack (Tool Call rows rendering `payload.toolCalls`), the docs pass
+  (README + CONTEXT terms + config sample comments).

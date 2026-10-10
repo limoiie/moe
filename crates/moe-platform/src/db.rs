@@ -278,6 +278,23 @@ impl Db {
         }
     }
 
+    /// One conversation's `agentic` flag (`None` when the conversation does not exist).
+    pub fn conversation_agentic(&self, conversation_id: &str) -> Result<Option<bool>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT agentic FROM conversations WHERE id = ?1")
+            .map_err(|err| err.to_string())?;
+        let mut rows = stmt
+            .query(rusqlite::params![conversation_id])
+            .map_err(|err| err.to_string())?;
+        match rows.next().map_err(|err| err.to_string())? {
+            Some(row) => Ok(Some(
+                row.get::<_, i64>(0).map_err(|err| err.to_string())? != 0,
+            )),
+            None => Ok(None),
+        }
+    }
+
     /// Messages within a conversation (in chronological order).
     pub fn messages(&self, conversation_id: &str) -> Result<Vec<Message>, String> {
         let mut stmt = self

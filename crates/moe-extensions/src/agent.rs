@@ -1,10 +1,21 @@
 //! The agentic turn (ADR-0039 / MOE-0017): the stable system head and the faithful record → wire
 //! replay. The round runner that orchestrates Tools rides on these pieces next.
 
-use moe_core::conversation::{Message, Role};
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use moe_core::contract::{CommandEvent, Emitter};
+use moe_core::conversation::{Message, Role, ToolCall};
 use serde::Serialize;
 
+use crate::ai::{
+    FrameBuilder, RoundEnd, RoundRequest, StreamFinish, begin_stream, end_stream, stream_once,
+};
+use crate::ai_client::chat_body_with_tools;
 use crate::attachment;
+use crate::tools::{self, ToolContext};
 
 /// The stable embedded system head (never user-editable in v1; ADR-0039): it must not change
 /// between turns of a warm conversation, or the endpoint's prefix cache is lost.
@@ -87,6 +98,294 @@ pub fn wire_messages(history: &[Message], agentic: bool) -> Vec<serde_json::Valu
     wire
 }
 
+/// One agentic turn: the record so far (ending in the new question) plus everything the loop needs.
+pub(crate) struct AgentTurnRequest {
+    pub base_url: String,
+    pub key: String,
+    pub model: String,
+    /// The whole record; every round replays it and appends the round's messages.
+    pub record: Vec<Message>,
+    /// The advertised tool definitions (config-gated once per turn).
+    pub tool_specs: Vec<serde_json::Value>,
+    pub tools: ToolContext,
+    pub command_id: String,
+    pub stream_key: String,
+    pub item_of: FrameBuilder,
+    /// The activity stack the item builder renders; the runner mutates it as calls progress.
+    pub views: Arc<Mutex<Vec<ToolCallView>>>,
+    pub persist: MessageSink,
+    pub on_done: StreamFinish,
+}
+
+/// Persists one record message (the agentic record is written as the turn progresses).
+pub(crate) type MessageSink = Arc<dyn Fn(&Message) + Send + Sync>;
+
+/// Rounds per turn (ADR-0039's guardrail).
+const MAX_ROUNDS: usize = 8;
+
+enum ToolOutcome {
+    Ok(String),
+    Error(String),
+    Stopped,
+}
+
+/// The agentic turn (MOE-0017): replay the record, stream a round, execute the called tools,
+/// repeat. Stop stays platform-wide — one registration spans the whole turn (HTTP rounds *and*
+/// tool execution); a stopped turn keeps its partial answer and never leaves a persisted
+/// `tool_calls` message without its results (replay integrity).
+pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitter>) {
+    let AgentTurnRequest {
+        base_url,
+        key,
+        model,
+        mut record,
+        tool_specs,
+        mut tools,
+        command_id,
+        stream_key,
+        item_of,
+        views,
+        persist,
+        on_done,
+    } = request;
+    let cancel = begin_stream(&stream_key);
+    tools.cancel = cancel.clone();
+
+    let emit = {
+        let emitter = emitter.clone();
+        let command_id = command_id.clone();
+        let item_of = item_of.clone();
+        move |text: String, reasoning: String, pending: bool| {
+            emitter.emit(CommandEvent::ItemUpdated {
+                command_id: command_id.clone(),
+                item: item_of(&text, &reasoning, pending),
+            });
+        }
+    };
+    let settle = |text: String, reasoning: String, pending_hint: bool| {
+        let mut message = assistant_message(&text);
+        message.reasoning = non_empty(reasoning.clone());
+        persist(&message);
+        emit(text, reasoning, pending_hint);
+    };
+
+    let mut last_answer = String::new();
+    let mut last_reasoning = String::new();
+
+    for round in 1..=MAX_ROUNDS {
+        // A stop that landed between rounds settles without firing another request.
+        if cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            settle(stop_text(&last_answer), last_reasoning, false);
+            end_stream(&stream_key);
+            return;
+        }
+
+        let wire = wire_messages(&record, true);
+        let body = chat_body_with_tools(&model, wire, &tool_specs, true);
+        let outcome = stream_once(
+            RoundRequest {
+                base_url: base_url.clone(),
+                key: key.clone(),
+                body,
+                command_id: command_id.clone(),
+                item_of: item_of.clone(),
+                cancel: cancel.clone(),
+            },
+            emitter.clone(),
+        );
+        let (answer, reasoning, tool_calls, stopped) = match outcome {
+            RoundEnd::Failed(card) => {
+                settle(card, String::new(), false);
+                end_stream(&stream_key);
+                return;
+            }
+            RoundEnd::Settled {
+                answer,
+                reasoning,
+                tool_calls,
+                stopped,
+            } => (answer, reasoning, tool_calls, stopped),
+        };
+
+        if stopped {
+            settle(stop_text(&answer), reasoning, false);
+            end_stream(&stream_key);
+            return;
+        }
+
+        if answer.trim().is_empty() && tool_calls.is_empty() {
+            settle(
+                "(the endpoint returned no content)".to_string(),
+                reasoning,
+                false,
+            );
+            end_stream(&stream_key);
+            return;
+        }
+
+        // The record message for this round. The 8th round's calls are never executed, so they
+        // must not enter the record (an assistant `tool_calls` message without its tool results
+        // would break the next replay).
+        let forced = !tool_calls.is_empty() && round == MAX_ROUNDS;
+        let mut message = assistant_message(&answer);
+        message.reasoning = non_empty(reasoning.clone());
+        if !forced {
+            message.tool_calls = tool_calls.clone();
+        } else if answer.trim().is_empty() {
+            message.content = "(the model kept calling tools; round limit reached)".to_string();
+        } else {
+            message.content = format!("{answer}\n\n_(round limit reached)_");
+        }
+        last_answer = message.content.clone();
+        last_reasoning = reasoning.clone();
+        persist(&message);
+        record.push(message);
+
+        if tool_calls.is_empty() || forced {
+            emit(last_answer.clone(), reasoning, false);
+            on_done(&last_answer);
+            end_stream(&stream_key);
+            return;
+        }
+
+        // Execute the round's calls sequentially; each renders as its own row (running → settled).
+        for (position, call) in tool_calls.iter().enumerate() {
+            let index = {
+                let mut views = views.lock().expect("tool views poisoned");
+                views.push(ToolCallView {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                    status: ToolCallStatus::Running,
+                    result: None,
+                });
+                views.len() - 1
+            };
+            emit(answer.clone(), reasoning.clone(), true);
+            let outcome = run_tool(call, &tools);
+            if matches!(outcome, ToolOutcome::Stopped) {
+                // Stop landed while this call ran: this one and every later call settle as
+                // stopped; their results still enter the record so persisted pairs stay valid.
+                for (rest, rest_call) in tool_calls.iter().enumerate().skip(position) {
+                    {
+                        let mut views = views.lock().expect("tool views poisoned");
+                        if rest == position {
+                            views[index].status = ToolCallStatus::Stopped;
+                        } else {
+                            views.push(ToolCallView {
+                                id: rest_call.id.clone(),
+                                name: rest_call.name.clone(),
+                                arguments: rest_call.arguments.clone(),
+                                status: ToolCallStatus::Stopped,
+                                result: None,
+                            });
+                        }
+                    }
+                    let result_message = Message {
+                        role: Role::Tool,
+                        content: "(stopped by the user)".to_string(),
+                        tool_call_id: Some(rest_call.id.clone()),
+                        ..Message::default()
+                    };
+                    persist(&result_message);
+                    record.push(result_message);
+                }
+                settle(stop_text(&answer), reasoning, false);
+                end_stream(&stream_key);
+                return;
+            }
+            let (status, content) = match outcome {
+                ToolOutcome::Ok(text) => (ToolCallStatus::Ok, text),
+                ToolOutcome::Error(err) => (ToolCallStatus::Error, format!("Error: {err}")),
+                ToolOutcome::Stopped => unreachable!("handled above"),
+            };
+            {
+                let mut views = views.lock().expect("tool views poisoned");
+                views[index].status = status;
+                views[index].result = Some(content.clone());
+            }
+            let result_message = Message {
+                role: Role::Tool,
+                content,
+                tool_call_id: Some(call.id.clone()),
+                ..Message::default()
+            };
+            persist(&result_message);
+            record.push(result_message);
+            emit(answer.clone(), reasoning.clone(), true);
+        }
+    }
+}
+
+fn assistant_message(content: &str) -> Message {
+    Message {
+        role: Role::Assistant,
+        content: content.to_string(),
+        ..Message::default()
+    }
+}
+
+fn non_empty(text: String) -> Option<String> {
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn stop_text(answer: &str) -> String {
+    if answer.trim().is_empty() {
+        "(generation stopped)".to_string()
+    } else {
+        format!("{answer}\n\n_(generation stopped)_")
+    }
+}
+
+/// Run one tool off the loop thread with the 20 s budget and the turn's cancellation flag
+/// (checked every 50 ms; a stopped call's worker is abandoned — its own timeout bounds it).
+fn run_tool(call: &ToolCall, tools: &ToolContext) -> ToolOutcome {
+    let (sender, receiver) = mpsc::channel();
+    let name = call.name.clone();
+    let arguments = call.arguments.clone();
+    let worker_ctx = ToolContext {
+        searxng_url: tools.searxng_url.clone(),
+        fetch_fallback: tools.fetch_fallback,
+        reader_base: tools.reader_base.clone(),
+        cancel: tools.cancel.clone(),
+    };
+    std::thread::spawn(move || {
+        let _ = sender.send(tools::execute(&name, &arguments, &worker_ctx));
+    });
+    let deadline = Instant::now() + tools::TOOL_TIMEOUT;
+    loop {
+        if tools
+            .cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            return ToolOutcome::Stopped;
+        }
+        match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(Ok(text)) => return ToolOutcome::Ok(text),
+            Ok(Err(err)) => return ToolOutcome::Error(err),
+            Err(RecvTimeoutError::Disconnected) => {
+                return ToolOutcome::Error("tool worker crashed".into());
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if Instant::now() >= deadline {
+                    return ToolOutcome::Error(format!(
+                        "timed out after {} s",
+                        tools::TOOL_TIMEOUT.as_secs()
+                    ));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +455,432 @@ mod tests {
         assert_eq!(wire[3]["role"], "tool");
         assert_eq!(wire[3]["tool_call_id"], "call_1");
         assert_eq!(wire[3]["content"], "1. hit");
+    }
+
+    use moe_core::contract::Item;
+    use moe_platform::config::FetchFallback;
+    use std::io::Write as _;
+
+    /// Read one full HTTP request (headers + content-length body) from the mock socket.
+    fn read_request(socket: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_end = loop {
+            let read = socket.read(&mut chunk).unwrap();
+            assert!(read > 0, "connection closed before the headers");
+            buf.extend_from_slice(&chunk[..read]);
+            if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..header_end]).to_ascii_lowercase();
+        let content_length: usize = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        let mut body = buf[header_end..].to_vec();
+        while body.len() < content_length {
+            let read = socket.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8_lossy(&body).to_string()
+    }
+
+    fn event_stream(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// Captures emitted frames.
+    struct Recorder(Mutex<Vec<Item>>);
+    impl Emitter for Recorder {
+        fn emit(&self, event: CommandEvent) {
+            if let CommandEvent::ItemUpdated { item, .. } = event {
+                self.0.lock().unwrap().push(item);
+            }
+        }
+    }
+
+    /// The payload-building frame closure the chat surfaces use (tool stack included).
+    fn item_builder(views: &Arc<Mutex<Vec<ToolCallView>>>, conversation: &str) -> FrameBuilder {
+        let views = views.clone();
+        let conversation = conversation.to_string();
+        Arc::new(move |text, reasoning, pending| {
+            let tools = views.lock().expect("tool views poisoned").clone();
+            Item {
+                id: "ai.answer".into(),
+                title: "AI Answer".into(),
+                subtitle: None,
+                icon: None,
+                actions: vec![],
+                payload: serde_json::json!({
+                    "conversationId": conversation,
+                    "reasoning": reasoning,
+                    "toolCalls": serde_json::to_value(&tools).unwrap_or_default(),
+                }),
+                detail: Some(text.into()),
+                pending,
+            }
+        })
+    }
+
+    fn test_tool_ctx() -> ToolContext {
+        ToolContext::new(None, FetchFallback::None, None)
+    }
+
+    fn wait_for(done: &std::sync::atomic::AtomicBool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "the turn should finish");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// The loop end to end: a tool round feeds its result back, the record persists the faithful
+    /// shape, and the final answer settles (MOE-0017).
+    #[test]
+    fn agentic_turn_runs_a_tool_round_and_finalizes() {
+        let _guard = crate::ai::STREAM_TEST_LOCK
+            .lock()
+            .expect("stream test lock");
+        use std::net::TcpListener;
+
+        let dir = std::env::temp_dir().join(format!("moe-agent-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let note = dir.join("note.txt");
+        std::fs::write(&note, "note body").unwrap();
+
+        let note_path = note.display().to_string();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for round in 0..2 {
+                let (mut socket, _) = listener.accept().unwrap();
+                captured.lock().unwrap().push(read_request(&mut socket));
+                let response = if round == 0 {
+                    let events = format!(
+                        "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{{\"name\":\"read_file\",\"arguments\":\"{{\\\"path\\\":\\\"{note_path}\\\"}}\"}}}}]}}}}]}}\n\ndata: [DONE]\n\n"
+                    );
+                    event_stream(&events)
+                } else {
+                    event_stream(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"Final answer.\"}}]}\n\ndata: [DONE]\n\n",
+                    )
+                };
+                let _ = socket.write_all(response.as_bytes());
+                let _ = socket.flush();
+            }
+        });
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let persisted: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(Vec::new()));
+        let views: Arc<Mutex<Vec<ToolCallView>>> = Arc::new(Mutex::new(Vec::new()));
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done_flag = done.clone();
+        let base_url = format!("http://{addr}/v1");
+        let tool_ctx = test_tool_ctx();
+        let tool_specs = tools::specs(&tool_ctx);
+        let item_of = item_builder(&views, "agent-e2e");
+        let persist: MessageSink = {
+            let persisted = persisted.clone();
+            Arc::new(move |message| persisted.lock().unwrap().push(message.clone()))
+        };
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        std::thread::spawn(move || {
+            run_agentic_turn(
+                AgentTurnRequest {
+                    base_url,
+                    key: "test-key".into(),
+                    model: "m".into(),
+                    record: vec![Message {
+                        role: Role::User,
+                        content: "read the note".into(),
+                        ..Message::default()
+                    }],
+                    tool_specs,
+                    tools: tool_ctx,
+                    command_id: "ai.quick-ask".into(),
+                    stream_key: "agent-e2e".into(),
+                    item_of,
+                    views,
+                    persist,
+                    on_done: Arc::new(move |_| {
+                        done_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }),
+                },
+                emitter,
+            );
+        });
+        wait_for(&done);
+        server.join().unwrap();
+
+        let items = recorder.0.lock().expect("recorder").clone();
+        let last = items.last().expect("frames");
+        assert!(!last.pending);
+        assert_eq!(last.detail.as_deref(), Some("Final answer."));
+        assert!(items.iter().any(|item| {
+            item.payload["toolCalls"][0]["status"] == "ok"
+                && item.payload["toolCalls"][0]["result"]
+                    .as_str()
+                    .is_some_and(|result| result.contains("note body"))
+        }));
+
+        let persisted = persisted.lock().expect("persisted");
+        assert_eq!(
+            persisted.len(),
+            3,
+            "assistant round, tool result, final answer"
+        );
+        assert_eq!(persisted[0].role, Role::Assistant);
+        assert_eq!(persisted[0].tool_calls[0].name, "read_file");
+        assert_eq!(persisted[1].role, Role::Tool);
+        assert_eq!(persisted[1].tool_call_id.as_deref(), Some("call_1"));
+        assert!(persisted[1].content.contains("note body"));
+        assert_eq!(persisted[2].content, "Final answer.");
+        drop(persisted);
+
+        let requests = requests.lock().expect("requests");
+        assert_eq!(requests.len(), 2, "one round per model response");
+        let second = &requests[1];
+        assert!(second.contains("\"tool_call_id\":\"call_1\""));
+        assert!(second.contains("note body"), "the tool result is replayed");
+        assert!(
+            second.contains("\"tools\""),
+            "agentic rounds keep the tools"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The round guardrail: the 8th tool round is not executed, its calls never enter the record,
+    /// and the turn settles with the limit note (MOE-0017).
+    #[test]
+    fn agentic_turn_forces_a_settle_at_the_round_limit() {
+        let _guard = crate::ai::STREAM_TEST_LOCK
+            .lock()
+            .expect("stream test lock");
+        use std::net::TcpListener;
+
+        let dir = std::env::temp_dir().join(format!("moe-agent-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let note = dir.join("loop.txt");
+        std::fs::write(&note, "loop body").unwrap();
+
+        let note_path = note.display().to_string();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for round in 0..8 {
+                let (mut socket, _) = listener.accept().unwrap();
+                captured.lock().unwrap().push(read_request(&mut socket));
+                let events = format!(
+                    "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"call_{round}\",\"type\":\"function\",\"function\":{{\"name\":\"read_file\",\"arguments\":\"{{\\\"path\\\":\\\"{note_path}\\\"}}\"}}}}]}}}}]}}\n\ndata: [DONE]\n\n"
+                );
+                let _ = socket.write_all(event_stream(&events).as_bytes());
+                let _ = socket.flush();
+            }
+        });
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let persisted: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(Vec::new()));
+        let views: Arc<Mutex<Vec<ToolCallView>>> = Arc::new(Mutex::new(Vec::new()));
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done_flag = done.clone();
+        let base_url = format!("http://{addr}/v1");
+        let tool_ctx = test_tool_ctx();
+        let tool_specs = tools::specs(&tool_ctx);
+        let item_of = item_builder(&views, "agent-limit");
+        let persist: MessageSink = {
+            let persisted = persisted.clone();
+            Arc::new(move |message| persisted.lock().unwrap().push(message.clone()))
+        };
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        std::thread::spawn(move || {
+            run_agentic_turn(
+                AgentTurnRequest {
+                    base_url,
+                    key: "test-key".into(),
+                    model: "m".into(),
+                    record: vec![Message {
+                        role: Role::User,
+                        content: "keep reading".into(),
+                        ..Message::default()
+                    }],
+                    tool_specs,
+                    tools: tool_ctx,
+                    command_id: "ai.quick-ask".into(),
+                    stream_key: "agent-limit".into(),
+                    item_of,
+                    views,
+                    persist,
+                    on_done: Arc::new(move |_| {
+                        done_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }),
+                },
+                emitter,
+            );
+        });
+        wait_for(&done);
+        server.join().unwrap();
+
+        let items = recorder.0.lock().expect("recorder").clone();
+        let last = items.last().expect("frames");
+        assert!(!last.pending);
+        assert!(
+            last.detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("round limit"),
+            "forced settle names the limit: {:?}",
+            last.detail
+        );
+
+        let persisted = persisted.lock().expect("persisted");
+        let tool_results = persisted.iter().filter(|m| m.role == Role::Tool).count();
+        assert_eq!(tool_results, 7, "the 8th round's calls are never executed");
+        let final_message = persisted.last().expect("a final message");
+        assert_eq!(final_message.role, Role::Assistant);
+        assert!(
+            final_message.tool_calls.is_empty(),
+            "unexecuted calls never enter the record"
+        );
+        assert!(final_message.content.contains("round limit"));
+        assert_eq!(requests.lock().expect("requests").len(), 8);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Stop while a tool call runs: the row settles as stopped, no further round fires, and the
+    /// persisted call/result pairs stay complete (MOE-0017).
+    #[test]
+    fn stop_during_a_tool_settles_the_rows() {
+        let _guard = crate::ai::STREAM_TEST_LOCK
+            .lock()
+            .expect("stream test lock");
+        use std::io::Read;
+        use std::net::TcpListener;
+
+        // The tool target: accepts and stays silent (the turn must answer to Stop, not to it).
+        let hang = TcpListener::bind("127.0.0.1:0").unwrap();
+        let hang_addr = hang.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut socket, _)) = hang.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf);
+                std::thread::sleep(Duration::from_secs(3));
+            }
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let _ = read_request(&mut socket);
+            let events = format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{{\"name\":\"web_fetch\",\"arguments\":\"{{\\\"url\\\":\\\"http://{hang_addr}/slow\\\"}}\"}}}}]}}}}]}}\n\ndata: [DONE]\n\n"
+            );
+            let _ = socket.write_all(event_stream(&events).as_bytes());
+            let _ = socket.flush();
+        });
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let persisted: Arc<Mutex<Vec<Message>>> = Arc::new(Mutex::new(Vec::new()));
+        let views: Arc<Mutex<Vec<ToolCallView>>> = Arc::new(Mutex::new(Vec::new()));
+        let runner_views = views.clone();
+        let base_url = format!("http://{addr}/v1");
+        let tool_ctx = test_tool_ctx();
+        let tool_specs = tools::specs(&tool_ctx);
+        let item_of = item_builder(&views, "agent-stop");
+        let persist: MessageSink = {
+            let persisted = persisted.clone();
+            Arc::new(move |message| persisted.lock().unwrap().push(message.clone()))
+        };
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        std::thread::spawn(move || {
+            run_agentic_turn(
+                AgentTurnRequest {
+                    base_url,
+                    key: "test-key".into(),
+                    model: "m".into(),
+                    record: vec![Message {
+                        role: Role::User,
+                        content: "fetch slowly".into(),
+                        ..Message::default()
+                    }],
+                    tool_specs,
+                    tools: tool_ctx,
+                    command_id: "ai.quick-ask".into(),
+                    stream_key: "agent-stop".into(),
+                    item_of,
+                    views: runner_views,
+                    persist,
+                    // Stop paths do not call `on_done` (matching the plain stream's contract);
+                    // this test waits on the settled frame instead.
+                    on_done: Arc::new(crate::ai::noop_sink),
+                },
+                emitter,
+            );
+        });
+
+        // Wait for the running row, then stop the whole turn.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let running = views
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|view| view.status == ToolCallStatus::Running);
+            if running {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the running row should appear");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(crate::ai::stop_all_streams() >= 1);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let settled = recorder
+                .0
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|item| !item.pending);
+            if settled {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the stopped turn should settle");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        server.join().unwrap();
+
+        let items = recorder.0.lock().expect("recorder").clone();
+        let last = items.last().expect("frames");
+        assert!(!last.pending);
+        assert_eq!(last.detail.as_deref(), Some("(generation stopped)"));
+        assert_eq!(last.payload["toolCalls"][0]["status"], "stopped");
+
+        let persisted = persisted.lock().expect("persisted");
+        let roles: Vec<Role> = persisted.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            [Role::Assistant, Role::Tool, Role::Assistant],
+            "assistant round, stopped tool result, stopped note"
+        );
+        let tool_message = &persisted[1];
+        assert_eq!(tool_message.content, "(stopped by the user)");
+        assert_eq!(tool_message.tool_call_id.as_deref(), Some("call_1"));
     }
 }
