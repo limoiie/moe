@@ -1,12 +1,13 @@
 # M7y: conversations grow a tool loop — the daily agent, faithfully persisted
 
 - **ID**: MOE-0017
-- **State**: todo
+- **State**: done
 - **Labels**: ready-for-agent, feature
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
 - **Blocks**: MOE-0018
 - **Assignee**: agent
+- **Commit**: 82833b4
 
 The owner wants Moe's AI to serve daily work — researching, answering, querying, explaining —
 which needs the model to consult the web and read files mid-turn. Writing and coding stay outside
@@ -186,3 +187,19 @@ are in `docs/research/free-web-search-options.md` and
   a tool call. clippy workspace clean; tests green (extensions 73, platform 60). Remaining for
   this issue: the UI activity stack (Tool Call rows rendering `payload.toolCalls`), the docs pass
   (README + CONTEXT terms + config sample comments).
+- 2026-10-10 (agent): **done** (82833b4) — the UI activity stack and the docs pass landed.
+  `ui/src/messages.ts`: the tool-row builder (Thinking anatomy: icon + plain label + status;
+  spinner + shimmer while running, `failed`/`stopped` words, muted markdown result on expand) and
+  the activity stack above the answer, rebuilt per frame with expand toggles carried by call id;
+  `append` re-renders the record on reopen — assistant `reasoning`/`toolCalls` rows plus the
+  persisted `tool` results folded into their rows (status derived from the runner's stable result
+  strings; tool messages never render as bubbles). `main.ts`/`chat.ts` thread
+  `payload.toolCalls` through their coalescers (`undefined` = keep the rendered rows, so a
+  reasoning-only or empty frame can't blank the stack); `icons.ts` gains `rotate-cw` / `globe` /
+  `file-text`; `styles.css` gains the reduced-motion-gated spinner. Docs: README (tool rows in the
+  AI Chat blurb, the three `[ai]` keys, the SearXNG `docker run` + `formats: [html, json]` setup);
+  the config template's commented samples (its parse test stays green). CONTEXT terms and the
+  ADR-0005 amendment already landed with the direction commit. Validation: `pnpm -C ui build`
+  green, `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test --workspace`
+  green (app 5, core 50, extensions 73, platform 60). Manual acceptance (SearXNG flow, stop
+  mid-round, reopen with cache-hit `usage`) still needs a live endpoint; MOE-0018 is unblocked.
