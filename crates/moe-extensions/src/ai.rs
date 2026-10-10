@@ -181,13 +181,12 @@ fn persist_assistant(conversation_id: Option<&str>, text: &str) {
         return;
     };
     if let Ok(db) = Db::open_default() {
-        let _ = db.append_message(
-            conversation_id,
-            Role::Assistant,
-            text,
-            &[],
-            SystemTime::now(),
-        );
+        let message = Message {
+            role: Role::Assistant,
+            content: text.to_string(),
+            ..Message::default()
+        };
+        let _ = db.append_message(conversation_id, &message, SystemTime::now());
     }
 }
 
@@ -694,8 +693,13 @@ impl AiShell {
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
         let conversation_id = if starting {
-            db.create_conversation("ai", &title_for(&display, &attachments), SystemTime::now())
-                .map_err(MoeError::Internal)?
+            db.create_conversation(
+                "ai",
+                &title_for(&display, &attachments),
+                config.ai.tools,
+                SystemTime::now(),
+            )
+            .map_err(MoeError::Internal)?
         } else {
             conversation_id.trim().to_string()
         };
@@ -705,9 +709,12 @@ impl AiShell {
         let mut messages = db.messages(&conversation_id).map_err(MoeError::Internal)?;
         db.append_message(
             &conversation_id,
-            Role::User,
-            &display,
-            &attachments,
+            &Message {
+                role: Role::User,
+                content: display.clone(),
+                attachments: attachments.clone(),
+                ..Message::default()
+            },
             SystemTime::now(),
         )
         .map_err(MoeError::Internal)?;
@@ -716,6 +723,7 @@ impl AiShell {
             role: Role::User,
             content,
             attachments,
+            ..Message::default()
         });
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
@@ -1024,8 +1032,13 @@ impl Extension for AiShell {
         let (display, attachments) = Self::split_message(message);
 
         let conversation_id = if conversation_id.trim().is_empty() {
-            db.create_conversation("ai", &title_for(&display, &attachments), SystemTime::now())
-                .map_err(MoeError::Internal)?
+            db.create_conversation(
+                "ai",
+                &title_for(&display, &attachments),
+                config.ai.tools,
+                SystemTime::now(),
+            )
+            .map_err(MoeError::Internal)?
         } else {
             conversation_id.trim().to_string()
         };
@@ -1034,9 +1047,12 @@ impl Extension for AiShell {
         let mut messages = db.messages(&conversation_id).map_err(MoeError::Internal)?;
         db.append_message(
             &conversation_id,
-            Role::User,
-            &display,
-            &attachments,
+            &Message {
+                role: Role::User,
+                content: display.clone(),
+                attachments: attachments.clone(),
+                ..Message::default()
+            },
             SystemTime::now(),
         )
         .map_err(MoeError::Internal)?;
@@ -1044,6 +1060,7 @@ impl Extension for AiShell {
             role: Role::User,
             content: display,
             attachments,
+            ..Message::default()
         });
 
         let base_url = config.ai.base_url.clone().unwrap_or_default();
@@ -1428,6 +1445,7 @@ This is a test case, do you know?"#;
                 namespace: "ai".into(),
                 title: "explain closures".into(),
                 updated_unix: 100,
+                agentic: false,
             },
             160,
             Some("summary of the last answer".into()),
@@ -1695,9 +1713,9 @@ This is a test case, do you know?"#;
     fn delete_item_removes_the_conversation() {
         let (db, path) = temp_db("delete");
         let a = db
-            .create_conversation("ai", "Conversation A", SystemTime::now())
+            .create_conversation("ai", "Conversation A", false, SystemTime::now())
             .unwrap();
-        db.create_conversation("ai", "Conversation B", SystemTime::now())
+        db.create_conversation("ai", "Conversation B", false, SystemTime::now())
             .unwrap();
         let item = history_item(
             Conversation {
@@ -1705,6 +1723,7 @@ This is a test case, do you know?"#;
                 namespace: "ai".into(),
                 title: "Conversation A".into(),
                 updated_unix: 1,
+                agentic: false,
             },
             1,
             None,
@@ -1718,6 +1737,7 @@ This is a test case, do you know?"#;
                 namespace: "ai".into(),
                 title: "x".into(),
                 updated_unix: 1,
+                agentic: false,
             },
             1,
             None,
@@ -1742,11 +1762,11 @@ This is a test case, do you know?"#;
     #[test]
     fn delete_all_clears_ai_namespace() {
         let (db, path) = temp_db("delete-all");
-        db.create_conversation("ai", "one", SystemTime::now())
+        db.create_conversation("ai", "one", false, SystemTime::now())
             .unwrap();
-        db.create_conversation("ai", "two", SystemTime::now())
+        db.create_conversation("ai", "two", false, SystemTime::now())
             .unwrap();
-        db.create_conversation("other", "another extension", SystemTime::now())
+        db.create_conversation("other", "another extension", false, SystemTime::now())
             .unwrap();
 
         assert_eq!(db.delete_all_conversations("ai").unwrap(), 2);
@@ -1790,10 +1810,18 @@ This is a test case, do you know?"#;
         let (db, path) = temp_db("history");
         let now = SystemTime::now();
         let id = db
-            .create_conversation("ai", "explain closures", now)
+            .create_conversation("ai", "explain closures", false, now)
             .expect("create");
-        db.append_message(&id, Role::Assistant, "A closure is…", &[], now)
-            .expect("append");
+        db.append_message(
+            &id,
+            &Message {
+                role: Role::Assistant,
+                content: "A closure is…".into(),
+                ..Message::default()
+            },
+            now,
+        )
+        .expect("append");
 
         let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "closure")
         else {
@@ -1856,6 +1884,7 @@ This is a test case, do you know?"#;
             role: Role::User,
             content: question_with_selection("translate", Some("hello world")),
             attachments: vec![],
+            ..Message::default()
         }];
         let text = chat_body_of("m", history).to_string();
         assert!(
@@ -1873,6 +1902,7 @@ This is a test case, do you know?"#;
                 role: Role::User,
                 content: "translate".into(),
                 attachments: vec![],
+                ..Message::default()
             }],
         )
         .to_string();

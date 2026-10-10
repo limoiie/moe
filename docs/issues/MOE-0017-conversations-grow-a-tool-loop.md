@@ -152,3 +152,22 @@ are in `docs/research/free-web-search-options.md` and
   `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test --workspace` green
   (extensions 58). Remaining: round runner + tools module (searxng / fetch / read_file), message
   parts schema + migration, UI activity stack, docs pass.
+- 2026-10-10 (agent): record + tools landed (this commit). `moe-core/src/conversation.rs`:
+  `Message` grows `reasoning` / `tool_calls` / `tool_call_id`, `Role::Tool`, and
+  `Conversation.agentic` (fixed at creation); `ToolCall` moves here as the one shared type.
+  `moe-platform/src/db.rs`: in-place legacy migration (`attachments`, `reasoning`, `tool_calls`,
+  `tool_call_id`, `agentic`) via a PRAGMA helper; `create_conversation(.., agentic, ..)`;
+  `append_message(&Message)`; reads round-trip the record (legacy rows load as plain).
+  `moe-extensions/src/tools.rs`: the three v1 tools — `web_search` (config-gated spec, SearXNG
+  top-8 formatter, 403 names the `formats: [html, json]` fix), `web_fetch` (browser UA, redirect
+  cap 5, 20 s, 1 MB cap → readability → htmd, 403/empty-shell → keyless r.jina.ai fallback
+  honoring `fetch_fallback`), `read_file` (secrets blocklist on the canonical path, text-only,
+  256 KB memory cap; the model sees the 8k-char cap note), cooperative cancel checks.
+  `moe-extensions/src/agent.rs`: the stable system head and `wire_messages` (plain replay is
+  byte-identical to today; agentic prepends the head and echoes `reasoning_content` + `tool_calls`
+  + `role: tool` results). Tests: read_file policy, percent-encoding, truncation, spec gating, a
+  mock SearXNG round-trip, fetch extraction + reader fallback + honest failure, replay shape.
+  `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` green
+  (extensions 70, platform 60). Remaining: the round runner (stream_once refactor, 8-round
+  guardrail, stop propagation into tools) wired into Quick Ask / Side View / panel_continue, the
+  item payload's `toolCalls` frames, the UI activity stack, docs pass.

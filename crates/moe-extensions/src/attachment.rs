@@ -485,6 +485,7 @@ mod tests {
             role: Role::User,
             content: "Summarize".into(),
             attachments: vec![ref_for_path(&text), ref_for_path(&image)],
+            ..Message::default()
         };
         let json = expand_message(&message);
         assert_eq!(json["role"], "user");
@@ -509,6 +510,7 @@ mod tests {
             role: Role::User,
             content: "hello".into(),
             attachments: vec![],
+            ..Message::default()
         };
         let json = expand_message(&message);
         assert_eq!(json["content"], "hello");
@@ -523,6 +525,7 @@ mod tests {
                 name: "gone.md".into(),
                 path: "/definitely/missing.md".into(),
             }],
+            ..Message::default()
         };
         let json = expand_message(&message);
         let text = json["content"].as_str().unwrap();

@@ -1,5 +1,7 @@
 //! Request construction and SSE parsing for OpenAI-compatible endpoints (pure functions, testable).
 
+pub use moe_core::conversation::ToolCall;
+
 /// Outcome of processing one SSE line.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SseLine {
@@ -26,14 +28,7 @@ pub struct ToolCallFragment {
     pub arguments: String,
 }
 
-/// A fully assembled tool call (all fragments of one index merged).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: String,
-}
-
+/// Merge streamed fragments into complete calls, one per index, in index order: `id`/`name` come
 pub fn sse_delta(line: &str) -> SseLine {
     let Some(payload) = line.strip_prefix("data:") else {
         return SseLine::Ignore;

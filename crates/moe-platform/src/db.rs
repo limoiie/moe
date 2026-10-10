@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
+use moe_core::conversation::{Conversation, Message, Role};
 use rusqlite::Connection;
 
 pub struct Db {
@@ -13,6 +13,19 @@ pub struct Db {
 /// `data_dir/moe/moe.db`.
 pub fn db_path() -> Option<PathBuf> {
     dirs::data_dir().map(|dir| dir.join("moe").join("moe.db"))
+}
+
+/// Whether `table` has `column` (SQLite has no `ADD COLUMN IF NOT EXISTS`; PRAGMA inspection is
+/// the portable upgrade check).
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|err| err.to_string())?;
+    let names = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+        .map_err(|err| err.to_string())?;
+    Ok(names.iter().any(|name| name == column))
 }
 
 impl Db {
@@ -41,7 +54,8 @@ impl Db {
                  namespace TEXT NOT NULL,
                  title TEXT NOT NULL,
                  created_unix INTEGER NOT NULL,
-                 updated_unix INTEGER NOT NULL
+                 updated_unix INTEGER NOT NULL,
+                 agentic INTEGER NOT NULL DEFAULT 0
              );
              CREATE TABLE IF NOT EXISTS messages (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,66 +63,100 @@ impl Db {
                  role TEXT NOT NULL,
                  content TEXT NOT NULL,
                  attachments TEXT NOT NULL DEFAULT '[]',
+                 reasoning TEXT,
+                 tool_calls TEXT NOT NULL DEFAULT '[]',
+                 tool_call_id TEXT,
                  created_unix INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_messages_conversation
                  ON messages(conversation_id);",
         )
         .map_err(|err| err.to_string())?;
-        // Legacy DB upgrade: messages.attachments is a column added in IIE4AD-358.
-        let has_attachments = conn
-            .prepare("PRAGMA table_info(messages)")
-            .and_then(|mut stmt| {
-                let names = stmt
-                    .query_map([], |row| row.get::<_, String>(1))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(names.iter().any(|name| name == "attachments"))
-            })
-            .map_err(|err| err.to_string())?;
-        if !has_attachments {
-            conn.execute_batch(
+        // Legacy DB upgrades (IIE4AD-358 attachments, MOE-0017 agentic record): add the columns
+        // later versions introduced, keeping history intact.
+        for (table, column, ddl) in [
+            (
+                "messages",
+                "attachments",
                 "ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
-            )
-            .map_err(|err| err.to_string())?;
+            ),
+            (
+                "messages",
+                "reasoning",
+                "ALTER TABLE messages ADD COLUMN reasoning TEXT",
+            ),
+            (
+                "messages",
+                "tool_calls",
+                "ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'",
+            ),
+            (
+                "messages",
+                "tool_call_id",
+                "ALTER TABLE messages ADD COLUMN tool_call_id TEXT",
+            ),
+            (
+                "conversations",
+                "agentic",
+                "ALTER TABLE conversations ADD COLUMN agentic INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            if !has_column(&conn, table, column)? {
+                conn.execute_batch(ddl).map_err(|err| err.to_string())?;
+            }
         }
         Ok(Self { conn })
     }
 
-    /// Create a conversation, returning its id; `updated_unix` starts at `now`.
+    /// Create a conversation, returning its id; `updated_unix` starts at `now`. `agentic` fixes the
+    /// capability at creation: pre-feature conversations stay plain forever (ADR-0039).
     pub fn create_conversation(
         &self,
         namespace: &str,
         title: &str,
+        agentic: bool,
         now: SystemTime,
     ) -> Result<String, String> {
         let ts = unix_secs(now) as i64;
         self.conn
             .execute(
-                "INSERT INTO conversations (namespace, title, created_unix, updated_unix)
-                 VALUES (?1, ?2, ?3, ?3)",
-                rusqlite::params![namespace, title, ts],
+                "INSERT INTO conversations (namespace, title, agentic, created_unix, updated_unix)
+                 VALUES (?1, ?2, ?3, ?4, ?4)",
+                rusqlite::params![namespace, title, agentic as i64, ts],
             )
             .map_err(|err| err.to_string())?;
         Ok(self.conn.last_insert_rowid().to_string())
     }
 
-    /// Append a message (append-only) and touch the conversation's `updated_unix`; attachments store only references (ADR-0010).
+    /// Append a message (append-only) and touch the conversation's `updated_unix`; attachments store
+    /// only references (ADR-0010); reasoning/tool fields are the Agentic record (MOE-0017).
     pub fn append_message(
         &self,
         conversation_id: &str,
-        role: Role,
-        content: &str,
-        attachments: &[AttachmentRef],
+        message: &Message,
         now: SystemTime,
     ) -> Result<(), String> {
         let ts = unix_secs(now) as i64;
-        let attachments = serde_json::to_string(attachments).map_err(|err| err.to_string())?;
+        let attachments =
+            serde_json::to_string(&message.attachments).map_err(|err| err.to_string())?;
+        let tool_calls =
+            serde_json::to_string(&message.tool_calls).map_err(|err| err.to_string())?;
         self.conn
             .execute(
-                "INSERT INTO messages (conversation_id, role, content, attachments, created_unix)
-                 SELECT ?1, ?2, ?3, ?4, ?5
+                "INSERT INTO messages
+                     (conversation_id, role, content, attachments, reasoning, tool_calls, tool_call_id, created_unix)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
                  WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ?1)",
-                rusqlite::params![conversation_id, role.as_str(), content, attachments, ts],
+                rusqlite::params![
+                    conversation_id,
+                    message.role.as_str(),
+                    message.content,
+                    attachments,
+                    message.reasoning,
+                    tool_calls,
+                    message.tool_call_id,
+                    ts
+                ],
             )
             .map_err(|err| err.to_string())?;
         self.conn
@@ -137,6 +185,7 @@ impl Db {
                 namespace: row.get(1)?,
                 title: row.get(2)?,
                 updated_unix: row.get::<_, i64>(3)? as u64,
+                agentic: row.get::<_, i64>(4)? != 0,
             })
         };
 
@@ -145,7 +194,7 @@ impl Db {
                 let mut stmt = self
                     .conn
                     .prepare(
-                        "SELECT id, namespace, title, updated_unix FROM conversations
+                        "SELECT id, namespace, title, updated_unix, agentic FROM conversations
                          WHERE namespace = ?1 AND title LIKE '%' || ?2 || '%'
                          ORDER BY updated_unix DESC, id DESC LIMIT ?3",
                     )
@@ -161,7 +210,7 @@ impl Db {
                 let mut stmt = self
                     .conn
                     .prepare(
-                        "SELECT id, namespace, title, updated_unix FROM conversations
+                        "SELECT id, namespace, title, updated_unix, agentic FROM conversations
                          WHERE namespace = ?1
                          ORDER BY updated_unix DESC, id DESC LIMIT ?2",
                     )
@@ -234,7 +283,7 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT role, content, attachments FROM messages
+                "SELECT role, content, attachments, reasoning, tool_calls, tool_call_id FROM messages
                  WHERE conversation_id = ?1 ORDER BY id ASC",
             )
             .map_err(|err| err.to_string())?;
@@ -245,8 +294,11 @@ impl Db {
                 Ok(Message {
                     role: Role::parse(&role),
                     content: row.get(1)?,
-                    // Parse failures count as no attachments (one dirty row must not drop the whole history)
+                    // Parse failures count as absent (one dirty row must not drop the whole history)
                     attachments: serde_json::from_str(&raw).unwrap_or_default(),
+                    reasoning: row.get(3)?,
+                    tool_calls: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
+                    tool_call_id: row.get(5)?,
                 })
             })
             .map_err(|err| err.to_string())?;
@@ -265,6 +317,7 @@ fn unix_secs(now: SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moe_core::conversation::{AttachmentRef, ToolCall};
     use std::time::Duration;
 
     fn at(secs: u64) -> SystemTime {
@@ -275,17 +328,34 @@ mod tests {
         Db::open_in_memory().unwrap()
     }
 
+    fn msg(role: Role, content: &str) -> Message {
+        Message {
+            role,
+            content: content.into(),
+            ..Message::default()
+        }
+    }
+
+    fn msg_with(role: Role, content: &str, attachments: Vec<AttachmentRef>) -> Message {
+        Message {
+            role,
+            content: content.into(),
+            attachments,
+            ..Message::default()
+        }
+    }
+
     #[test]
     fn conversations_round_trip_and_order_by_recency() {
         let db = db();
         let a = db
-            .create_conversation("ai", "explain closures", at(100))
+            .create_conversation("ai", "explain closures", false, at(100))
             .unwrap();
         let b = db
-            .create_conversation("ai", "write a sort", at(200))
+            .create_conversation("ai", "write a sort", false, at(200))
             .unwrap();
         // Appending a message touches a → a is now most recently updated
-        db.append_message(&a, Role::User, "explain closures", &[], at(300))
+        db.append_message(&a, &msg(Role::User, "explain closures"), at(300))
             .unwrap();
 
         let list = db.conversations("ai", None, 10).unwrap();
@@ -300,11 +370,11 @@ mod tests {
     #[test]
     fn messages_are_ordered_and_namespace_isolated() {
         let db = db();
-        let ai = db.create_conversation("ai", "hi", at(0)).unwrap();
-        let other = db.create_conversation("echo", "hi", at(0)).unwrap();
-        db.append_message(&ai, Role::User, "question", &[], at(1))
+        let ai = db.create_conversation("ai", "hi", false, at(0)).unwrap();
+        let other = db.create_conversation("echo", "hi", false, at(0)).unwrap();
+        db.append_message(&ai, &msg(Role::User, "question"), at(1))
             .unwrap();
-        db.append_message(&ai, Role::Assistant, "answer", &[], at(2))
+        db.append_message(&ai, &msg(Role::Assistant, "answer"), at(2))
             .unwrap();
 
         let msgs = db.messages(&ai).unwrap();
@@ -326,11 +396,11 @@ mod tests {
     fn title_search_filters_within_namespace() {
         let db = db();
         let target = db
-            .create_conversation("ai", "write a sort", at(200))
+            .create_conversation("ai", "write a sort", false, at(200))
             .unwrap();
-        db.create_conversation("ai", "explain closures", at(100))
+        db.create_conversation("ai", "explain closures", false, at(100))
             .unwrap();
-        db.create_conversation("echo", "sort demo", at(300))
+        db.create_conversation("echo", "sort demo", false, at(300))
             .unwrap();
 
         let hits = db.conversations("ai", Some("sort"), 10).unwrap();
@@ -343,7 +413,7 @@ mod tests {
     fn limit_caps_results() {
         let db = db();
         for i in 0..5 {
-            db.create_conversation("ai", &format!("c{i}"), at(100 + i))
+            db.create_conversation("ai", &format!("c{i}"), false, at(100 + i))
                 .unwrap();
         }
         assert_eq!(db.conversations("ai", None, 3).unwrap().len(), 3);
@@ -354,15 +424,19 @@ mod tests {
     fn messages_round_trip_attachment_refs() {
         let db = db();
         let conv = db
-            .create_conversation("ai", "look at image", at(0))
+            .create_conversation("ai", "look at image", false, at(0))
             .unwrap();
         let refs = vec![AttachmentRef {
             name: "shot.png".into(),
             path: "/tmp/shot.png".into(),
         }];
-        db.append_message(&conv, Role::User, "what is in this image", &refs, at(1))
-            .unwrap();
-        db.append_message(&conv, Role::Assistant, "it is a cat", &[], at(2))
+        db.append_message(
+            &conv,
+            &msg_with(Role::User, "what is in this image", refs.clone()),
+            at(1),
+        )
+        .unwrap();
+        db.append_message(&conv, &msg(Role::Assistant, "it is a cat"), at(2))
             .unwrap();
 
         let messages = db.messages(&conv).unwrap();
@@ -374,7 +448,7 @@ mod tests {
     #[test]
     fn append_to_missing_conversation_is_noop() {
         let db = db();
-        db.append_message("424242", Role::User, "dangling", &[], at(1))
+        db.append_message("424242", &msg(Role::User, "dangling"), at(1))
             .unwrap();
         assert!(db.messages("424242").unwrap().is_empty());
     }
@@ -383,15 +457,17 @@ mod tests {
     #[test]
     fn last_assistant_message_prefers_latest() {
         let db = db();
-        let conv = db.create_conversation("ai", "preview", at(0)).unwrap();
+        let conv = db
+            .create_conversation("ai", "preview", false, at(0))
+            .unwrap();
         assert_eq!(db.last_assistant_message(&conv).unwrap(), None);
-        db.append_message(&conv, Role::User, "question", &[], at(1))
+        db.append_message(&conv, &msg(Role::User, "question"), at(1))
             .unwrap();
-        db.append_message(&conv, Role::Assistant, "answer one", &[], at(2))
+        db.append_message(&conv, &msg(Role::Assistant, "answer one"), at(2))
             .unwrap();
-        db.append_message(&conv, Role::User, "ask again", &[], at(3))
+        db.append_message(&conv, &msg(Role::User, "ask again"), at(3))
             .unwrap();
-        db.append_message(&conv, Role::Assistant, "answer two", &[], at(4))
+        db.append_message(&conv, &msg(Role::Assistant, "answer two"), at(4))
             .unwrap();
         assert_eq!(
             db.last_assistant_message(&conv).unwrap().as_deref(),
@@ -399,7 +475,42 @@ mod tests {
         );
     }
 
-    /// Legacy DBs (no attachments column) are upgraded on open, keeping history.
+    /// The faithful record: the agentic flag, reasoning and tool rounds round-trip (MOE-0017).
+    #[test]
+    fn agentic_record_round_trips() {
+        let db = db();
+        let conv = db.create_conversation("ai", "tools", true, at(0)).unwrap();
+        assert!(db.conversations("ai", None, 10).unwrap()[0].agentic);
+
+        let mut assistant = msg(Role::Assistant, "Done.");
+        assistant.reasoning = Some("looked it up".into());
+        assistant.tool_calls = vec![ToolCall {
+            id: "call_1".into(),
+            name: "web_search".into(),
+            arguments: "{\"query\":\"x\"}".into(),
+        }];
+        db.append_message(&conv, &assistant, at(1)).unwrap();
+        let result = Message {
+            role: Role::Tool,
+            content: "1. hit".into(),
+            tool_call_id: Some("call_1".into()),
+            ..Message::default()
+        };
+        db.append_message(&conv, &result, at(2)).unwrap();
+
+        let messages = db.messages(&conv).unwrap();
+        assert_eq!(messages[0].reasoning.as_deref(), Some("looked it up"));
+        assert_eq!(messages[0].tool_calls[0].name, "web_search");
+        assert_eq!(messages[1].role, Role::Tool);
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("call_1"));
+        // The history preview stays the answer: tool results never become previews
+        assert_eq!(
+            db.last_assistant_message(&conv).unwrap().as_deref(),
+            Some("Done.")
+        );
+    }
+
+    /// Legacy DBs (no attachments/agentic columns) are upgraded on open, keeping history.
     #[test]
     fn opens_legacy_db_and_migrates_attachments_column() {
         let path = std::env::temp_dir().join(format!(
@@ -438,15 +549,23 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "old message");
         assert!(messages[0].attachments.is_empty());
-        // The upgraded DB accepts attachments
+        assert_eq!(messages[0].reasoning, None, "legacy rows load as plain");
+        assert!(messages[0].tool_calls.is_empty());
+        assert!(
+            !db.conversations("ai", None, 10).unwrap()[0].agentic,
+            "legacy conversations stay plain"
+        );
+        // The upgraded DB accepts attachments and the agentic record
         db.append_message(
             "1",
-            Role::User,
-            "new message",
-            &[AttachmentRef {
-                name: "a.md".into(),
-                path: "/tmp/a.md".into(),
-            }],
+            &msg_with(
+                Role::User,
+                "new message",
+                vec![AttachmentRef {
+                    name: "a.md".into(),
+                    path: "/tmp/a.md".into(),
+                }],
+            ),
             at(2),
         )
         .unwrap();
@@ -459,14 +578,14 @@ mod tests {
     fn delete_conversation_cascades_and_isolates() {
         let db = db();
         let a = db
-            .create_conversation("ai", "conversation A", at(1))
+            .create_conversation("ai", "conversation A", false, at(1))
             .unwrap();
         let b = db
-            .create_conversation("other", "another extension", at(1))
+            .create_conversation("other", "another extension", false, at(1))
             .unwrap();
-        db.append_message(&a, Role::User, "question", &[], at(2))
+        db.append_message(&a, &msg(Role::User, "question"), at(2))
             .unwrap();
-        db.append_message(&a, Role::Assistant, "answer", &[], at(3))
+        db.append_message(&a, &msg(Role::Assistant, "answer"), at(3))
             .unwrap();
 
         assert_eq!(db.delete_conversation(&a).unwrap(), 1);
@@ -489,9 +608,9 @@ mod tests {
     #[test]
     fn delete_all_conversations_clears_only_own_namespace() {
         let db = db();
-        db.create_conversation("ai", "one", at(1)).unwrap();
-        db.create_conversation("ai", "two", at(2)).unwrap();
-        db.create_conversation("other", "another extension", at(1))
+        db.create_conversation("ai", "one", false, at(1)).unwrap();
+        db.create_conversation("ai", "two", false, at(2)).unwrap();
+        db.create_conversation("other", "another extension", false, at(1))
             .unwrap();
 
         assert_eq!(db.delete_all_conversations("ai").unwrap(), 2);
