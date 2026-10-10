@@ -423,6 +423,16 @@ pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
     (reasoning.trim().to_string(), answer.trim().to_string())
 }
 
+/// Structured `reasoning_content` deltas win over tag-style reasoning extracted from the content:
+/// endpoints stream one or the other (MOE-0017).
+fn prefer_reasoning(field: &str, tagged: String) -> String {
+    if field.trim().is_empty() {
+        tagged
+    } else {
+        field.to_string()
+    }
+}
+
 /// Request + SSE loop: emits each incremental chunk (pending=true); on natural completion it persists and calls `on_done`.
 /// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
 pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
@@ -489,6 +499,7 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     }
 
     let mut raw = String::new();
+    let mut reasoning_field = String::new();
     let mut stopped = false;
     for line in BufReader::new(response).lines() {
         if cancel
@@ -503,15 +514,24 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
             SseLine::Delta(delta) => {
                 raw.push_str(&delta);
                 // The model's chain of thought is never the answer: it rides the payload, not the body
-                let (reasoning, answer) = split_reasoning(&raw);
-                emit(answer, reasoning, true);
+                let (tagged, answer) = split_reasoning(&raw);
+                emit(answer, prefer_reasoning(&reasoning_field, tagged), true);
             }
+            SseLine::Reasoning(delta) => {
+                reasoning_field.push_str(&delta);
+                let (tagged, answer) = split_reasoning(&raw);
+                emit(answer, prefer_reasoning(&reasoning_field, tagged), true);
+            }
+            // Tool calls arrive only once a request advertises tools; the loop consumes them
+            // (MOE-0017) — the parser itself is tested in `ai_client`.
+            SseLine::ToolCalls(_) => {}
             SseLine::Done => break,
             SseLine::Ignore => {}
         }
     }
     end_stream(&stream_key);
-    let (reasoning, answer) = split_reasoning(&raw);
+    let (tagged, answer) = split_reasoning(&raw);
+    let reasoning = prefer_reasoning(&reasoning_field, tagged);
     log_unconsumed_tag(&reasoning, &answer);
 
     if stopped {
@@ -1444,6 +1464,94 @@ This is a test case, do you know?"#;
         end_stream("test-stop-conv");
         // Empty keys are not registered and cannot be interrupted
         assert!(begin_stream("").is_none());
+    }
+
+    /// Structured reasoning wins over tag extraction (MOE-0017).
+    #[test]
+    fn structured_reasoning_wins_over_tags() {
+        assert_eq!(prefer_reasoning("thinking", "tagged".into()), "thinking");
+        assert_eq!(prefer_reasoning("  ", "tagged".into()), "tagged");
+    }
+
+    /// End to end: `delta.reasoning_content` deltas stream into the Thinking payload beside the
+    /// answer (MOE-0017) — before this, the field was ignored entirely.
+    #[test]
+    fn reasoning_content_streams_into_the_thinking_payload() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+
+        struct Recorder(Mutex<Vec<Item>>);
+        impl Emitter for Recorder {
+            fn emit(&self, event: CommandEvent) {
+                match event {
+                    CommandEvent::ItemUpdated { item, .. } => self.0.lock().unwrap().push(item),
+                    CommandEvent::WriteBack { .. } => {}
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0u8; 2048];
+            let _ = socket.read(&mut buf); // request headers
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+            for event in [
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"step one \"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"step two\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"The answer.\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ] {
+                if socket.write_all(event.as_bytes()).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let base_url = format!("http://{addr}/v1");
+        std::thread::spawn(move || {
+            // Nonexistent conversation: persistence is a no-op (dangling-row protection)
+            let conversation = "reasoning-e2e";
+            let item_of: FrameBuilder = Arc::new(move |text, reasoning, pending| {
+                answer_item(text, reasoning, Some(conversation), pending)
+            });
+            let persist: StreamFinish =
+                Arc::new(move |text| persist_assistant(Some(conversation), text));
+            run_stream(
+                StreamRequest {
+                    base_url,
+                    key: "test-key".into(),
+                    body: serde_json::json!({}),
+                    command_id: "ai.quick-ask".into(),
+                    stream_key: "reasoning-e2e".into(),
+                    item_of,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                },
+                emitter,
+            );
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("stream should finish");
+        server.join().expect("mock server thread");
+
+        let items = recorder.0.lock().unwrap();
+        assert!(items.len() >= 3, "reasoning and content both stream frames");
+        let last = items.last().expect("at least one frame");
+        assert!(!last.pending, "the last frame settles");
+        assert_eq!(last.detail.as_deref(), Some("The answer."));
+        assert_eq!(last.payload["reasoning"], "step one step two");
     }
 
     /// End to end: `stop_generation` mid-way through a slow SSE stream → finishes promptly, the last frame has pending=false and is marked stopped.

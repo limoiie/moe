@@ -96,10 +96,55 @@ impl Default for SummonConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiConfig {
     pub base_url: Option<String>,
     pub model: Option<String>,
+    /// Agentic Conversations advertise Tools; a kill-switch for new conversations (MOE-0017).
+    pub tools: bool,
+    /// The self-hosted SearXNG base URL; unset → `web_search` is not advertised at all.
+    pub searxng_url: Option<String>,
+    /// The `web_fetch` fallback when local extraction fails (MOE-0017).
+    pub fetch_fallback: FetchFallback,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            base_url: None,
+            model: None,
+            tools: true,
+            searxng_url: None,
+            fetch_fallback: FetchFallback::Jina,
+        }
+    }
+}
+
+/// The `web_fetch` fallback when the local GET/extraction fails (MOE-0017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FetchFallback {
+    /// Retry through the keyless r.jina.ai reader (default).
+    #[default]
+    Jina,
+    /// Fail honestly to the model — no third-party reader.
+    None,
+}
+
+impl FetchFallback {
+    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "jina" => Ok(Self::Jina),
+            "none" => Ok(Self::None),
+            _ => Err(ConfigError::UnknownFetchFallback(raw.to_string())),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Jina => "jina",
+            Self::None => "none",
+        }
+    }
 }
 
 impl AiConfig {
@@ -175,6 +220,9 @@ struct RawUi {
 struct RawAi {
     base_url: Option<String>,
     model: Option<String>,
+    tools: Option<bool>,
+    searxng_url: Option<String>,
+    fetch_fallback: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -198,10 +246,21 @@ impl MoeConfig {
                 summon.double_tap_ms = ms;
             }
         }
-        let ai = raw.ai.map_or_else(AiConfig::default, |raw_ai| AiConfig {
-            base_url: raw_ai.base_url,
-            model: raw_ai.model,
-        });
+        let ai = match raw.ai {
+            Some(raw_ai) => AiConfig {
+                base_url: raw_ai.base_url,
+                model: raw_ai.model,
+                tools: raw_ai.tools.unwrap_or(true),
+                searxng_url: raw_ai.searxng_url,
+                fetch_fallback: raw_ai
+                    .fetch_fallback
+                    .as_deref()
+                    .map(FetchFallback::parse)
+                    .transpose()?
+                    .unwrap_or_default(),
+            },
+            None => AiConfig::default(),
+        };
         let ui = match raw.ui {
             Some(raw_ui) => UiConfig {
                 theme: raw_ui
@@ -244,6 +303,7 @@ pub enum ConfigError {
     ComboMissingKey(String),
     DoubleTapRange(u64),
     UnknownTheme(String),
+    UnknownFetchFallback(String),
     Toml(String),
 }
 
@@ -261,6 +321,9 @@ impl fmt::Display for ConfigError {
             ),
             Self::UnknownTheme(raw) => {
                 write!(f, "unknown theme: {raw} (expected system | light | dark)")
+            }
+            Self::UnknownFetchFallback(raw) => {
+                write!(f, "unknown fetch_fallback: {raw} (expected jina | none)")
             }
             Self::Toml(msg) => write!(f, "invalid config.toml: {msg}"),
         }
@@ -427,6 +490,26 @@ mod tests {
         let cfg = MoeConfig::from_toml("[ai]\nbase_url = \"https://x/v1\"\n").unwrap();
         assert!(cfg.ai.configured());
         assert_eq!(cfg.ai.model_or_default(), "gpt-4o-mini");
+    }
+
+    #[test]
+    fn ai_tool_settings_parse_with_defaults() {
+        let cfg = MoeConfig::from_toml("").unwrap();
+        assert!(cfg.ai.tools, "tools default on for new conversations");
+        assert_eq!(cfg.ai.searxng_url, None);
+        assert_eq!(cfg.ai.fetch_fallback, FetchFallback::Jina);
+        assert_eq!(FetchFallback::Jina.as_str(), "jina");
+        assert_eq!(FetchFallback::None.as_str(), "none");
+
+        let cfg = MoeConfig::from_toml(
+            "[ai]\ntools = false\nsearxng_url = \"http://localhost:8888\"\nfetch_fallback = \"none\"\n",
+        )
+        .unwrap();
+        assert!(!cfg.ai.tools);
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://localhost:8888"));
+        assert_eq!(cfg.ai.fetch_fallback, FetchFallback::None);
+
+        assert!(MoeConfig::from_toml("[ai]\nfetch_fallback = \"bogus\"\n").is_err());
     }
 
     #[test]

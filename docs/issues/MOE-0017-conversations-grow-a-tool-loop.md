@@ -6,6 +6,7 @@
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
 - **Blocks**: MOE-0018
+- **Assignee**: agent
 
 The owner wants Moe's AI to serve daily work — researching, answering, querying, explaining —
 which needs the model to consult the web and read files mid-turn. Writing and coding stay outside
@@ -140,3 +141,14 @@ are in `docs/research/free-web-search-options.md` and
   rewrites `ai_client.rs` / `ai.rs` / `config.rs` and is sequenced after this loop so the
   openai-chat wire behavior (tool-call parsing, message-array construction, reasoning echo) stays
   byte-compatible.
+- 2026-10-10 (agent): claimed; foundation chunk landed in the working tree (commit with this
+  comment): `delta.reasoning_content` now parses (`SseLine::Reasoning`) and streams into the
+  Thinking payload in `run_stream` — previously the field was ignored entirely; `delta.tool_calls`
+  fragments parse (`SseLine::ToolCalls`) with index accumulation (`merge_tool_call_fragments`); the
+  tools-carrying request builder (`chat_body_with_tools`, no `tools` key when nothing is
+  advertised); and `[ai] tools` / `searxng_url` / `fetch_fallback` parse with defaults
+  (`moe-platform/src/config.rs`). Six new tests (client parsers, merge order, body builder, a
+  mock-server end-to-end for reasoning_content, reasoning preference);
+  `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test --workspace` green
+  (extensions 58). Remaining: round runner + tools module (searxng / fetch / read_file), message
+  parts schema + migration, UI activity stack, docs pass.
