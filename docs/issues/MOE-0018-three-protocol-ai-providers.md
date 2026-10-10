@@ -1,11 +1,13 @@
 # M7z: three protocols, many providers — the AI layer learns Anthropic and Responses
 
 - **ID**: MOE-0018
-- **State**: todo
+- **State**: done
 - **Labels**: ready-for-agent, feature
 - **Created**: 2026-10-10
 - **Updated**: 2026-10-10
-- **Blocked by**: MOE-0017
+- **Blocked by**: MOE-0017 (done)
+- **Assignee**: agent
+- **Commit**: 10e0917
 
 The owner's direction: official providers (DeepSeek, OpenAI, Anthropic, Google, xAI, Mistral, Groq,
 OpenRouter, Ollama, …) plus custom providers speaking one of three protocols — OpenAI Chat
@@ -95,3 +97,34 @@ staying exactly as the loop builds it.
   it; the `Blocks` line was added to MOE-0017's header. Design specifics (config shape, per-provider
   keys, tools gating) are proposals in ADR-0040 from the owner's three-protocol direction — amend
   via comments here if any should change before implementation starts.
+- 2026-10-10 (agent): **done** (10e0917; schema + keys in 18fa99e). `ai_client` is a module tree:
+  `mod.rs` (shared delta vocabulary + `ChatRequest` + dispatch), `openai_chat.rs` (moved as-is,
+  bodies byte-identical — all MOE-0017 tests green), `anthropic.rs` / `openai_responses.rs` (pure
+  adapters: system→`system`/`instructions`, multimodal parts, the reasoning opt-in, SSE
+  normalization, blocking-response text, with recorded-fixture tests; two subagents landed them in
+  parallel), `providers.rs` (the citation table + `resolve`/`resolve_with`). `config.rs` gained
+  `[ai] provider` + `[ai.providers.<id>]` (legacy `base_url` = implicit `default`); `keychain.rs`
+  per-provider files + the resolution order; `ai.rs`/`ai_commands.rs` resolve per invoke and gate
+  the tool loop to `openai-chat`; `moe.rs` saves the active provider's key. End-to-end
+  request-capture tests prove the acceptance wire facts (Anthropic: `/v1/messages`, `x-api-key` +
+  version, no `tools`; Responses: `/responses`, bearer, `store: false`, summaries, no `tools`).
+
+  Five implementation notes that refine ADR-0040's letter (recorded here as the decision log):
+  (1) `Protocol` lives in `moe-platform::config` (the config vocabulary owns it; the adapters
+  import it) rather than in `ai_client`, so parse errors surface at config load. (2) A provider
+  block's optional `reasoning` overrides the reasoning opt-in (Anthropic `thinking` / Responses
+  summaries); unset = the catalogued model's `reasoning` flag for official ids, off for custom
+  ones. (3) Unknown model names are **not** rejected locally: catalog lists are volatile
+  (OpenRouter, local LM Studio), so a 4xx card appends the provider's known models
+  (`ActiveProvider::model_hint`, plumbed through the stream requests) instead of blocking a model
+  the endpoint would accept. (4) `continue_agentic` refuses to continue a stored agentic record
+  under a non-openai-chat provider (a protocol switch would break the Tool Call replay) with
+  guidance to switch back or start a new chat. (5) Anthropic `max_tokens` comes from the catalogued
+  output limit clamped to 8192; the `thinking` budget is half of it clamped to 1024..=4096 and is
+  omitted when no legal budget exists.
+
+  Validation: `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test
+  --workspace` green (app 5, core 50, extensions 95, platform 64); `pnpm -C ui build` green (no UI
+  change needed). Manual acceptance against live endpoints (real provider keys, image attachments,
+  per-provider key switching) still needs the owner; the legacy path was verified by the resolve
+  and keychain tests (base_url + legacy `api-key` resolve to the implicit `default` provider).
