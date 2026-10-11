@@ -55,6 +55,7 @@ import {
   Wand2,
   Wrench,
   X,
+  Zap,
   createElement,
   type IconNode,
 } from "lucide";
@@ -96,6 +97,8 @@ const ICONS: Record<string, IconNode> = {
   "file-text": FileText,
   globe: Globe,
   "rotate-cw": RotateCw,
+  // The Thinking row's lightning (MOE-0036)
+  zap: Zap,
   // Model detail (MOE-0030 revision)
   wrench: Wrench,
   image: Image,

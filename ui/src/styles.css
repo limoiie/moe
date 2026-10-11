@@ -921,6 +921,14 @@ body.moe-pointer-inside .moe-titlebar-title {
 .moe-thinking-body :is(h1, h2, h3) {
   color: inherit;
 }
+/* Expanded non-prose content reads as an excerpt (MOE-0036): the rule hangs under the heading's
+   12px icon (icon + 4px gap puts the label text at 16px), and the content aligns with that text:
+   5px offset + 2px border + 9px padding. */
+.moe-thinking-body {
+  margin-left: 5px;
+  border-left: 2px solid var(--moe-line-strong);
+  padding-left: 9px;
+}
 @media (prefers-reduced-motion: no-preference) {
   .moe-thinking-live {
     background: linear-gradient(

@@ -67,7 +67,8 @@ interface StreamingBubble {
 /**
  * The Thinking row (MOE-0012): ChatGPT's language — borderless, muted, collapsed by default; the
  * label shimmers while the model reasons and swaps to "Thought for N seconds" once it settles; the
- * trailing chevron turns on expand. One shared builder for the chat bubbles here and the panel's
+ * trailing chevron turns on expand. The row leads with a lightning icon and its expanded content
+ * reads as an excerpt (MOE-0036). One shared builder for the chat bubbles here and the panel's
  * result cards (`reasoningEl`). See docs/research/chatgpt-thinking-block.md.
  */
 function reasoningParts(): {
@@ -85,9 +86,13 @@ function reasoningParts(): {
     size: 12,
     className: "moe-thinking-chevron ml-auto text-fg-faint",
   });
-  summary.append(label, chevron);
+  summary.append(
+    iconEl("zap", { size: 12, className: "text-fg-faint" }),
+    label,
+    chevron,
+  );
   const body = document.createElement("div");
-  body.className = "moe-thinking-body md mt-1.5 pl-4 text-sm";
+  body.className = "moe-thinking-body md mt-1.5 text-sm";
   details.append(summary, body);
   return { details, label, body };
 }
@@ -191,7 +196,8 @@ function setToolRowStatus(row: ToolRow, status: ToolCallStatus | undefined) {
 
 /**
  * One Tool Call row: the Thinking row's anatomy (borderless, muted, collapsed, chevron) with the
- * tool's icon + plain label; expanding shows the truncated result as muted markdown. One row per
+ * tool's icon + plain label; expanding shows the truncated result as a muted-markdown excerpt
+ * (the left rule under the icon, MOE-0036). One row per
  * call — a "used N tools" aggregate is rejected (observability over magic, MOE-0026).
  */
 function toolRowEl(call: ToolCall): ToolRow {
@@ -217,7 +223,7 @@ function toolRowEl(call: ToolCall): ToolRow {
     }),
   );
   const body = document.createElement("div");
-  body.className = "moe-thinking-body md mt-1.5 pl-4 text-xs text-fg-muted";
+  body.className = "moe-thinking-body md mt-1.5 text-xs text-fg-muted";
   details.append(summary, body);
   const row: ToolRow = { details, label: labelEl, status, body };
   setToolRowStatus(row, call.status);
