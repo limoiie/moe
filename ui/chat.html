@@ -55,17 +55,28 @@
             aria-label="Expand width"
           ></button>
         </div>
-        <span
-          id="chat-title"
+        <div
           data-tauri-drag-region
-          class="moe-titlebar-title absolute left-1/2 max-w-[45%] -translate-x-1/2 truncate font-medium"
+          class="absolute left-1/2 flex max-w-[45%] -translate-x-1/2 flex-col items-center"
         >
-          AI Chat
-        </span>
+          <span
+            id="chat-title"
+            data-tauri-drag-region
+            class="moe-titlebar-title max-w-full truncate font-medium"
+          >
+            AI Chat
+          </span>
+          <!-- The active pair under the title (MOE-0033): smaller and muted; hidden when unset. -->
+          <span
+            id="chat-model"
+            data-tauri-drag-region
+            class="hidden max-w-full truncate text-[11px] leading-4 text-fg-subtle"
+          ></span>
+        </div>
         <div class="moe-window-actions moe-titlebar-reveal shrink-0">
-          <button id="actions-button" class="moe-focus-ring" title="More Actions"></button>
           <button id="history-button" class="moe-focus-ring" title="Chat History"></button>
           <button id="new-chat" class="moe-focus-ring" title="New Chat"></button>
+          <button id="settings-button" class="moe-focus-ring" title="Settings"></button>
         </div>
       </header>
 
@@ -76,65 +87,40 @@
         class="hidden border-t border-danger-line bg-danger-soft px-4 py-2 text-xs text-danger"
       ></div>
 
-      <!-- Composer (ChatGPT-style): one rounded field with the draft on top and the attachment /
-           send buttons on a bottom row inside the same field. -->
-      <footer class="shrink-0 px-3 pb-3 pt-1">
-        <div class="moe-composer p-2">
-          <div id="attach-row" class="hidden">
-            <input
-              id="attach-path"
-              class="min-w-0 flex-1 bg-transparent text-fg caret-accent placeholder-fg-subtle outline-none"
-              placeholder="Paste a file path, Enter to attach (Esc cancels; ~ and paths with spaces supported)"
-              spellcheck="false"
-            />
-            <span id="attach-msg" class="shrink-0"></span>
-          </div>
-          <textarea
-            id="composer"
-            rows="1"
-            placeholder="Ask anything"
-            spellcheck="false"
-            class="max-h-40 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-relaxed text-fg caret-accent placeholder-fg-subtle outline-none"
-          ></textarea>
-          <div class="mt-1 flex items-center justify-between">
-            <button
-              id="attach"
-              class="moe-composer-action moe-focus-ring text-fg-muted hover:bg-surface-hover hover:text-fg"
-              title="Add attachment (path input)"
-            ></button>
-            <button id="send" class="moe-composer-action moe-focus-ring" title="Send (⏎)"></button>
-          </div>
-        </div>
-      </footer>
+      <!-- Composer (MOE-0030): the shared pill (attach · draft · send) mounted by composer.ts —
+           the same component the panel's Quick Ask page uses, so the two surfaces stay identical. -->
+      <footer id="composer-host" class="shrink-0 px-2 pb-2 pt-1"></footer>
 
-      <!-- Floating history card (centered at the top; open via the history button / ⌘P) -->
+      <!-- Floating history card (centered at the top; open via the history button / ⌘P). Like
+           every menu card the filter input sits at the bottom (ADR-0028 amendment). -->
       <div
         id="history-card"
         class="moe-actions-card absolute left-1/2 top-12 z-30 hidden w-[min(24rem,calc(100%-2.5rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-surface-overlay"
       >
+        <ul id="history-list" class="moe-scroll-fade max-h-80 overflow-y-auto p-1"></ul>
         <input
           id="history-search"
-          class="w-full border-b border-line bg-transparent px-3 py-2.5 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
+          class="w-full border-t border-line bg-transparent px-3 py-2.5 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Search chat history…"
           spellcheck="false"
         />
-        <ul id="history-list" class="moe-scroll-fade max-h-80 overflow-y-auto p-1"></ul>
       </div>
 
       <!-- More Actions card (the ⌘ button / ⌘K): the same card as the panel's actions card —
-           sections + filter input (ADR-0028). The Side View anchors it horizontally centered, near
-           the top (like the history card), with the input at the top edge. -->
+           sections in the canonical order, rank groups hairline-separated inside a section
+           (ADR-0037 amendment) + filter input (ADR-0028). The Side View anchors it horizontally
+           centered, near the top (like the history card), with the input at the top edge. -->
       <div
         id="actions-card"
         class="moe-actions-card absolute left-1/2 top-12 z-30 hidden w-[min(20rem,calc(100%-2.5rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-surface-overlay"
       >
+        <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
         <input
           id="action-search"
-          class="w-full border-b border-line bg-transparent px-3 py-2.5 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
+          class="w-full border-t border-line bg-transparent px-3 py-2.5 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Filter actions…"
           spellcheck="false"
         />
-        <ul id="action-list" class="max-h-72 overflow-y-auto p-1"></ul>
       </div>
 
       <div

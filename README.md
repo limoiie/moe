@@ -46,12 +46,13 @@ themselves stay listed in their own sections.
 | `↓` / `⌃N`, `↑` / `⌃P` | Navigate | Move the Focused Item |
 | `⏎` | Apply | Run the primary action on the Focused Item; **while an answer streams the primary yields to Stop Generation, so `⏎` stops it** (every surface — result cards and the Quick Ask page alike); on the Quick Ask page it sends the draft when no stream is running (ADR-0036 amendment) |
 | `⌥⏎` | Secondary | Default semantics: copy (e.g. copy the full AI answer to the clipboard) |
-| `⌘K` | Show All Actions | The current item's primary/secondary action list, on every surface (`⌃K` stays the macOS kill-line, ADR-0031) |
+| `⌘K` | Show All Actions | The page's actions in one canonical order — primary `⏎`, secondary `⌥⏎`, the object's own actions, delete / delete-all, settings, app rows (ADR-0037 amendment) — on every surface (`⌃K` stays the macOS kill-line, ADR-0031) |
 | `⌘P` | Browse | The current extension's record list (AI = chat history; a hint if the extension declares none) |
 | `⌘N` | New | Create a new record (AI = new chat; a hint if the extension declares none) |
 | `⌃X` | Delete | Delete the current record (AI = current conversation; results layer, Quick Ask page and Suggestions only, ADR-0022/0025/0036) |
 | `⌃⇧X` | DeleteAll | Delete all records (AI = all conversations; also clears all suggestions, ADR-0022/0025) |
 | `⌘J` | Materialize | Move the current conversation into the extension's Side View |
+| `⌥M` | Change Model | Open the model switcher on the chat surfaces (the panel's chat page, the Side View) — the actions card's **Change Model** row (MOE-0033) |
 | `⌘'` | Quick Ask | Global hotkey: toggle the AI conversation page in the panel — dismisses the panel when the page is showing, otherwise puts it there (blank from elsewhere; a re-show keeps the conversation; ADR-0036 amendment) |
 | `⌘⇧'` | Open Side Chat | Global hotkey: toggle the AI chat side window — hides it when showing, re-shows it as it was (ADR-0036 amendment) |
 | `⌃[` / `⌃]` | Step conversations | Quick Ask page and Side View: backward / forward through the chat history — `⌃[` the previous (older) conversation, `⌃]` the newer one (ADR-0036) |
@@ -72,23 +73,22 @@ icons:
   chip into a pill (Raycast-style) instead of popping up anywhere else.
 - **Action pill (bottom-right)**: **primary action** (the focused item's main action; becomes
   "Stop Generation" while generating) and **actions** (`⌘K`). `⌘K` pops up the **actions
-  card**: a floating overlay that never replaces the main body, its sections loaded automatically
-  per page from registered sources (ADR-0037) — **Actions** (the focused item's own actions on
-  every page shape, or the shown conversation's: Open in Side View / Copy Last Answer / Write
-  Back), **Command** (the page command's own menu: **Open Command** first on the root — the same
-  Apply as Enter, with the `⏎` Kbd — then **Add to / Remove from Favorites** (`⌘⇧F`, ADR-0029),
-  **Remove from Suggestions** on a suggestion (`⌃X`, ADR-0025), and the dimmed **Configure
-  Extension** placeholder), and **General** — the platform slots live on that page: **Browse
-  Records / Chats** (`⌘P`) and **New Record / Chat** (`⌘N`) when the extension declares them,
-  plus **Delete Record** (`⌃X`) / **Delete All Records** (`⌃⇧X`) — or **Remove Chat / Remove All
-  Chats** on the conversation page — wherever the page carries records (ADR-0014/0022).
-  Sections flatten while the search input at the card's bottom filters,
-  `↑↓` / `⌃N` `⌃P` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015, ADR-0026 amendment).
-  While a card is open it owns the keyboard: navigation and `⌫` act on the card, never on the
-  list below (ADR-0031). The Side
-  View's **More Actions** is this same card (ADR-0028) with this surface's landing spots
-  (**Chat**: Chat History / New Chat / Remove Conversation / Remove All Conversations; **App**:
-  Open Config File; **Window**: Hide Side View).
+  card**: a floating overlay that never replaces the main body, its rows loaded automatically
+  per page from registered sources (ADR-0037) and sorted into **one canonical order** enforced by
+  the card itself (ADR-0037 amendment) — the page's `⏎` action first (Apply / Open Command, or
+  Stop while a stream runs), then its `⌥⏎` action (copy), then the object's own actions (New,
+  Browse, Change Model `⌥M`, Open in Side View, …), then the destructive **Delete Record**
+  (`⌃X`) / **Delete All Records** (`⌃⇧X`) — or **Remove Chat / Remove All Chats** on the
+  conversation page — then the extension's **Configure Extension**, then the app's global rows:
+  **Open Settings** (the settings window, MOE-0029). The same semantic action therefore sits in
+  the same slot on every page of both surfaces, whichever source declared it; the sections
+  (**Actions** / **Command** / **General** on the panel, **Chat** / **App** / **Window** in the
+  Side View) keep their labels, order by their topmost row, and draw a thin separator between
+  adjacent rank groups inside a section. The search input at the card's bottom
+  filters, `↑↓` / `⌃N` `⌃P` select, `⏎` run, `Esc` or empty `⌫` dismiss (ADR-0015, ADR-0026
+  amendment). While a card is open it owns the keyboard: navigation and `⌫` act on the card,
+  never on the list below (ADR-0031). The Side View's **More Actions** is this same card
+  (ADR-0028) with this surface's landing spots.
 - **About card**: clicking the avatar chip (or `⌘⇧K`, ADR-0027) opens the app's About menu — a
   card with the same UX as the actions card (search input at the bottom): **App** holds
   **Open Config File** (`⌘,`) / **Save AI Key**, **Theme** holds **System** / **Light** / **Dark**
@@ -104,31 +104,68 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   detail fills the rest with the item's icon/title/time on top); the panel shows exactly ten rows
   plus one section header (ADR-0026) and is measured to fit them (768×510 for the default input bar).
 - **Panel**: auto-dismisses on losing focus; input and results are kept across hide/show. The
-  tray icon offers Show Panel / AI Chat / Launch at Login / Open Config File / Quit. The results
+  tray icon offers Show Panel / AI Chat / Settings… / Launch at Login / Open Config File / Quit. The results
   layer has two shapes declared by the command (ADR-0013): full-screen detail (AI answers,
   notices) fills the panel and shows an inline three-dot indicator while generating; everything
   else (like AI history search) is a list on the left with a detail preview on the right.
 - **AI Chat (Quick Ask)**: typing a question with nothing matching offers the fallback **Ask "…"**
   (`⏎` sends it); applying **Quick Ask** itself (e.g. typing `quick`) opens the **conversation page**
-  in the panel instead — the search text is never sent as a question (ADR-0036). On the page the
-  Input Bar is the composer: **`⏎` sends** (input cleared) and answers stream into the conversation,
+  in the panel instead — the search text is never sent as a question (ADR-0036). The page is a
+  normal chat layout (MOE-0030): its top bar is the Input Bar itself reading the conversation
+  title (back-arrow slot, read-only — the command pages' own row design) with the active
+  `Provider · Model` under it, smaller and muted (MOE-0033), and the bottom row
+  wears the root page's bottom-bar glass — round **add** button, one capsule-like one-row input,
+  round **actions** button (the same component the Side View mounts); **`⏎` sends** (input cleared) and answers stream into the conversation,
   the page following the answer down as it streams (a model's inline reasoning renders in a
   ChatGPT-style folding row above the answer — **Thinking** while it reasons, then **Thought for N
-  seconds** — never inside it);
+  seconds** — never inside it; so do the model's **tool calls** — web search, page fetches, file
+  reads — one folding row per call in arrival order, e.g. `Searched «…»`, shimmering while it runs;
+  Stop is the veto, and every call stays visible);
   **`⏎` while generating stops** (Back pops a confirmation first); **`⌘N`** starts a new blank chat,
   **`⌃X`** removes the current one (the chat history's own deletion), **`⌃[` / `⌃]`** step backward /
   forward through history (the previous, older conversation / the newer one), **`⌘P`** opens the
-  history list, **`⌘J`** continues in the Side View, **`⌘'`** toggles the page from anywhere — a
+  history list, **`⌘J`** continues in the Side View, **`⌥M`** opens the model switcher (the same
+  landing as the card's **Change Model** row), **`⌘'`** toggles the page from anywhere — a
   global hotkey, no need to summon the panel first (dismisses the panel when the page is showing;
   a re-show keeps the conversation) — and **`⌘⇧'`** toggles the side chat the same way (hidden by
   Esc comes back as it was — ADR-0036 amendment), `⌥⏎` copies the last
-  answer and `⌘K` groups the conversation's actions (Open in Side View / Copy Last Answer / Write
-  Back) with the page's slots (Browse Chats / New Chat / Remove Chat / Remove All Chats). **Text
+  answer and `⌘K` groups the conversation's actions (Change Model / Open in Side View / Copy Last
+  Answer / Write Back) with the page's slots (Browse Chats / New Chat / Remove Chat / Remove All
+  Chats). **Text
   selected before summoning automatically becomes
   context for the conversation's first message** (not repeated when the question already contains
   it, truncated when overlong; history stores only the question itself). **Files selected in Finder
   before summoning automatically become attachments** (deduplicated with `@path` by path; the first
   use asks for Automation permission, ADR-0021).
+- **AI Models (catalog)**: type **Set AI Model** to browse every model the embedded daily-refreshed
+  catalog knows — context window and max output, modalities (text / image), tool calls, reasoning,
+  pricing, docs — plus your custom providers' models. The list is searchable (model name, provider,
+  or a capability like `vision tools`); Enter switches the active `[ai] provider` / `model` in
+  config.toml in place (comments untouched) and reports the provider's key state — where the key
+  file is, or exactly how to save one. Existing conversations use the new model on their next
+  message; new chats (⌘N) start with it. The picker only selects — the settings window manages
+  keys and visibility (below).
+- **Settings window (MOE-0029)**: **Open Settings** (tray, palette, the Side View's gear, or any
+  page's `⌘K` card) opens an ordinary window — sidebar sections, one pane each. The **AI** pane
+  lists the providers this Moe uses (config blocks, keyed catalog providers, the active pair):
+  each group shows its protocol and key state with an inline key row (saved to the provider's own
+  0600 file), and every model row carries its catalog facts, a checkbox for the picker visibility
+  (`hidden_models` in the provider's block) and a click-to-activate pair switch. A search connects
+  more catalog providers by saving their key, and a **Web Search** row at the pane's end carries
+  the agent's SearXNG instance (`searxng_url`): save a URL to offer conversations the `web_search`
+  tool, **Test** it for a live JSON round-trip (a 403 names the `formats` fix), or save an empty
+  value to turn search off. The **General** pane carries the theme rows and the
+  config-file entry; the file stays the escape hatch for everything else.
+- **Model switcher (MOE-0029/0030)**: both chat surfaces' actions cards carry a **Change Model**
+  row (`⌥M`, MOE-0033; plus **Stop Generation** while a stream runs). It lists the bare model
+  names of the providers that can run — each listed provider has a key — grouped by provider (its
+  brand mark) with the active one checked, and every row carries the model's abilities as rounded
+  tiles (tool calls / vision / reasoning / attachments, strongest first, capped at four); the
+  focused row's facts — context, max output, the `in → out` modality tiles, capabilities, pricing,
+  dates, docs — show in a companion card that hugs its content beside the list (↑↓ or hover
+  moves it; a narrow window shows the list alone). Enter or click switches the pair in config.toml
+  in place, without leaving the conversation; the active `Provider · Model` then shows under both
+  chat surfaces' titles, smaller and muted (MOE-0033).
 - **AI Commands (text transforms, ADR-0024)**: 12 one-shot transform commands — Improve Writing /
   Fix Spelling & Grammar / Make Shorter / Make Longer / Simplify Language / Summarize /
   Translate to English / Translate to Chinese / Tone: Professional / Tone: Friendly /
@@ -150,12 +187,15 @@ Every shortcut is rendered as Kbd blocks, one key per block.
 - **Side View (AI chat)**: a standard-looking window on the right (460 pt wide by default, full
   height; resizable, and its size and position are remembered across launches — drag it, or use the
   titlebar's width steps). The titlebar carries the **traffic-light trio** on the left (**Hide**,
-  **shrink width**, **expand width**), the conversation title **centered**, and the icon actions in
-  a glass capsule at the right end: **More Actions (⌘ icon / `⌘K`)**, **History**, and
-  **New Chat**. **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same
-  registered sections, filter input, `↑↓`/`⌃N` `⌃P`/`⏎` selection and `Esc` dismissal — with the
-  **Chat** section (Chat History / New Chat / Remove Conversation / Remove All Conversations),
-  **App** (Open Config File) and **Window** (Hide Side View) —
+  **shrink width**, **expand width**), the conversation title **centered** with the active
+  `Provider · Model` under it, smaller and muted (MOE-0033), and the icon actions in
+  a glass capsule at the right end: **History**, **New Chat**, and the **settings gear** — the
+  actions card (with its **Change Model** row, `⌥M`) lives in the composer row's round button at the
+  bottom (MOE-0030 revision). **More Actions** is the panel's actions card in this window (ADR-0028/0037): the same
+  registered sources and canonical order (ADR-0037 amendment), filter input, `↑↓`/`⌃N` `⌃P`/`⏎`
+  selection and `Esc` dismissal — the **Chat** section (Stop Generation while a stream runs, then
+  Change Model / Chat History / New Chat, then Remove Conversation / Remove All Conversations),
+  **App** (Open Config File) and **Window** (Hide Side View), each ordered and hairline-grouped —
   floating centered nearly at the top, its filter input on top. Clicking
   History (or `⌘P`) pops up a **floating history card** centered at the top: its top input
   filters titles, the list below highlights with `↑` `↓` (or `⌃N` `⌃P`),
@@ -170,8 +210,9 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   backward / forward through the current conversation list (older / newer; Quick Ask page and Side
   View); opening/switching a conversation scrolls to the bottom
   of the last line; `⏎` sends / `⇧⏎` newline / `Esc` dismisses overlays first, stops while
-  generating, otherwise hides; 📎 adds attachments (the composer is one rounded field with the
-  attachment and send buttons on a row inside it). Past conversations are also reachable from the
+  generating, otherwise hides; 📎 adds attachments (the composer is the shared row — round add
+  button, one-row capsule input, round actions button, in the root page's bottom-bar glass — the
+  same component the panel's Quick Ask page mounts, MOE-0030). Past conversations are also reachable from the
   command "Search Chat History" (AI)
   (narrow list on the left + detail on the right, showing the last answer).
 - **Config**: run "Open Config File" or edit
@@ -186,14 +227,50 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   theme = "system"     # system | light | dark (system follows the OS; also switchable from the About card, ADR-0035)
 
   [ai]
-  base_url = "https://api.deepseek.com/v1"  # any OpenAI-compatible endpoint
-  model = "deepseek-chat"
+  provider = "deepseek"                     # an official provider id, or a [ai.providers.*] key
+  model = "deepseek-flash"                  # required with a provider (a wrong name lists the models)
+  tools = true                              # conversations may search the web / fetch pages / read files
+  searxng_url = "http://localhost:8080"     # optional: a SearXNG instance with JSON output enabled
+  fetch_fallback = "jina"                   # jina | none — keyless reader retry for blocked/empty pages
+
+  # Custom endpoints add a provider block and speak one of three protocols (ADR-0040).
+  # [ai.providers.my-gateway]
+  # name = "My Gateway"
+  # protocol = "anthropic"                  # openai-chat | openai-responses | anthropic
+  # api_url = "https://gateway.example.com/anthropic"
+  # models = ["claude-sonnet-5-5"]
+  # hidden_models = ["claude-opus-4"]       # models the settings window hides from the pickers
+  # reasoning = true                        # opt in to thinking blocks / reasoning summaries
+
+  # The legacy single-endpoint form keeps working (an implicit `default` provider):
+  # base_url = "https://api.deepseek.com/v1"
+  # model = "deepseek-chat"
   ```
 
-  The API key lives in `~/Library/Application Support/moe/api-key` (0600, never echoed;
-  an unsigned app triggers repeated keychain prompts, see ADR-0019). Type `key <your-key>` in
-  the panel, or set the `MOE_AI_API_KEY` environment variable; keys stored by older versions
-  in the keychain migrate to the file automatically.
+  **Providers** (ADR-0040): official ids — `deepseek`, `openai`, `anthropic`, `google`, `xai`,
+  `mistral`, `groq`, `openrouter`, `perplexity`, `togetherai`, `cohere`, `alibaba`, `meta`,
+  `moonshotai`, `zai`, `zhipuai`, `lmstudio`, `ollama` — need no block: the base URL, the key
+  variables and the model list come from the embedded model catalog (refreshed daily), and each
+  model's context window, output limit, tool/image/reasoning support and pricing are catalogued.
+  Custom endpoints state `protocol` + `api_url` + `models`. Tool-using (agentic) conversations run
+  on `openai-chat` and `anthropic` protocol providers (MOE-0035 — MiniMax's Claude-Code surface
+  included); `openai-responses` opens plain conversations.
+
+  The API key lives per provider in `~/Library/Application Support/moe/keys/<provider-id>` (0600,
+  never echoed; the implicit `default` provider keeps the legacy `api-key` file; an unsigned app
+  triggers repeated keychain prompts, see ADR-0019). Type `key <your-key>` in the panel — it saves
+  the active provider's key — or set `MOE_AI_API_KEY` (any provider, last); the official providers'
+  own variables (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, …) are checked too; keys stored by older
+  versions in the keychain migrate to the legacy file automatically.
+
+  **Web search (optional)**: with `searxng_url` set, conversations may call `web_search`; page
+  fetching and file reading need no service. SearXNG's stock `settings.yml` serves HTML only —
+  add `json` to `search.formats` and restart:
+
+  ```bash
+  docker run -d --name searxng -p 8080:8080 -v searxng:/etc/searxng searxng/searxng
+  # then add "json" under search.formats in the volume's settings.yml and restart the container
+  ```
 
 ## Structure
 
@@ -270,7 +347,8 @@ regenerates the bundle set (`.icns` / `.ico` / sizes).
   ```
 
 - **AI errors**: the answer card shows what the endpoint returned; check the `[ai]`
-  base_url/model, that the key is saved, and that the endpoint supports the chosen model
+  provider/model (or the legacy base_url), that the active provider's key is saved, and that the
+  endpoint supports the chosen model
   (images need vision).
 
 Milestone acceptance criteria live in `docs/adr/0009-milestone-scope.md`.

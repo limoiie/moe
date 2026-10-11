@@ -4,27 +4,30 @@ import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 import { createActionPlan } from "./actions";
-import { appendMention, validatePath } from "./attachment";
 import { createCard } from "./card";
+import { createComposer } from "./composer";
 import { iconEl } from "./icons";
-import { GENERAL_KEY_LABELS, generalActionOf } from "./keymap";
+import { invokeWithTimeout } from "./ipc";
+import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay } from "./keymap";
 import { conversationTitle, createConversationView } from "./messages";
+import { createModelSwitcher, type ActivePair } from "./models";
 import { initPointerIntent } from "./pointer";
 import { streamCoalescer } from "./stream";
 import { initTheme } from "./theme";
-import type { CommandEventPayload, Conversation, Message, SideOpenPayload } from "./types";
+import type { CommandEventPayload, Conversation, Message, SideOpenPayload, ToolCall } from "./types";
 
 // ---- Appearance (ADR-0035): resolve the theme before the first render ----
 initTheme();
 initPointerIntent();
 
 const titleEl = document.querySelector<HTMLSpanElement>("#chat-title")!;
+const modelEl = document.querySelector<HTMLSpanElement>("#chat-model")!;
 const winHideEl = document.querySelector<HTMLButtonElement>("#win-hide")!;
 const winCompactEl = document.querySelector<HTMLButtonElement>("#win-compact")!;
 const winExpandEl = document.querySelector<HTMLButtonElement>("#win-expand")!;
-const actionsButtonEl = document.querySelector<HTMLButtonElement>("#actions-button")!;
 const historyButtonEl = document.querySelector<HTMLButtonElement>("#history-button")!;
 const newChatEl = document.querySelector<HTMLButtonElement>("#new-chat")!;
+const settingsButtonEl = document.querySelector<HTMLButtonElement>("#settings-button")!;
 const historyCardEl = document.querySelector<HTMLDivElement>("#history-card")!;
 const historySearchEl = document.querySelector<HTMLInputElement>("#history-search")!;
 const historyListEl = document.querySelector<HTMLUListElement>("#history-list")!;
@@ -34,12 +37,8 @@ const actionListEl = document.querySelector<HTMLUListElement>("#action-list")!;
 const messagesEl = document.querySelector<HTMLElement>("#messages")!;
 const emptyEl = document.querySelector<HTMLDivElement>("#empty")!;
 const errorEl = document.querySelector<HTMLDivElement>("#error")!;
-const composerEl = document.querySelector<HTMLTextAreaElement>("#composer")!;
-const sendEl = document.querySelector<HTMLButtonElement>("#send")!;
-const attachEl = document.querySelector<HTMLButtonElement>("#attach")!;
-const attachRowEl = document.querySelector<HTMLDivElement>("#attach-row")!;
-const attachPathEl = document.querySelector<HTMLInputElement>("#attach-path")!;
-const attachMsgEl = document.querySelector<HTMLSpanElement>("#attach-msg")!;
+const composerHostEl = document.querySelector<HTMLElement>("#composer-host")!;
+const rootEl = document.querySelector<HTMLDivElement>("#root")!;
 const toastEl = document.querySelector<HTMLDivElement>("#toast")!;
 const toastIconEl = document.querySelector<HTMLSpanElement>("#toast-icon")!;
 const toastTextEl = document.querySelector<HTMLSpanElement>("#toast-text")!;
@@ -53,15 +52,47 @@ let sending = false;
 let generating = false;
 /** The most recently loaded conversation list (shared by the history card and ⌃[/⌃] stepping). */
 let conversations: Conversation[] = [];
+/** The active provider · model under the title (MOE-0033); null until fetched / when unset. */
+let chatPair: ActivePair | null = null;
 
-// ---- Fixed icons (the action capsule: More Actions / History / New Chat) ----
+/**
+ * The composer row (MOE-0030 revision): the root page's bottom-bar glass — round add button,
+ * one capsule-like one-row input, round actions button (the card carries "Change Model").
+ */
+const composer = createComposer({
+  onSend: () => void send(),
+  onStop: () => void stopGeneration(),
+  onActions: () => toggleActionsCard(),
+});
+composerHostEl.append(composer.root);
 
-actionsButtonEl.replaceChildren(iconEl("command", { size: 15 }));
+const modelSwitcher = createModelSwitcher({
+  host: rootEl,
+  // Same anchor as this window's actions and history cards: centered near the top. The detail
+  // card appears beside the list only when the width allows it (the default 460pt window hides
+  // it; the expanded window shows the pair).
+  anchorClass: "left-1/2 top-12 -translate-x-1/2",
+  cardWidth: "w-[min(20rem,calc(100%-2.5rem))]",
+  onApplied: (pair) => {
+    chatPair = pair; // the titlebar's subtitle follows the switch (MOE-0033)
+    renderPair();
+    toast(`${pair.providerName} · ${pair.modelName} is now the active model`);
+  },
+  onError: (message) => toast(`Failed to switch model: ${message}`, "alert"),
+  onClose: () => composer.focus(),
+});
+
+/** The generating flag (the actions card's Stop row follows it). */
+function setGenerating(on: boolean) {
+  generating = on;
+}
+
+// ---- Fixed icons (the titlebar capsule: History / New Chat / Settings) ----
+
 historyButtonEl.replaceChildren(iconEl("history", { size: 15 }));
 newChatEl.replaceChildren(iconEl("plus", { size: 15 }));
-attachEl.replaceChildren(iconEl("paperclip", { size: 16 }));
-// The three generic-action tooltips also come from the shared keymap (ADR-0014), so they can't drift from the keymap table
-actionsButtonEl.title = `More Actions (${GENERAL_KEY_LABELS.actions})`;
+settingsButtonEl.replaceChildren(iconEl("settings-2", { size: 15 }));
+// The generic-action tooltips come from the shared keymap (ADR-0014), so they can't drift
 historyButtonEl.title = `Chat History (${GENERAL_KEY_LABELS.browse})`;
 newChatEl.title = `New Chat (${GENERAL_KEY_LABELS.new})`;
 
@@ -423,7 +454,7 @@ historySearchEl.addEventListener("keydown", (e) => {
     if (e.key === "Escape" || (historySearchEl.value === "" && !e.repeat)) {
       e.preventDefault();
       closeHistoryCard();
-      composerEl.focus();
+      composer.focus();
     }
   }
 });
@@ -443,15 +474,36 @@ function openConfig() {
 
 /**
  * The Side View's card (ADR-0037): the same registered-sources pipeline as the panel's, with this
- * surface's landing spots. Chat holds the page's general slots (Browse ⌘P opens the history card,
- * New ⌘N a blank conversation, Delete ⌃X / DeleteAll ⌃⇧X the current / all conversations), App and
- * Window the app rows.
+ * surface's landing spots, and the same canonical order (ADR-0037 amendment): Stop leads while a
+ * stream runs (⏎), the conversation's own actions follow, then Remove / Remove All, then the app's
+ * rows. Chat holds the page's general slots (Chat History ⌘P, New Chat ⌘N, Remove ⌃X / Remove All
+ * ⌃⇧X), App and Window the app rows; the sections order by their topmost row.
  */
 const sideActionPlan = createActionPlan([
   {
     title: "Chat",
     when: () => true,
     rows: () => [
+      // Switching the model is an action of the conversation (MOE-0030 revision): the round
+      // actions button's card carries it, not a header control; ⌥M lands the same action (MOE-0033).
+      {
+        title: "Change Model",
+        icon: "sparkles",
+        keys: keyDisplay.get("changeModel") ?? "⌥M",
+        run: () => modelSwitcher.open(),
+      },
+      ...(generating
+        ? [
+            {
+              title: "Stop Generation",
+              icon: "stop",
+              keys: "⏎",
+              // While a stream runs, ⏎ stops it: the card's primary slot is Stop (ADR-0036).
+              rank: "primary" as const,
+              run: () => void stopGeneration(),
+            },
+          ]
+        : []),
       {
         title: "Chat History",
         icon: "history",
@@ -463,6 +515,7 @@ const sideActionPlan = createActionPlan([
         title: "Remove Conversation",
         icon: "trash-2",
         keys: GENERAL_KEY_LABELS.delete,
+        rank: "destructive" as const,
         disabled: !conversationId,
         run: () => void deleteCurrent(false),
       },
@@ -470,6 +523,7 @@ const sideActionPlan = createActionPlan([
         title: "Remove All Conversations",
         icon: "trash-2",
         keys: GENERAL_KEY_LABELS.deleteAll,
+        rank: "destructive" as const,
         run: () => void deleteCurrent(true),
       },
     ],
@@ -478,7 +532,13 @@ const sideActionPlan = createActionPlan([
     title: "App",
     when: () => true,
     rows: () => [
-      { title: "Open Config File", icon: "settings-2", keys: GENERAL_KEY_LABELS.openConfig, run: openConfig },
+      {
+        title: "Open Config File",
+        icon: "settings-2",
+        keys: GENERAL_KEY_LABELS.openConfig,
+        rank: "global",
+        run: openConfig,
+      },
     ],
   },
   {
@@ -489,6 +549,7 @@ const sideActionPlan = createActionPlan([
         title: "Hide Side View",
         icon: "close",
         keys: "Esc",
+        rank: "global",
         run: () => void getCurrentWindow().hide(),
       },
     ],
@@ -499,7 +560,7 @@ const actionsCard = createCard({
   cardEl: actionsCardEl,
   listEl: actionListEl,
   inputEl: actionSearchEl,
-  onClose: () => composerEl.focus(),
+  onClose: () => composer.focus(),
 });
 
 function openActionsCard() {
@@ -518,15 +579,18 @@ function toggleActionsCard() {
   else openActionsCard();
 }
 
-actionsButtonEl.addEventListener("click", () => toggleActionsCard());
-
-// Close on outside click (the buttons' own clicks are handled; exclude the two overlays and the two trigger buttons here)
+// Close on outside click (the buttons' own clicks are handled; exclude the two overlays and the
+// trigger buttons — the actions trigger is the composer row's round button now)
 document.addEventListener("mousedown", (e) => {
   const target = e.target as Node;
   if (historyOpen && !historyCardEl.contains(target) && !historyButtonEl.contains(target)) {
     closeHistoryCard();
   }
-  if (actionsCard.isOpen() && !actionsCardEl.contains(target) && !actionsButtonEl.contains(target)) {
+  if (
+    actionsCard.isOpen() &&
+    !actionsCardEl.contains(target) &&
+    !composer.actionsButton.contains(target)
+  ) {
     closeActionsCard();
   }
 });
@@ -564,15 +628,15 @@ async function selectConversation(id: string) {
 
 function newChat() {
   conversationId = null;
-  generating = false;
-  updateSendUi();
+  setGenerating(false);
   setError(null);
   void loadHistory();
   void loadConversations();
-  composerEl.focus();
+  composer.focus();
 }
 
 newChatEl.addEventListener("click", newChat);
+settingsButtonEl.addEventListener("click", () => void invoke("open_settings_window"));
 
 // ---- Message area ----
 
@@ -593,6 +657,22 @@ function setTitle(text: string) {
   titleEl.textContent = text;
 }
 
+/** The titlebar's subtitle (MOE-0033): the active provider · model under the conversation title. */
+function renderPair() {
+  modelEl.textContent = chatPair ? `${chatPair.providerName} · ${chatPair.modelName}` : "";
+  modelEl.classList.toggle("hidden", !chatPair);
+}
+
+/** Fetched on entry and after a switch; a missing pair leaves the subtitle hidden. */
+async function refreshChatPair() {
+  try {
+    chatPair = await invoke<ActivePair | null>("ai_active_pair");
+  } catch {
+    chatPair = null;
+  }
+  renderPair();
+}
+
 /** Append a finished local message (user bubble / answer from history). */
 function appendMessage(message: Message): HTMLElement {
   return log.append(message);
@@ -601,62 +681,89 @@ function appendMessage(message: Message): HTMLElement {
 async function loadHistory() {
   log.clear();
   // After switching conversations / a new chat, the previous generation state no longer belongs to this view
-  generating = false;
-  updateSendUi();
+  setGenerating(false);
   if (!conversationId) {
     setTitle("New Chat");
     emptyEl.textContent =
       "This is a new chat: type below and press ⏎ to send; ⌘P opens chat history.";
     emptyEl.classList.remove("hidden");
-    composerEl.focus();
+    composer.focus();
     return;
   }
   emptyEl.classList.add("hidden");
+  const id = conversationId;
   try {
-    const messages = await invoke<Message[]>("side_messages", { conversationId });
+    const messages = await invoke<Message[]>("side_messages", { conversationId: id });
+    if (conversationId !== id) return; // switched away while loading
     setTitle(conversationTitle(messages) ?? "AI Chat");
     for (const message of messages) {
       appendMessage(message);
+    }
+    // An unanswered question may belong to a live stream this window did not start (the panel's
+    // page, or a re-shown window): the registry says whether to wait, so the indicator and the
+    // stop affordance appear before the first frame does (MOE-0030 revision 9). A dead stream is
+    // never assumed — Enter's stop-count check heals a flag that outlives its stream.
+    const lastIsQuestion = messages[messages.length - 1]?.role === "user";
+    if (lastIsQuestion) {
+      const live = await invoke<boolean>("conversation_streaming", { conversationId: id }).catch(
+        () => false,
+      );
+      if (conversationId !== id) return;
+      if (live) {
+        setGenerating(true);
+        log.updateStreaming("", true);
+      }
     }
   } catch (err) {
     setError(`Failed to load history: ${String(err)}`);
   }
   log.scrollToEnd();
-  composerEl.focus();
+  composer.focus();
 }
 
 async function send() {
-  const message = composerEl.value.trim();
+  const message = composer.input.value.trim();
   if (!message || sending) return;
   sending = true;
-  setError(null);
-  composerEl.value = "";
-  autoGrowComposer();
-  emptyEl.classList.add("hidden");
-  const row = appendMessage({ role: "user", content: message });
-  if (titleEl.textContent === "New Chat") {
-    setTitle(conversationTitle([{ role: "user", content: message }]) ?? "AI Chat");
-  }
-  log.beginAnswer();
   try {
-    conversationId = await invoke<string>("side_send", {
-      conversationId: conversationId ?? "",
-      message,
-    });
+    if (generating) {
+      // Enter-as-stop (ADR-0036) — unless nothing is actually generating: the backend returns 0 for
+      // a stale flag (a request that failed after persisting the question, an app restart), and a
+      // Stop that stops nothing must not swallow the question (MOE-0030 revision 9).
+      const stopped = await stopGeneration();
+      if (stopped > 0) return;
+      log.discardAnswer(); // the waiting bubble was never a real answer (a phantom stream)
+    }
+    setError(null);
+    composer.input.value = "";
+    emptyEl.classList.add("hidden");
+    const row = appendMessage({ role: "user", content: message });
+    if (titleEl.textContent === "New Chat") {
+      setTitle(conversationTitle([{ role: "user", content: message }]) ?? "AI Chat");
+    }
+    log.beginAnswer();
+    // The generating state goes up before the invoke resolves (the worker starts answering as soon
+    // as it spawns): the indicator and the stop affordance must never lag behind the send.
+    setGenerating(true);
     log.updateStreaming("", true);
     log.scrollToEnd();
-    generating = true;
-    updateSendUi();
-    // The new conversation appears in the history card immediately (title = first message)
-    void loadConversations();
-  } catch (err) {
-    // Rollback on failure: this message was not persisted; restore the input so the user doesn't retype it.
-    row.remove();
-    composerEl.value = message;
-    autoGrowComposer();
-    setError(String(err));
-    generating = false;
-    updateSendUi();
+    try {
+      conversationId = await invokeWithTimeout<string>(
+        "side_send",
+        { conversationId: conversationId ?? "", message },
+        "The send",
+      );
+      // The new conversation appears in the history card immediately (title = first message)
+      void loadConversations();
+    } catch (err) {
+      // Rollback on failure: this message was not persisted; restore the input so the user doesn't retype it.
+      row.remove();
+      log.discardAnswer();
+      composer.input.value = message;
+      setError(String(err));
+      toast(String(err), "alert");
+      setGenerating(false);
+    }
   } finally {
     sending = false;
   }
@@ -671,11 +778,13 @@ async function send() {
 function refreshWindow() {
   closeHistoryCard();
   closeActionsCard();
+  modelSwitcher.close();
+  composer.closeAttach();
   setError(null);
   setPointerInside(false); // a re-shown window starts with the chrome hidden, whatever was hovered before
-  autoGrowComposer();
   void loadHistory();
   void loadConversations();
+  void refreshChatPair(); // the pair may have changed while hidden (a switch from the panel)
 }
 
 // Entered with a conversation from the command panel ⌘M / tray (empty payload.conversationId = new chat).
@@ -696,15 +805,14 @@ void listen("side-show", () => refreshWindow());
 // blocks ride the payload (MOE-0008) and render as the bubble's Thinking block.
 const frames = streamCoalescer<
   string,
-  { text: string; pending: boolean; reasoning: string }
+  { text: string; pending: boolean; reasoning: string; toolCalls?: ToolCall[] }
 >((batch) => {
   const frame = batch.get(conversationId ?? "");
   if (!frame) return;
-  log.updateStreaming(frame.text, frame.pending, frame.reasoning);
+  log.updateStreaming(frame.text, frame.pending, frame.reasoning, frame.toolCalls);
   log.scrollToEnd();
   if (generating !== frame.pending) {
-    generating = frame.pending;
-    updateSendUi();
+    setGenerating(frame.pending);
   }
   // The final frame (pending=false) marks the end of generation (IIE4AD-365)
   if (!frame.pending) void loadConversations();
@@ -713,142 +821,57 @@ const frames = streamCoalescer<
 void listen<CommandEventPayload>("command-event", (event) => {
   const update = event.payload?.itemUpdated;
   if (!update) return;
-  const meta = update.item.payload as { conversationId?: string; reasoning?: string } | null;
+  const meta = update.item.payload as {
+    conversationId?: string;
+    reasoning?: string;
+    toolCalls?: ToolCall[];
+  } | null;
   if (!meta || meta.conversationId !== conversationId) return;
   frames.push(meta.conversationId, {
     text: update.item.detail ?? "",
     pending: update.item.pending === true,
     reasoning: meta.reasoning ?? "",
+    toolCalls: meta.toolCalls,
   });
 });
 
-// ---- Attachments (📎 = same path as the panel's ⌘⇧A, ADR-0010) ----
-
-const ATTACH_ROW_BASE =
-  "mb-1 flex items-center gap-2 rounded-lg bg-accent-soft px-2.5 py-1.5 text-xs";
-
-function openAttachRow() {
-  attachRowEl.className = `${ATTACH_ROW_BASE} text-accent`;
-  attachPathEl.value = "";
-  attachMsgEl.textContent = "";
-  attachMsgEl.className = "shrink-0";
-  attachPathEl.focus();
-}
-
-function closeAttachRow() {
-  attachRowEl.className = "hidden";
-  attachMsgEl.textContent = "";
-}
-
-async function submitAttachPath() {
-  const raw = attachPathEl.value.trim();
-  if (!raw) {
-    closeAttachRow();
-    return;
-  }
-  try {
-    const info = await validatePath(raw);
-    composerEl.value = appendMention(composerEl.value, info.path);
-    autoGrowComposer();
-    closeAttachRow();
-    composerEl.focus();
-  } catch (err) {
-    attachMsgEl.className = "shrink-0 text-danger";
-    attachMsgEl.textContent = String(err);
-  }
-}
-
-attachPathEl.addEventListener("keydown", (e) => {
+// ---- Keyboard: Enter sends (or stops while generating, ADR-0036 amendment) ----
+// The capsule's attach mode owns its keys inside the composer component; the draft input only
+// carries the send/stop binding here.
+composer.input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.isComposing) {
     e.preventDefault();
-    e.stopPropagation();
-    void submitAttachPath();
-  } else if (
-    e.key === "Escape" ||
-    (e.key === "Backspace" && attachPathEl.value === "" && !e.repeat)
-  ) {
-    e.preventDefault();
-    e.stopPropagation();
-    closeAttachRow();
-    composerEl.focus();
-  }
-});
-
-attachEl.addEventListener("click", () => {
-  if (attachRowEl.className === "hidden") openAttachRow();
-  else {
-    closeAttachRow();
-    composerEl.focus();
-  }
-});
-
-// ---- Keyboard: Enter sends / Shift+Enter newlines / Esc stops or closes / ⌘N new chat ----
-
-/** The composer field grows with the draft (ChatGPT-style), capped at the CSS max-height (160px). */
-function autoGrowComposer() {
-  composerEl.style.height = "auto";
-  const content = composerEl.scrollHeight;
-  // A hidden window measures 0: keep the CSS height instead of collapsing the field, and let the
-  // re-show path (refreshWindow) grow it once the window is on screen.
-  if (content <= 0) {
-    composerEl.style.removeProperty("height");
-    composerEl.style.removeProperty("overflow-y");
-    return;
-  }
-  composerEl.style.height = `${Math.min(content, 160)}px`;
-  composerEl.style.overflowY = content > 160 ? "auto" : "hidden";
-}
-
-/**
- * The send button: a circular icon button (↥ send / ■ stop) that greys out while the draft is
- * empty, the ChatGPT composer's bottom-right affordance (the shortcut stays in its tooltip).
- */
-const COMPOSER_ACTION = "moe-composer-action moe-focus-ring";
-function updateSendUi() {
-  const empty = composerEl.value.trim().length === 0;
-  if (generating) {
-    sendEl.className = `${COMPOSER_ACTION} bg-warning-fill text-on-warning enabled:hover:bg-warning-fill-hover`;
-    sendEl.title = "Stop generating (Esc)";
-    sendEl.disabled = false;
-    sendEl.replaceChildren(iconEl("stop", { size: 14 }));
-    return;
-  }
-  sendEl.className = `${COMPOSER_ACTION} ${
-    empty
-      ? "bg-surface-hover text-fg-subtle"
-      : "bg-accent-fill text-on-accent enabled:hover:bg-accent-fill-hover"
-  }`;
-  sendEl.title = empty ? "Type a message" : "Send (⏎)";
-  sendEl.disabled = empty;
-  sendEl.replaceChildren(iconEl("arrow-up", { size: 16 }));
-}
-
-composerEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-    e.preventDefault();
+    // `send` owns the Enter dialect: live stream → stop, dead stream → settle and send.
     void send();
   }
 });
 
-composerEl.addEventListener("input", () => {
-  autoGrowComposer();
-  updateSendUi();
-});
-
-/** Stop generation (platform-wide: stops all in-progress generation, IIE4AD-365). */
-async function stopGeneration() {
+/** Stop generation (platform-wide: stops all in-progress generation, IIE4AD-365). Returns how
+ *  many streams were actually aborted — 0 means nothing was generating (a stale flag), which lets
+ *  Enter send instead of eating the question (MOE-0030 revision 9). */
+async function stopGeneration(): Promise<number> {
+  let stopped = 0;
   try {
-    await invoke<number>("stop_generation");
+    stopped = await invoke<number>("stop_generation");
   } catch (err) {
     setError(String(err));
   }
-  generating = false;
+  setGenerating(false);
   log.settleStreaming();
-  updateSendUi();
+  return stopped;
 }
 
 window.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
+  // Change Model (⌥M, MOE-0033): the same landing as the card's "Change Model" row; the physical
+  // key is `KeyM` because ⌥M types "µ" on macOS layouts.
+  if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyM") {
+    e.preventDefault();
+    closeHistoryCard();
+    closeActionsCard();
+    modelSwitcher.toggle();
+    return;
+  }
   // Generic actions (ADR-0014): Browse ⌘P / Actions ⌘K / New ⌘N.
   // Semantics shared with the command panel (./keymap); the landing spots are decided by this view: history card / actions menu / new chat.
   const general = generalActionOf(e);
@@ -903,10 +926,10 @@ window.addEventListener("keydown", (e) => {
   }
   // The front-most list owns navigation and Backspace (ADR-0031): while a card is open, its own input
   // routing decides; this guard covers focus sitting elsewhere on the surface.
-  const cardOpen = historyOpen || actionsCard.isOpen();
+  const cardOpen = historyOpen || actionsCard.isOpen() || modelSwitcher.isOpen();
   // Backspace with empty input = Back (layered back, ADR-0017):
   // leave it alone when non-empty (normal delete); when empty, back out layer by layer, but the root layer does not hide the side view (quit:false).
-  if (!cardOpen && e.key === "Backspace" && composerEl.value === "" && !e.isComposing && !e.repeat) {
+  if (!cardOpen && e.key === "Backspace" && composer.input.value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
   }
@@ -918,6 +941,10 @@ window.addEventListener("keydown", (e) => {
  */
 async function back(options: { quit?: boolean } = {}) {
   const { quit = true } = options;
+  if (modelSwitcher.isOpen()) {
+    modelSwitcher.close();
+    return;
+  }
   if (historyOpen) {
     closeHistoryCard();
     return;
@@ -934,16 +961,11 @@ async function back(options: { quit?: boolean } = {}) {
   await getCurrentWindow().hide();
 }
 
-window.addEventListener("focus", () => composerEl.focus());
-
-sendEl.addEventListener("click", () => {
-  if (generating) void stopGeneration();
-  else void send();
-});
+window.addEventListener("focus", () => composer.focus());
 
 // ---- Startup ----
 
-autoGrowComposer();
-updateSendUi();
+void loadKeyDisplay();
 void loadConversations();
 void loadHistory();
+void refreshChatPair();

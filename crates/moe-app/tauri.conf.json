@@ -56,6 +56,27 @@
         "acceptFirstMouse": true,
         "visibleOnAllWorkspaces": true,
         "visible": false
+      },
+      {
+        "label": "settings",
+        "title": "Moe Settings",
+        "url": "settings.html",
+        "width": 880,
+        "height": 640,
+        "minWidth": 640,
+        "minHeight": 480,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "shadow": true,
+        "acceptFirstMouse": true,
+        "visible": false
       }
     ],
     "security": {

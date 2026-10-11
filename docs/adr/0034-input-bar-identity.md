@@ -72,3 +72,12 @@ render → flat mark → tray raster → `cargo tauri icon` bundle set — so no
 future art refinement is one re-render plus two script runs. Cost: the master render is an opaque
 square (light backdrop, no alpha), so the `.app` icon is a light square until an alpha-cut export
 replaces it.
+
+## Amendment: the chat page has no Input Bar (MOE-0030)
+
+On the Quick Ask page the Input Bar row is gone altogether (ADR-0036 amendment): the page's
+header carries the identity and the back slot — its back button is the same path the leading
+arrow opened — and the composer pill at the bottom owns the draft. The slot's three states
+(mark / back / paperclip) therefore describe the command layer and the result pages only; the
+chat page's paperclip lives in the composer's attach button. Leaving the page restores the bar
+with whichever identity the layer it returns to declares.

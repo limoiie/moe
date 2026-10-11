@@ -13,7 +13,11 @@ import {
   Copy,
   CornerDownLeft,
   Expand,
+  ExternalLink,
+  FileText,
+  Globe,
   History,
+  Image,
   Info,
   KeyRound,
   Languages,
@@ -33,6 +37,7 @@ import {
   PenLine,
   Plus,
   Quote,
+  RotateCw,
   Search,
   Send,
   Settings2,
@@ -46,8 +51,11 @@ import {
   Terminal,
   Trash2,
   TriangleAlert,
+  Type,
   Wand2,
+  Wrench,
   X,
+  Zap,
   createElement,
   type IconNode,
 } from "lucide";
@@ -85,6 +93,18 @@ const ICONS: Record<string, IconNode> = {
   monitor: Monitor,
   sun: Sun,
   moon: Moon,
+  // Tool Call rows (MOE-0026)
+  "file-text": FileText,
+  globe: Globe,
+  "rotate-cw": RotateCw,
+  // The Thinking row's lightning (MOE-0036)
+  zap: Zap,
+  // Model detail (MOE-0030 revision)
+  wrench: Wrench,
+  image: Image,
+  "external-link": ExternalLink,
+  // The text modality tile reads the "T" glyph (MOE-0030 revision 8)
+  type: Type,
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
   "arrow-left": ArrowLeft,

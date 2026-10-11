@@ -8,8 +8,9 @@ export default defineConfig({
   build: {
     target: "es2022",
     rollupOptions: {
-      // Two entry points: the panel (index.html) and the Side View (chat.html)
-      input: { main: "index.html", chat: "chat.html" },
+      // Three entry points: the panel (index.html), the Side View (chat.html) and the settings
+      // window (settings.html, MOE-0029)
+      input: { main: "index.html", chat: "chat.html", settings: "settings.html" },
     },
   },
 });

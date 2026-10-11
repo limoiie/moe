@@ -10,3 +10,6 @@ moe-platform.workspace = true
 serde.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 serde_json.workspace = true
+htmd = "0.5.5"
+readability = { version = "0.3.0", default-features = false }
+url = "2"

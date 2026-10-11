@@ -2,9 +2,12 @@
 //   Browse ⌘P (record list) · Actions ⌘K (action list, every surface) · New ⌘N (new record)
 //   Delete ⌃X (delete current record) · DeleteAll ⌃⇧X (delete all records)
 //   Favorite ⌘⇧F (add/remove the current command from Favorites) · OpenConfig ⌘, (open the config file)
+//   ChangeModel ⌥M (the chat surfaces' model switcher)
 // Each surface (command panel / Side View / future sub-apps) only does two things:
 //   1. Recognize keyboard events into semantics with `generalActionOf(event)`;
 //   2. Decide where that semantic lands on this surface (panel: the entry/delete hooks an Extension declares; Side View: local views).
+
+import { invoke } from "@tauri-apps/api/core";
 
 export type GeneralAction =
   | "browse"
@@ -31,6 +34,20 @@ export const GENERAL_KEY_LABELS: Record<GeneralAction, string> = {
   favorite: "⌘⇧F",
   openConfig: "⌘,",
 };
+
+/**
+ * The platform keymap table as a semantic → display map (e.g. `apply` → "⏎"): each window fills it
+ * from the `keymap` IPC at boot, so every Kbd comes from the Rust table — the view layer never
+ * invents keys (ADR-0027/0030). Shared by the panel and the Side View.
+ */
+export const keyDisplay = new Map<string, string>();
+
+export async function loadKeyDisplay(): Promise<void> {
+  const entries = await invoke<[string, string][]>("keymap");
+  for (const [display, semantic] of entries) {
+    if (!keyDisplay.has(semantic)) keyDisplay.set(semantic, display);
+  }
+}
 
 /**
  * Recognize a generic action; returns null for any other keys.

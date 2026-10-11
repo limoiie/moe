@@ -11,6 +11,7 @@ pub mod keychain;
 pub mod mac;
 #[cfg(target_os = "macos")]
 pub mod mac_text;
+pub mod model_catalog;
 pub mod open;
 pub mod screen;
 pub mod store;

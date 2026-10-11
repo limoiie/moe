@@ -19,13 +19,18 @@ use moe_core::contract::{
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_core::keymap::{SystemKey, display_of};
-use moe_platform::config::MoeConfig;
+use moe_platform::config::{MoeConfig, Protocol};
 use moe_platform::db::Db;
-use moe_platform::keychain;
 
-use crate::ai_client::{SseLine, chat_body_from_messages, chat_completions_url, sse_delta};
+use crate::agent::{AgentTurnRequest, MessageSink, ToolCallView, run_agentic_turn};
+use crate::ai_client::providers::{self, ActiveProvider};
+use crate::ai_client::{
+    ChatRequest, SseLine, ToolCall, ToolCallFragment, authenticate, endpoint_url,
+    merge_tool_call_fragments, request_body, sse_line,
+};
 use crate::attachment;
 use crate::recency;
+use crate::tools;
 
 pub struct AiShell;
 
@@ -41,6 +46,7 @@ const TITLE_CHARS: usize = 40;
 fn answer_item(
     detail: &str,
     reasoning: &str,
+    tools: &[ToolCallView],
     conversation_id: Option<&str>,
     pending: bool,
 ) -> Item {
@@ -70,25 +76,33 @@ fn answer_item(
                 keybinding: Some("⌘J".into()),
             },
         ],
-        payload: conversation_payload(conversation_id, reasoning),
+        payload: conversation_payload(conversation_id, reasoning, Some(tools)),
         detail: Some(detail.into()),
         pending,
     }
 }
 
-/// Item payload: the conversation id (passed back as-is on Apply/⌘J — the UI does not interpret it)
-/// plus the model's thinking, which the UI renders as the bubble's collapsible Thinking block
-/// (stripped from the body, MOE-0008).
-fn conversation_payload(conversation_id: Option<&str>, reasoning: &str) -> serde_json::Value {
-    serde_json::json!({
+/// Item payload: the conversation id (passed back as-is on Apply/⌘J — the UI does not interpret it),
+/// the model's thinking, and the turn's tool-call activity stack (MOE-0026; absent on surfaces
+/// without tools).
+fn conversation_payload(
+    conversation_id: Option<&str>,
+    reasoning: &str,
+    tools: Option<&[ToolCallView]>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
         "conversationId": conversation_id,
         "reasoning": reasoning,
-    })
+    });
+    if let Some(tools) = tools.filter(|tools| !tools.is_empty()) {
+        payload["toolCalls"] = serde_json::to_value(tools).unwrap_or_default();
+    }
+    payload
 }
 
 /// History/continuation list item: Apply opens that conversation in the side view; `preview` is a summary of the last answer (IIE4AD-370).
 fn history_item(conversation: Conversation, now_unix: u64, preview: Option<String>) -> Item {
-    let payload = conversation_payload(Some(&conversation.id), "");
+    let payload = conversation_payload(Some(&conversation.id), "", None);
     Item {
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
@@ -175,20 +189,27 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-/// Persists the answer; failures are silent (panel interaction unaffected).
-fn persist_assistant(conversation_id: Option<&str>, text: &str) {
+/// Persists one record message (assistant rounds and tool results alike); failures are silent
+/// (panel interaction unaffected).
+fn persist_message(conversation_id: Option<&str>, message: &Message) {
     let Some(conversation_id) = conversation_id else {
         return;
     };
     if let Ok(db) = Db::open_default() {
-        let _ = db.append_message(
-            conversation_id,
-            Role::Assistant,
-            text,
-            &[],
-            SystemTime::now(),
-        );
+        let _ = db.append_message(conversation_id, message, SystemTime::now());
     }
+}
+
+/// Persists the plain answer; failures are silent (panel interaction unaffected).
+fn persist_assistant(conversation_id: Option<&str>, text: &str) {
+    persist_message(
+        conversation_id,
+        &Message {
+            role: Role::Assistant,
+            content: text.to_string(),
+            ..Message::default()
+        },
+    );
 }
 
 /// In-progress generation: registry key → cancellation flag (IIE4AD-365).
@@ -199,7 +220,7 @@ fn active_streams() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
 }
 
 /// Registers one generation (an empty key is not registered and cannot be interrupted; returns None).
-fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
+pub(crate) fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
     if key.is_empty() {
         return None;
     }
@@ -212,7 +233,7 @@ fn begin_stream(key: &str) -> Option<Arc<AtomicBool>> {
 }
 
 /// Cleanup: removes from the registry (called when the worker finishes or is aborted).
-fn end_stream(key: &str) {
+pub(crate) fn end_stream(key: &str) {
     if key.is_empty() {
         return;
     }
@@ -231,6 +252,20 @@ pub(crate) fn stop_all_streams() -> usize {
     streams.len()
 }
 
+/// Whether a generation is live for this key (a conversation id for chat streams): the UI asks
+/// instead of trusting "the last message is a question" — a request that failed after persisting
+/// the question, or an app restart, must not keep the chat page in a phantom generating state
+/// (MOE-0030 revision 9).
+pub fn is_streaming(key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    active_streams()
+        .lock()
+        .expect("streams poisoned")
+        .contains_key(key)
+}
+
 /// Frame builder: answer + reasoning + pending → Item (chat streams and AI command streams each have
 /// their own card shape; the answer is the body, the reasoning rides the payload for the UI).
 pub(crate) type FrameBuilder = Arc<dyn Fn(&str, &str, bool) -> Item + Send + Sync>;
@@ -239,6 +274,7 @@ pub(crate) type StreamFinish = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Full specification of one streaming request (shared by chat streams and AI command streams, ADR-0024).
 pub(crate) struct StreamRequest {
+    pub protocol: Protocol,
     pub base_url: String,
     pub key: String,
     pub body: serde_json::Value,
@@ -247,6 +283,8 @@ pub(crate) struct StreamRequest {
     pub item_of: FrameBuilder,
     pub persist: StreamFinish,
     pub on_done: StreamFinish,
+    /// The provider's model list for 4xx cards (a wrong model name is fixable in place).
+    pub model_hint: Option<String>,
 }
 
 /// No-op finish hook (streams with no persistence and no completion callback).
@@ -423,29 +461,67 @@ pub(crate) fn split_reasoning(raw: &str) -> (String, String) {
     (reasoning.trim().to_string(), answer.trim().to_string())
 }
 
-/// Request + SSE loop: emits each incremental chunk (pending=true); on natural completion it persists and calls `on_done`.
-/// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
-pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
-    let StreamRequest {
+/// Structured `reasoning_content` deltas win over tag-style reasoning extracted from the content:
+/// endpoints stream one or the other (MOE-0026).
+fn prefer_reasoning(field: &str, tagged: String) -> String {
+    if field.trim().is_empty() {
+        tagged
+    } else {
+        field.to_string()
+    }
+}
+
+/// One HTTP round (MOE-0026's loop reuses this for every round of a turn).
+/// The caller owns cancellation registration: `begin_stream`/`end_stream` around one round
+/// (plain chat) or around the whole turn (the agentic runner).
+pub(crate) struct RoundRequest {
+    pub protocol: Protocol,
+    pub base_url: String,
+    pub key: String,
+    pub body: serde_json::Value,
+    pub command_id: String,
+    pub item_of: FrameBuilder,
+    /// The turn's cancellation flag (`None` = the empty key was never registered).
+    pub cancel: Option<Arc<AtomicBool>>,
+    /// The provider's model list for 4xx cards (`None` = nothing known to list).
+    pub model_hint: Option<String>,
+}
+
+/// How one streamed round ended; the caller persists and decides whether another round follows.
+pub(crate) enum RoundEnd {
+    /// The stream settled naturally (or was stopped mid-stream; tool calls are dropped when
+    /// stopped — unexecuted calls must never enter the record).
+    Settled {
+        answer: String,
+        reasoning: String,
+        /// The reasoning block's signature (Anthropic `signature_delta`, MOE-0035): replayed
+        /// verbatim beside the reasoning, never rendered.
+        reasoning_signature: Option<String>,
+        tool_calls: Vec<ToolCall>,
+        stopped: bool,
+    },
+    /// The round could not run: the card the UI shows.
+    Failed(String),
+}
+
+/// Run one request and stream it (pending frames only); never persists. Returns the round's
+/// outcome for the caller to settle (or to continue an agentic turn).
+pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> RoundEnd {
+    let RoundRequest {
+        protocol,
         base_url,
         key,
         body,
         command_id,
-        stream_key,
         item_of,
-        persist,
-        on_done,
+        cancel,
+        model_hint,
     } = request;
-    let cancel = begin_stream(&stream_key);
     let emit = |text: String, reasoning: String, pending: bool| {
         emitter.emit(CommandEvent::ItemUpdated {
             command_id: command_id.clone(),
             item: item_of(&text, &reasoning, pending),
         });
-    };
-    let fail = |text: String| {
-        persist(&text);
-        emit(text, String::new(), false);
     };
 
     let client = match reqwest::blocking::Client::builder()
@@ -455,25 +531,21 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
     {
         Ok(client) => client,
         Err(err) => {
-            fail(format!(
+            return RoundEnd::Failed(format!(
                 "## Request failed\n\nFailed to initialize HTTP client: {err}"
             ));
-            end_stream(&stream_key);
-            return;
         }
     };
-    let response = client
-        .post(chat_completions_url(&base_url))
-        .bearer_auth(&key)
-        .json(&body)
-        .send();
-    let response = match response {
+    let response = match authenticate(
+        protocol,
+        client.post(endpoint_url(protocol, &base_url)),
+        &key,
+    )
+    .json(&body)
+    .send()
+    {
         Ok(response) => response,
-        Err(err) => {
-            fail(format!("## Request failed\n\n```\n{err}\n```"));
-            end_stream(&stream_key);
-            return;
-        }
+        Err(err) => return RoundEnd::Failed(format!("## Request failed\n\n```\n{err}\n```")),
     };
     if !response.status().is_success() {
         let status = response.status();
@@ -483,12 +555,22 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
             .chars()
             .take(500)
             .collect();
-        fail(format!("## Endpoint returned {status}\n\n```\n{body}\n```"));
-        end_stream(&stream_key);
-        return;
+        let mut card = format!("## Endpoint returned {status}\n\n```\n{body}\n```");
+        // A 4xx while a model was in play is usually a wrong model name: name what the provider
+        // lists, so it is fixable in place (ADR-0040).
+        if status.is_client_error()
+            && let Some(hint) = model_hint.as_deref()
+        {
+            card.push_str("\n\n");
+            card.push_str(hint);
+        }
+        return RoundEnd::Failed(card);
     }
 
     let mut raw = String::new();
+    let mut reasoning_field = String::new();
+    let mut reasoning_signature: Option<String> = None;
+    let mut fragments: Vec<ToolCallFragment> = Vec::new();
     let mut stopped = false;
     for line in BufReader::new(response).lines() {
         if cancel
@@ -499,52 +581,126 @@ pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
             break;
         }
         let Ok(line) = line else { break };
-        match sse_delta(&line) {
+        match sse_line(protocol, &line) {
             SseLine::Delta(delta) => {
                 raw.push_str(&delta);
                 // The model's chain of thought is never the answer: it rides the payload, not the body
-                let (reasoning, answer) = split_reasoning(&raw);
-                emit(answer, reasoning, true);
+                let (tagged, answer) = split_reasoning(&raw);
+                emit(answer, prefer_reasoning(&reasoning_field, tagged), true);
             }
+            SseLine::Reasoning(delta) => {
+                reasoning_field.push_str(&delta);
+                let (tagged, answer) = split_reasoning(&raw);
+                emit(answer, prefer_reasoning(&reasoning_field, tagged), true);
+            }
+            SseLine::ReasoningSignature(signature) => reasoning_signature = Some(signature),
+            SseLine::ToolCalls(batch) => fragments.extend(batch),
             SseLine::Done => break,
             SseLine::Ignore => {}
         }
     }
-    end_stream(&stream_key);
-    let (reasoning, answer) = split_reasoning(&raw);
+    let (tagged, answer) = split_reasoning(&raw);
+    let reasoning = prefer_reasoning(&reasoning_field, tagged);
     log_unconsumed_tag(&reasoning, &answer);
-
-    if stopped {
-        let text = if answer.trim().is_empty() {
-            "(generation stopped)".to_string()
-        } else {
-            format!("{answer}\n\n_(generation stopped)_")
-        };
-        persist(&text);
-        emit(text, reasoning, false);
-    } else if answer.trim().is_empty() {
-        fail("(the endpoint returned no content)".into());
+    let tool_calls = if stopped {
+        Vec::new()
     } else {
-        persist(&answer);
-        emit(answer.clone(), reasoning, false);
-        on_done(&answer);
+        merge_tool_call_fragments(&fragments)
+    };
+    RoundEnd::Settled {
+        answer,
+        reasoning,
+        reasoning_signature,
+        tool_calls,
+        stopped,
+    }
+}
+
+/// Request + SSE loop: emits each incremental chunk (pending=true); on natural completion it persists and calls `on_done`.
+/// When stopped (IIE4AD-365) it keeps the generated part, persists it, marks it stopped, and does **not** trigger `on_done`.
+pub(crate) fn run_stream(request: StreamRequest, emitter: Arc<dyn Emitter>) {
+    let StreamRequest {
+        protocol,
+        base_url,
+        key,
+        body,
+        command_id,
+        stream_key,
+        item_of,
+        persist,
+        on_done,
+        model_hint,
+    } = request;
+    let cancel = begin_stream(&stream_key);
+    let emit = {
+        let emitter = emitter.clone();
+        let item_of = item_of.clone();
+        let command_id = command_id.clone();
+        move |text: String, reasoning: String, pending: bool| {
+            emitter.emit(CommandEvent::ItemUpdated {
+                command_id: command_id.clone(),
+                item: item_of(&text, &reasoning, pending),
+            });
+        }
+    };
+
+    let outcome = stream_once(
+        RoundRequest {
+            protocol,
+            base_url,
+            key,
+            body,
+            command_id,
+            item_of,
+            cancel,
+            model_hint,
+        },
+        emitter,
+    );
+    end_stream(&stream_key);
+
+    match outcome {
+        RoundEnd::Failed(card) => {
+            persist(&card);
+            emit(card, String::new(), false);
+        }
+        RoundEnd::Settled {
+            answer,
+            reasoning,
+            stopped,
+            ..
+        } => {
+            if stopped {
+                let text = if answer.trim().is_empty() {
+                    "(generation stopped)".to_string()
+                } else {
+                    format!("{answer}\n\n_(generation stopped)_")
+                };
+                persist(&text);
+                emit(text, reasoning, false);
+            } else if answer.trim().is_empty() {
+                let card = "(the endpoint returned no content)".to_string();
+                persist(&card);
+                emit(card, String::new(), false);
+            } else {
+                persist(&answer);
+                emit(answer.clone(), reasoning, false);
+                on_done(&answer);
+            }
+        }
     }
 }
 
 /// Guidance card for a not-yet-configured endpoint (shared by AI Q&A and AI Commands, ADR-0024).
 pub(crate) const SETUP_MD: &str = "## No AI endpoint configured yet\n\n\
-1. Run the command \"Open Config File\" and fill in:\n\n\
+1. Run the command \"Open Config File\" and pick a provider:\n\n\
 ```toml\n\
 [ai]\n\
-base_url = \"https://api.deepseek.com/v1\"\n\
-model = \"deepseek-chat\"\n\
+provider = \"deepseek\"   # or openai, anthropic, google, xai, mistral, groq, openrouter, ollama, …\n\
+model = \"deepseek-flash\"\n\
 ```\n\n\
-2. Store an API key: type `key <your-key>` and press Enter (stored only in a local key file, never echoed; you can also set the `MOE_AI_API_KEY` environment variable).\n\n\
-Works with any OpenAI-compatible endpoint (DeepSeek / OpenRouter / local llama.cpp, etc.).";
-
-/// Guidance card for a missing API key (shared as above).
-pub(crate) const KEY_MISSING_MD: &str = "## Endpoint configured, but the API key is missing\n\n\
-Type `key <your-key>` and press Enter to store it in a local key file (0600, never echoed); you can also set the `MOE_AI_API_KEY` environment variable.";
+2. Store the API key: type `key <your-key>` and press Enter (its own local key file per provider, never echoed; you can also set the `MOE_AI_API_KEY` environment variable).\n\n\
+Custom endpoints (OpenAI Chat / OpenAI Responses / Anthropic protocols) and the legacy `[ai] base_url` are documented in the README.";
 
 /// Length limit (in characters) for selected text used as context.
 const SELECTION_LIMIT: usize = 4000;
@@ -571,13 +727,143 @@ fn question_with_selection(question: &str, selection: Option<&str>) -> String {
     )
 }
 
-/// Request body for a panel/side continuation: the stored history ends with the new question
-/// (attachments expanded, ADR-0010).
-fn chat_body_of(model: &str, messages: Vec<Message>) -> serde_json::Value {
-    chat_body_from_messages(
-        model,
-        messages.iter().map(attachment::expand_message).collect(),
-    )
+/// The shared request for a chat turn: the stored history ends with the new question
+/// (attachments expanded, ADR-0010); the provider supplies its model, reasoning opt-in and
+/// `max_tokens` (ADR-0040).
+fn chat_request(provider: &ActiveProvider, messages: Vec<Message>, stream: bool) -> ChatRequest {
+    ChatRequest {
+        model: provider.model.clone(),
+        messages: messages.iter().map(attachment::expand_message).collect(),
+        stream,
+        reasoning: provider.reasoning,
+        max_tokens: provider.max_tokens,
+        tools: Vec::new(),
+        anthropic_thinking: providers::anthropic_thinking(provider),
+    }
+}
+
+/// One chat turn's transport: plain Conversations stream as today (one round, no tools); Agentic
+/// Conversations run the tool loop (MOE-0026). Both receive the record ending in the new question
+/// and emit `ai.quick-ask` / `ai.side` events; the conversation id is the stream key (Stop scope).
+/// The tool loop is gated to the tool-capable protocols (`openai-chat` and `anthropic` —
+/// ADR-0040, MOE-0035); the callers decide `agentic` accordingly.
+fn spawn_chat_turn(
+    config: &MoeConfig,
+    provider: ActiveProvider,
+    conversation: String,
+    messages: Vec<Message>,
+    agentic: bool,
+    command_id: &'static str,
+    emitter: Arc<dyn Emitter>,
+) {
+    let model_hint = provider.model_hint();
+    let anthropic_thinking = providers::anthropic_thinking(&provider);
+    if agentic {
+        let tool_ctx = tools::ToolContext::new(
+            config.ai.searxng_url.clone(),
+            config.ai.fetch_fallback,
+            None, // the runner installs its own cancellation flag
+        );
+        let tool_specs = tools::specs(&tool_ctx);
+        let views: Arc<Mutex<Vec<ToolCallView>>> = Arc::new(Mutex::new(Vec::new()));
+        let item_of: FrameBuilder = {
+            let conversation = conversation.clone();
+            let views = views.clone();
+            Arc::new(move |text, reasoning, pending| {
+                let tools = views.lock().expect("tool views poisoned").clone();
+                answer_item(text, reasoning, &tools, Some(&conversation), pending)
+            })
+        };
+        let persist: MessageSink = {
+            let conversation = conversation.clone();
+            Arc::new(move |message| persist_message(Some(&conversation), message))
+        };
+        // Start/finish log lines (MOE-0030 revision 9): a turn that never logs "started" never
+        // reached the request, one that starts but never finishes was cut by the endpoint — the
+        // app log alone tells the two apart.
+        let log_id = conversation.clone();
+        let log_model = provider.model.clone();
+        std::thread::spawn(move || {
+            eprintln!("moe: agentic chat turn started (conversation {log_id}, model {log_model})");
+            run_agentic_turn(
+                AgentTurnRequest {
+                    base_url: provider.api_url,
+                    key: provider.key,
+                    model: provider.model,
+                    protocol: provider.protocol,
+                    reasoning: provider.reasoning,
+                    max_tokens: provider.max_tokens,
+                    anthropic_thinking,
+                    record: messages,
+                    tool_specs,
+                    tools: tool_ctx,
+                    command_id: command_id.to_string(),
+                    stream_key: conversation,
+                    item_of,
+                    views,
+                    persist,
+                    model_hint,
+                    on_done: Arc::new(noop_sink),
+                },
+                emitter,
+            );
+            eprintln!("moe: agentic chat turn finished (conversation {log_id})");
+        });
+    } else {
+        let body = request_body(provider.protocol, &chat_request(&provider, messages, true));
+        let stream_key = conversation.clone();
+        let item_of: FrameBuilder = {
+            let conversation = conversation.clone();
+            Arc::new(move |text, reasoning, pending| {
+                answer_item(text, reasoning, &[], Some(&conversation), pending)
+            })
+        };
+        let persist: StreamFinish = {
+            let conversation = conversation.clone();
+            Arc::new(move |text| persist_assistant(Some(&conversation), text))
+        };
+        let log_id = stream_key.clone();
+        let log_model = provider.model.clone();
+        std::thread::spawn(move || {
+            eprintln!("moe: chat turn started (conversation {log_id}, model {log_model})");
+            run_stream(
+                StreamRequest {
+                    protocol: provider.protocol,
+                    base_url: provider.api_url,
+                    key: provider.key,
+                    body,
+                    command_id: command_id.to_string(),
+                    stream_key,
+                    item_of,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                    model_hint,
+                },
+                emitter,
+            );
+            eprintln!("moe: chat turn finished (conversation {log_id})");
+        });
+    }
+}
+
+/// ADR-0040 (widened by MOE-0035): the tool loop is gated to `openai-chat` and `anthropic`. A
+/// stored agentic Conversation can only be continued on a protocol that replays its Tool Calls —
+/// the OpenAI-shaped wire intermediate covers both dialects.
+fn continue_agentic(stored: Option<bool>, provider: &ActiveProvider) -> Result<bool, MoeError> {
+    if stored == Some(true)
+        && !matches!(
+            provider.protocol,
+            Protocol::OpenAiChat | Protocol::Anthropic
+        )
+    {
+        return Err(MoeError::Internal(format!(
+            "this conversation replays Tool results and needs an openai-chat or anthropic \
+             provider: switch [ai] provider back, or start a new chat (the active provider \
+             uses {})",
+            provider.protocol.as_str()
+        )));
+    }
+    Ok(stored.unwrap_or(false))
 }
 
 impl AiShell {
@@ -661,21 +947,33 @@ impl AiShell {
         let (display, attachments) = Self::panel_message(message, selection)?;
 
         let config = MoeConfig::load();
-        if !config.ai.configured() {
-            return Err(MoeError::Internal(
-                "AI endpoint not configured yet: run Open Config File (⌘,) and fill in [ai] base_url and model".into(),
-            ));
-        }
-        let Some(key) = keychain::ai_api_key() else {
-            return Err(MoeError::Internal(
-                "API key missing: type `key <your-key>` in the panel and press Enter".into(),
-            ));
-        };
+        let provider = providers::resolve(&config).map_err(MoeError::Internal)?;
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
-        let conversation_id = if starting {
-            db.create_conversation("ai", &title_for(&display, &attachments), SystemTime::now())
+        let stored_agentic = if starting {
+            None
+        } else {
+            db.conversation_agentic(conversation_id)
                 .map_err(MoeError::Internal)?
+        };
+        let replayable = continue_agentic(stored_agentic, &provider)?;
+        let agentic = if starting {
+            config.ai.tools
+                && matches!(
+                    provider.protocol,
+                    Protocol::OpenAiChat | Protocol::Anthropic
+                )
+        } else {
+            replayable
+        };
+        let conversation_id = if starting {
+            db.create_conversation(
+                "ai",
+                &title_for(&display, &attachments),
+                agentic,
+                SystemTime::now(),
+            )
+            .map_err(MoeError::Internal)?
         } else {
             conversation_id.trim().to_string()
         };
@@ -685,9 +983,12 @@ impl AiShell {
         let mut messages = db.messages(&conversation_id).map_err(MoeError::Internal)?;
         db.append_message(
             &conversation_id,
-            Role::User,
-            &display,
-            &attachments,
+            &Message {
+                role: Role::User,
+                content: display.clone(),
+                attachments: attachments.clone(),
+                ..Message::default()
+            },
             SystemTime::now(),
         )
         .map_err(MoeError::Internal)?;
@@ -696,38 +997,18 @@ impl AiShell {
             role: Role::User,
             content,
             attachments,
+            ..Message::default()
         });
 
-        let base_url = config.ai.base_url.clone().unwrap_or_default();
-        let model = config.ai.model_or_default().to_string();
-        let body = chat_body_of(&model, messages);
-        let conversation = conversation_id.clone();
-        let stream_key = conversation.clone();
-        let item_of: FrameBuilder = {
-            let conversation = conversation.clone();
-            Arc::new(move |text, reasoning, pending| {
-                answer_item(text, reasoning, Some(&conversation), pending)
-            })
-        };
-        let persist: StreamFinish = {
-            let conversation = conversation.clone();
-            Arc::new(move |text| persist_assistant(Some(&conversation), text))
-        };
-        std::thread::spawn(move || {
-            run_stream(
-                StreamRequest {
-                    base_url,
-                    key,
-                    body,
-                    command_id: "ai.quick-ask".into(),
-                    stream_key,
-                    item_of,
-                    persist,
-                    on_done: Arc::new(noop_sink),
-                },
-                emitter,
-            );
-        });
+        spawn_chat_turn(
+            &config,
+            provider,
+            conversation_id.clone(),
+            messages,
+            agentic,
+            "ai.quick-ask",
+            emitter,
+        );
         Ok(conversation_id)
     }
 
@@ -858,6 +1139,21 @@ impl Extension for AiShell {
                 extension_title: None,
                 kind: None,
             },
+            CommandMeta {
+                id: "ai.choose-model".into(),
+                extension_id: "ai".into(),
+                title: "Set AI Model".into(),
+                subtitle: Some(
+                    "Browse the model catalog — context window, tools, vision, pricing — and switch the active provider/model"
+                        .into(),
+                ),
+                icon: Some("sparkles".into()),
+                input: InputKind::Query,
+                live: true,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
+            },
         ]
     }
 
@@ -875,6 +1171,8 @@ impl Extension for AiShell {
             "ai.side-chat" => Ok(ActionResult::OpenSideView {
                 payload: serde_json::json!({}),
             }),
+            // The model picker (MOE-0028): live list from the catalog; Apply writes config.toml.
+            "ai.choose-model" => Ok(crate::ai_models::choose_model(query.unwrap_or_default())),
             _ => Err(MoeError::NotFound),
         }
     }
@@ -951,10 +1249,14 @@ impl Extension for AiShell {
 
     fn run_item_action(
         &self,
-        _command_id: &str,
+        command_id: &str,
         item: &Item,
         action: &Action,
     ) -> Result<ActionResult, MoeError> {
+        // The model picker's rows carry their own actions (MOE-0028).
+        if command_id == "ai.choose-model" {
+            return crate::ai_models::run_action(item, action);
+        }
         match action.id.as_str() {
             // Write back the full text (the title is fixed, the body is in detail)
             "write-back" => Ok(ActionResult::WriteBack {
@@ -987,25 +1289,38 @@ impl Extension for AiShell {
             return Err(MoeError::Internal("Message is empty".into()));
         }
         let config = MoeConfig::load();
-        if !config.ai.configured() {
-            return Err(MoeError::Internal(
-                "AI endpoint not configured yet (run \"Open Config File\" in the palette)".into(),
-            ));
-        }
-        let Some(key) = keychain::ai_api_key() else {
-            return Err(MoeError::Internal(
-                "API key missing (type key <your-key> in the palette and press Enter)".into(),
-            ));
-        };
+        let provider = providers::resolve(&config).map_err(MoeError::Internal)?;
 
         let db = Db::open_default().map_err(MoeError::Internal)?;
 
         // Attachment mentions use the same syntax as quick ask (ADR-0010); attachments-only input gets a generic request sentence (IIE4AD-391).
         let (display, attachments) = Self::split_message(message);
 
-        let conversation_id = if conversation_id.trim().is_empty() {
-            db.create_conversation("ai", &title_for(&display, &attachments), SystemTime::now())
+        let starting = conversation_id.trim().is_empty();
+        let stored_agentic = if starting {
+            None
+        } else {
+            db.conversation_agentic(conversation_id)
                 .map_err(MoeError::Internal)?
+        };
+        let replayable = continue_agentic(stored_agentic, &provider)?;
+        let agentic = if starting {
+            config.ai.tools
+                && matches!(
+                    provider.protocol,
+                    Protocol::OpenAiChat | Protocol::Anthropic
+                )
+        } else {
+            replayable
+        };
+        let conversation_id = if starting {
+            db.create_conversation(
+                "ai",
+                &title_for(&display, &attachments),
+                agentic,
+                SystemTime::now(),
+            )
+            .map_err(MoeError::Internal)?
         } else {
             conversation_id.trim().to_string()
         };
@@ -1014,9 +1329,12 @@ impl Extension for AiShell {
         let mut messages = db.messages(&conversation_id).map_err(MoeError::Internal)?;
         db.append_message(
             &conversation_id,
-            Role::User,
-            &display,
-            &attachments,
+            &Message {
+                role: Role::User,
+                content: display.clone(),
+                attachments: attachments.clone(),
+                ..Message::default()
+            },
             SystemTime::now(),
         )
         .map_err(MoeError::Internal)?;
@@ -1024,38 +1342,18 @@ impl Extension for AiShell {
             role: Role::User,
             content: display,
             attachments,
+            ..Message::default()
         });
 
-        let base_url = config.ai.base_url.clone().unwrap_or_default();
-        let model = config.ai.model_or_default().to_string();
-        let body = chat_body_of(&model, messages);
-        let conversation = conversation_id.clone();
-        let stream_key = conversation.clone();
-        let item_of: FrameBuilder = {
-            let conversation = conversation.clone();
-            Arc::new(move |text, reasoning, pending| {
-                answer_item(text, reasoning, Some(&conversation), pending)
-            })
-        };
-        let persist: StreamFinish = {
-            let conversation = conversation.clone();
-            Arc::new(move |text| persist_assistant(Some(&conversation), text))
-        };
-        std::thread::spawn(move || {
-            run_stream(
-                StreamRequest {
-                    base_url,
-                    key,
-                    body,
-                    command_id: SIDE_COMMAND_ID.into(),
-                    stream_key,
-                    item_of,
-                    persist,
-                    on_done: Arc::new(noop_sink),
-                },
-                emitter,
-            );
-        });
+        spawn_chat_turn(
+            &config,
+            provider,
+            conversation_id.clone(),
+            messages,
+            agentic,
+            SIDE_COMMAND_ID,
+            emitter,
+        );
         Ok(conversation_id)
     }
 
@@ -1408,6 +1706,7 @@ This is a test case, do you know?"#;
                 namespace: "ai".into(),
                 title: "explain closures".into(),
                 updated_unix: 100,
+                agentic: false,
             },
             160,
             Some("summary of the last answer".into()),
@@ -1427,6 +1726,19 @@ This is a test case, do you know?"#;
         );
     }
 
+    /// The live-stream truth (MOE-0030 revision 9): a registered key reads as streaming and
+    /// disappears on end — the chat page's phantom-generating repair leans on exactly this.
+    #[test]
+    fn is_streaming_tracks_the_registry() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        assert!(!is_streaming("test-is-streaming"));
+        let _flag = begin_stream("test-is-streaming").expect("registers");
+        assert!(is_streaming("test-is-streaming"));
+        end_stream("test-is-streaming");
+        assert!(!is_streaming("test-is-streaming"));
+        assert!(!is_streaming(""));
+    }
+
     /// Stop generation: requesting a stop after registration should hit the cancellation flag (IIE4AD-365).
     #[test]
     fn stop_all_streams_marks_active_flags() {
@@ -1444,6 +1756,96 @@ This is a test case, do you know?"#;
         end_stream("test-stop-conv");
         // Empty keys are not registered and cannot be interrupted
         assert!(begin_stream("").is_none());
+    }
+
+    /// Structured reasoning wins over tag extraction (MOE-0026).
+    #[test]
+    fn structured_reasoning_wins_over_tags() {
+        assert_eq!(prefer_reasoning("thinking", "tagged".into()), "thinking");
+        assert_eq!(prefer_reasoning("  ", "tagged".into()), "tagged");
+    }
+
+    /// End to end: `delta.reasoning_content` deltas stream into the Thinking payload beside the
+    /// answer (MOE-0026) — before this, the field was ignored entirely.
+    #[test]
+    fn reasoning_content_streams_into_the_thinking_payload() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+
+        struct Recorder(Mutex<Vec<Item>>);
+        impl Emitter for Recorder {
+            fn emit(&self, event: CommandEvent) {
+                match event {
+                    CommandEvent::ItemUpdated { item, .. } => self.0.lock().unwrap().push(item),
+                    CommandEvent::WriteBack { .. } => {}
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0u8; 2048];
+            let _ = socket.read(&mut buf); // request headers
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+            for event in [
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"step one \"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"step two\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"The answer.\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ] {
+                if socket.write_all(event.as_bytes()).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let base_url = format!("http://{addr}/v1");
+        std::thread::spawn(move || {
+            // Nonexistent conversation: persistence is a no-op (dangling-row protection)
+            let conversation = "reasoning-e2e";
+            let item_of: FrameBuilder = Arc::new(move |text, reasoning, pending| {
+                answer_item(text, reasoning, &[], Some(conversation), pending)
+            });
+            let persist: StreamFinish =
+                Arc::new(move |text| persist_assistant(Some(conversation), text));
+            run_stream(
+                StreamRequest {
+                    protocol: Protocol::OpenAiChat,
+                    base_url,
+                    key: "test-key".into(),
+                    body: serde_json::json!({}),
+                    command_id: "ai.quick-ask".into(),
+                    stream_key: "reasoning-e2e".into(),
+                    item_of,
+                    persist,
+                    on_done: Arc::new(noop_sink),
+                    model_hint: None,
+                },
+                emitter,
+            );
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("stream should finish");
+        server.join().expect("mock server thread");
+
+        let items = recorder.0.lock().unwrap();
+        assert!(items.len() >= 3, "reasoning and content both stream frames");
+        let last = items.last().expect("at least one frame");
+        assert!(!last.pending, "the last frame settles");
+        assert_eq!(last.detail.as_deref(), Some("The answer."));
+        assert_eq!(last.payload["reasoning"], "step one step two");
     }
 
     /// End to end: `stop_generation` mid-way through a slow SSE stream → finishes promptly, the last frame has pending=false and is marked stopped.
@@ -1495,12 +1897,13 @@ This is a test case, do you know?"#;
             // Nonexistent conversation: persistence is a no-op (dangling-row protection at the db layer), so real history stays clean
             let conversation = "stop-e2e";
             let item_of: FrameBuilder = Arc::new(move |text, reasoning, pending| {
-                answer_item(text, reasoning, Some(conversation), pending)
+                answer_item(text, reasoning, &[], Some(conversation), pending)
             });
             let persist: StreamFinish =
                 Arc::new(move |text| persist_assistant(Some(conversation), text));
             run_stream(
                 StreamRequest {
+                    protocol: Protocol::OpenAiChat,
                     base_url,
                     key: "test-key".into(),
                     body: serde_json::json!({}),
@@ -1509,6 +1912,7 @@ This is a test case, do you know?"#;
                     item_of,
                     persist,
                     on_done: Arc::new(noop_sink),
+                    model_hint: None,
                 },
                 emitter,
             );
@@ -1553,7 +1957,7 @@ This is a test case, do you know?"#;
     /// The answer item's ⌘J (materialize) also carries the conversation id back, so the side view locates the same conversation.
     #[test]
     fn answer_item_carries_conversation_id_on_materialize() {
-        let item = answer_item("body", "weighing it", Some("9"), false);
+        let item = answer_item("body", "weighing it", &[], Some("9"), false);
         assert_eq!(item.payload["conversationId"], "9");
         assert_eq!(item.payload["reasoning"], "weighing it");
         let action = item
@@ -1587,9 +1991,9 @@ This is a test case, do you know?"#;
     fn delete_item_removes_the_conversation() {
         let (db, path) = temp_db("delete");
         let a = db
-            .create_conversation("ai", "Conversation A", SystemTime::now())
+            .create_conversation("ai", "Conversation A", false, SystemTime::now())
             .unwrap();
-        db.create_conversation("ai", "Conversation B", SystemTime::now())
+        db.create_conversation("ai", "Conversation B", false, SystemTime::now())
             .unwrap();
         let item = history_item(
             Conversation {
@@ -1597,6 +2001,7 @@ This is a test case, do you know?"#;
                 namespace: "ai".into(),
                 title: "Conversation A".into(),
                 updated_unix: 1,
+                agentic: false,
             },
             1,
             None,
@@ -1610,6 +2015,7 @@ This is a test case, do you know?"#;
                 namespace: "ai".into(),
                 title: "x".into(),
                 updated_unix: 1,
+                agentic: false,
             },
             1,
             None,
@@ -1634,11 +2040,11 @@ This is a test case, do you know?"#;
     #[test]
     fn delete_all_clears_ai_namespace() {
         let (db, path) = temp_db("delete-all");
-        db.create_conversation("ai", "one", SystemTime::now())
+        db.create_conversation("ai", "one", false, SystemTime::now())
             .unwrap();
-        db.create_conversation("ai", "two", SystemTime::now())
+        db.create_conversation("ai", "two", false, SystemTime::now())
             .unwrap();
-        db.create_conversation("other", "another extension", SystemTime::now())
+        db.create_conversation("other", "another extension", false, SystemTime::now())
             .unwrap();
 
         assert_eq!(db.delete_all_conversations("ai").unwrap(), 2);
@@ -1682,10 +2088,18 @@ This is a test case, do you know?"#;
         let (db, path) = temp_db("history");
         let now = SystemTime::now();
         let id = db
-            .create_conversation("ai", "explain closures", now)
+            .create_conversation("ai", "explain closures", false, now)
             .expect("create");
-        db.append_message(&id, Role::Assistant, "A closure is…", &[], now)
-            .expect("append");
+        db.append_message(
+            &id,
+            &Message {
+                role: Role::Assistant,
+                content: "A closure is…".into(),
+                ..Message::default()
+            },
+            now,
+        )
+        .expect("append");
 
         let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "closure")
         else {
@@ -1741,15 +2155,56 @@ This is a test case, do you know?"#;
         );
     }
 
+    /// The model picker (MOE-0028): the command is routable and returns the searchable catalog
+    /// list (the embedded catalog always carries DeepSeek); actions route through
+    /// `run_item_action` to the picker's handler (an unknown action → NotFound, no config write).
+    #[test]
+    fn choose_model_is_routable_and_lists_the_catalog() {
+        let result = AiShell
+            .invoke("ai.choose-model", Some("deepseek"), None)
+            .expect("ai.choose-model is routable");
+        let items = match result {
+            ActionResult::List { items, detail_full } => {
+                assert!(!detail_full, "the picker is a list + detail page");
+                items
+            }
+            other => panic!("expected a list, got {other:?}"),
+        };
+        assert!(!items.is_empty(), "the catalog lists DeepSeek models");
+        let first = &items[0];
+        assert_eq!(first.actions[0].id, "use");
+        assert_eq!(first.actions[0].kind, ActionKind::Primary);
+        assert!(
+            first.detail.is_some(),
+            "the detail pane carries the properties"
+        );
+
+        let unknown = Action {
+            id: "nope".into(),
+            title: "Nope".into(),
+            kind: ActionKind::Secondary,
+            keybinding: None,
+        };
+        assert!(
+            AiShell
+                .run_item_action("ai.choose-model", first, &unknown)
+                .is_err(),
+            "picker actions route to ai_models"
+        );
+    }
+
     /// Request body assembly for the panel page: history + the new question (with selection context) both go into the body.
     #[test]
     fn panel_body_carries_history_and_selection_context() {
+        let provider = providers::test_provider(Protocol::OpenAiChat, "http://x/v1");
         let history = vec![Message {
             role: Role::User,
             content: question_with_selection("translate", Some("hello world")),
             attachments: vec![],
+            ..Message::default()
         }];
-        let text = chat_body_of("m", history).to_string();
+        let text =
+            request_body(provider.protocol, &chat_request(&provider, history, true)).to_string();
         assert!(
             text.contains("translate"),
             "question is in the body: {text}"
@@ -1759,13 +2214,18 @@ This is a test case, do you know?"#;
             "selection is in the body: {text}"
         );
         // No selection → no context wrapper
-        let plain = chat_body_of(
-            "m",
-            vec![Message {
-                role: Role::User,
-                content: "translate".into(),
-                attachments: vec![],
-            }],
+        let plain = request_body(
+            provider.protocol,
+            &chat_request(
+                &provider,
+                vec![Message {
+                    role: Role::User,
+                    content: "translate".into(),
+                    attachments: vec![],
+                    ..Message::default()
+                }],
+                true,
+            ),
         )
         .to_string();
         assert!(
@@ -1874,5 +2334,268 @@ This is a test case, do you know?"#;
                 payload: serde_json::json!({})
             }
         );
+    }
+
+    /// Read one full HTTP request (raw head + body) from the mock socket.
+    fn read_raw_request(socket: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_end = loop {
+            let read = socket.read(&mut chunk).expect("read request");
+            assert!(read > 0, "connection closed before the headers");
+            buf.extend_from_slice(&chunk[..read]);
+            if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..header_end]).to_ascii_lowercase();
+        let content_length: usize = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        let mut body = buf[header_end..].to_vec();
+        while body.len() < content_length {
+            let read = socket.read(&mut chunk).expect("read body");
+            if read == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..read]);
+        }
+        format!("{head}\n{}", String::from_utf8_lossy(&body))
+    }
+
+    /// A complete mock SSE response (the client stops at the protocol's terminal event).
+    fn event_stream(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// Wait until the recorder's last frame settles (no `on_done` hook on chat turns).
+    fn wait_for_settled(items: &std::sync::Mutex<Vec<Item>>) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if items
+                .lock()
+                .unwrap()
+                .last()
+                .is_some_and(|item| !item.pending)
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the turn should settle within the window");
+    }
+
+    /// A custom provider on the Anthropic protocol (ADR-0040): the turn posts its own wire
+    /// (`POST /v1/messages`, `x-api-key` + `anthropic-version`), the body has no `tools` field —
+    /// the loop is gated to openai-chat — and `thinking` deltas ride the same payload the UI's
+    /// Thinking row renders.
+    #[test]
+    fn anthropic_turn_streams_with_thinking_and_without_tools() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        use std::io::Write as _;
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+
+        struct Recorder(Mutex<Vec<Item>>);
+        impl Emitter for Recorder {
+            fn emit(&self, event: CommandEvent) {
+                match event {
+                    CommandEvent::ItemUpdated { item, .. } => self.0.lock().unwrap().push(item),
+                    CommandEvent::WriteBack { .. } => {}
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let captured = Arc::new(Mutex::new(String::new()));
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                *captured.lock().unwrap() = read_raw_request(&mut socket);
+                let events = concat!(
+                    "event: message_start\ndata: {\"type\":\"message_start\"}\n\n",
+                    "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weighing\"}}\n\n",
+                    "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
+                    "data: {\"type\":\"message_stop\"}\n\n",
+                );
+                let _ = socket.write_all(event_stream(events).as_bytes());
+            })
+        };
+
+        let config = MoeConfig::from_toml(&format!(
+            "[ai]\nprovider = \"lab\"\nmodel = \"claude-x\"\n\
+             [ai.providers.lab]\nname = \"Lab\"\nprotocol = \"anthropic\"\n\
+             api_url = \"http://{addr}\"\nmodels = [\"claude-x\"]\nreasoning = true\n"
+        ))
+        .expect("config parses");
+        let provider =
+            providers::resolve_with(&config, moe_platform::model_catalog::embedded(), |_, _| {
+                Some("sk-lab".into())
+            })
+            .expect("resolves");
+        assert_eq!(provider.protocol, Protocol::Anthropic);
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        spawn_chat_turn(
+            &config,
+            provider,
+            "anthropic-e2e".into(),
+            vec![Message {
+                role: Role::User,
+                content: "hi".into(),
+                ..Message::default()
+            }],
+            false, // non-chat protocols open plain conversations
+            "ai.quick-ask",
+            emitter,
+        );
+        wait_for_settled(&recorder.0);
+        server.join().expect("mock server thread");
+
+        let request = captured.lock().unwrap().clone();
+        assert!(
+            request.contains("post /v1/messages http/1.1"),
+            "the Anthropic endpoint: {request}"
+        );
+        assert!(request.contains("x-api-key: sk-lab"), "{request}");
+        assert!(
+            request.contains("anthropic-version: 2023-06-01"),
+            "{request}"
+        );
+        let body: serde_json::Value = serde_json::from_str(
+            request
+                .split_once("\r\n\r\n")
+                .expect("head + body")
+                .1
+                .trim_start_matches('\n'),
+        )
+        .expect("request body is json");
+        assert!(
+            body.get("tools").is_none(),
+            "no tools field on a non-openai-chat protocol: {body}"
+        );
+        assert_eq!(body["stream"], true);
+        assert!(body["max_tokens"].as_u64().is_some(), "{body}");
+        assert_eq!(body["thinking"]["type"], "enabled", "the reasoning opt-in");
+        assert_eq!(body["messages"][0]["role"], "user");
+
+        let items = recorder.0.lock().unwrap();
+        let last = items.last().expect("frames");
+        assert!(!last.pending);
+        assert_eq!(last.detail.as_deref(), Some("Hello"));
+        assert_eq!(last.payload["reasoning"], "weighing");
+    }
+
+    /// A custom provider on the OpenAI Responses protocol (ADR-0040): `POST /responses` with
+    /// bearer auth and `store: false`, no `tools` field, and reasoning-summary deltas in the
+    /// Thinking payload.
+    #[test]
+    fn responses_turn_streams_with_summaries_and_without_tools() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        use std::io::Write as _;
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+
+        struct Recorder(Mutex<Vec<Item>>);
+        impl Emitter for Recorder {
+            fn emit(&self, event: CommandEvent) {
+                match event {
+                    CommandEvent::ItemUpdated { item, .. } => self.0.lock().unwrap().push(item),
+                    CommandEvent::WriteBack { .. } => {}
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let captured = Arc::new(Mutex::new(String::new()));
+        let server = {
+            let captured = captured.clone();
+            std::thread::spawn(move || {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                *captured.lock().unwrap() = read_raw_request(&mut socket);
+                let events = concat!(
+                    "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"pondering\"}\n\n",
+                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n",
+                    "data: {\"type\":\"response.completed\"}\n\n",
+                );
+                let _ = socket.write_all(event_stream(events).as_bytes());
+            })
+        };
+
+        let config = MoeConfig::from_toml(&format!(
+            "[ai]\nprovider = \"gateway\"\nmodel = \"gpt-5.2\"\n\
+             [ai.providers.gateway]\nprotocol = \"openai-responses\"\n\
+             api_url = \"http://{addr}/v1\"\nmodels = [\"gpt-5.2\"]\nreasoning = true\n"
+        ))
+        .expect("config parses");
+        let provider =
+            providers::resolve_with(&config, moe_platform::model_catalog::embedded(), |_, _| {
+                Some("sk-gateway".into())
+            })
+            .expect("resolves");
+        assert_eq!(provider.protocol, Protocol::OpenAiResponses);
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let emitter: Arc<dyn Emitter> = recorder.clone();
+        spawn_chat_turn(
+            &config,
+            provider,
+            "responses-e2e".into(),
+            vec![Message {
+                role: Role::User,
+                content: "hi".into(),
+                ..Message::default()
+            }],
+            false,
+            "ai.quick-ask",
+            emitter,
+        );
+        wait_for_settled(&recorder.0);
+        server.join().expect("mock server thread");
+
+        let request = captured.lock().unwrap().clone();
+        assert!(
+            request.contains("post /v1/responses http/1.1"),
+            "the Responses endpoint: {request}"
+        );
+        assert!(
+            request.contains("authorization: bearer sk-gateway"),
+            "{request}"
+        );
+        let body: serde_json::Value = serde_json::from_str(
+            request
+                .split_once("\r\n\r\n")
+                .expect("head + body")
+                .1
+                .trim_start_matches('\n'),
+        )
+        .expect("request body is json");
+        assert!(
+            body.get("tools").is_none(),
+            "no tools field on a non-openai-chat protocol: {body}"
+        );
+        assert_eq!(body["store"], false);
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+
+        let items = recorder.0.lock().unwrap();
+        let last = items.last().expect("frames");
+        assert!(!last.pending);
+        assert_eq!(last.detail.as_deref(), Some("Hi"));
+        assert_eq!(last.payload["reasoning"], "pondering");
     }
 }

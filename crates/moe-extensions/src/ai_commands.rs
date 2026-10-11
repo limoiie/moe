@@ -16,11 +16,11 @@ use moe_core::contract::{
     Action, ActionKind, ActionResult, CommandMeta, Emitter, Extension, InputKind, Item, MoeError,
     Selection,
 };
-use moe_platform::config::MoeConfig;
-use moe_platform::keychain;
+use moe_platform::config::{MoeConfig, Protocol};
 
-use crate::ai::{self, KEY_MISSING_MD, SETUP_MD};
-use crate::ai_client::{chat_body_with_stream, chat_completions_url};
+use crate::ai::{self, SETUP_MD};
+use crate::ai_client::providers::{self, ActiveProvider};
+use crate::ai_client::{ChatRequest, authenticate, completion_text, endpoint_url, request_body};
 
 pub struct AiCommands;
 
@@ -190,25 +190,26 @@ fn resolve_text(query: Option<&str>, selection: Option<&Selection>) -> Option<St
         .map(str::to_string)
 }
 
-/// Request body for a single transform: system instruction + user text (testable).
-fn prompt_body(model: &str, instruction: &str, text: &str, stream: bool) -> serde_json::Value {
-    chat_body_with_stream(
-        model,
-        vec![
+/// One transform request in the shared vocabulary (ADR-0040): system instruction + user text;
+/// the provider supplies the model, its reasoning opt-in and `max_tokens` (testable).
+fn prompt_request(
+    provider: &ActiveProvider,
+    instruction: &str,
+    text: &str,
+    stream: bool,
+) -> ChatRequest {
+    ChatRequest {
+        model: provider.model.clone(),
+        messages: vec![
             serde_json::json!({ "role": "system", "content": instruction }),
             serde_json::json!({ "role": "user", "content": text }),
         ],
         stream,
-    )
-}
-
-/// Non-streaming response parsing (blocking invoke path): `choices[0].message.content`.
-fn parse_completion(payload: &str) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_str(payload).ok()?;
-    json["choices"][0]["message"]["content"]
-        .as_str()
-        .map(str::to_string)
-        .filter(|text| !text.is_empty())
+        reasoning: provider.reasoning,
+        max_tokens: provider.max_tokens,
+        tools: Vec::new(),
+        anthropic_thinking: providers::anthropic_thinking(provider),
+    }
 }
 
 /// Unique cancellation key per run (no conversation to attach to; Esc stop must still work, ADR-0024).
@@ -222,7 +223,8 @@ fn run_key() -> String {
 
 /// Blocking one-shot (`invoke` path, not the panel's main path): returns result text or an error card.
 fn completion_blocking(
-    base_url: &str,
+    protocol: Protocol,
+    api_url: &str,
     key: &str,
     body: serde_json::Value,
 ) -> Result<String, String> {
@@ -231,10 +233,9 @@ fn completion_blocking(
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(|err| format!("Failed to initialize HTTP client: {err}"))?;
-    let response = client
-        .post(chat_completions_url(base_url))
-        .bearer_auth(key)
-        .json(&body)
+    let request =
+        authenticate(protocol, client.post(endpoint_url(protocol, api_url)), key).json(&body);
+    let response = request
         .send()
         .map_err(|err| format!("Request failed: {err}"))?;
     if !response.status().is_success() {
@@ -248,7 +249,8 @@ fn completion_blocking(
         return Err(format!("Endpoint returned {status}: {text}"));
     }
     let payload = response.text().map_err(|err| err.to_string())?;
-    parse_completion(&payload).ok_or_else(|| "(the endpoint returned no content)".to_string())
+    completion_text(protocol, &payload)
+        .ok_or_else(|| "(the endpoint returned no content)".to_string())
 }
 
 impl Extension for AiCommands {
@@ -299,13 +301,21 @@ impl Extension for AiCommands {
         if !config.ai.configured() {
             return Ok(ActionResult::detail(vec![notice_item(SETUP_MD)]));
         }
-        let Some(key) = keychain::ai_api_key() else {
-            return Ok(ActionResult::detail(vec![notice_item(KEY_MISSING_MD)]));
+        // A resolution failure (unknown provider, missing model/key) is a setup card, not an error:
+        // the message names what is missing and where it belongs.
+        let provider = match providers::resolve(&config) {
+            Ok(provider) => provider,
+            Err(message) => {
+                return Ok(ActionResult::detail(vec![notice_item(&format!(
+                    "## AI setup needed\n\n{message}"
+                ))]));
+            }
         };
-        let base_url = config.ai.base_url.clone().unwrap_or_default();
-        let model = config.ai.model_or_default().to_string();
-        let body = prompt_body(&model, spec.instruction, &text, false);
-        match completion_blocking(&base_url, &key, body) {
+        let body = request_body(
+            provider.protocol,
+            &prompt_request(&provider, spec.instruction, &text, false),
+        );
+        match completion_blocking(provider.protocol, &provider.api_url, &provider.key, body) {
             // The blocking path returns the same review card as the streaming path — never an
             // automatic write-back (ADR-0024 amendment; the panel itself always streams).
             Ok(out) => Ok(ActionResult::detail(vec![transform_item(
@@ -334,12 +344,19 @@ impl Extension for AiCommands {
         if !config.ai.configured() {
             return Ok(ActionResult::detail(vec![notice_item(SETUP_MD)]));
         }
-        let Some(key) = keychain::ai_api_key() else {
-            return Ok(ActionResult::detail(vec![notice_item(KEY_MISSING_MD)]));
+        let provider = match providers::resolve(&config) {
+            Ok(provider) => provider,
+            Err(message) => {
+                return Ok(ActionResult::detail(vec![notice_item(&format!(
+                    "## AI setup needed\n\n{message}"
+                ))]));
+            }
         };
-        let base_url = config.ai.base_url.clone().unwrap_or_default();
-        let model = config.ai.model_or_default().to_string();
-        let body = prompt_body(&model, spec.instruction, &text, true);
+        let body = request_body(
+            provider.protocol,
+            &prompt_request(&provider, spec.instruction, &text, true),
+        );
+        let model_hint = provider.model_hint();
 
         let stream_key = run_key();
         let item_of: ai::FrameBuilder = {
@@ -353,8 +370,9 @@ impl Extension for AiCommands {
         std::thread::spawn(move || {
             ai::run_stream(
                 ai::StreamRequest {
-                    base_url,
-                    key,
+                    protocol: provider.protocol,
+                    base_url: provider.api_url,
+                    key: provider.key,
                     body,
                     command_id,
                     stream_key,
@@ -363,6 +381,7 @@ impl Extension for AiCommands {
                     // Deliberately a no-op: the finished card stays on screen and the user decides
                     // (ADR-0024 amendment) — Enter is the explicit write-back.
                     on_done: Arc::new(ai::noop_sink),
+                    model_hint,
                 },
                 emitter,
             );
@@ -463,10 +482,16 @@ mod tests {
         assert_eq!(resolve_text(Some(""), Some(&selection("  "))), None);
     }
 
-    /// Request body: system instruction first, user text second; stream can be off (blocking path).
+    /// The transform request in the shared vocabulary: system instruction first, user text second;
+    /// openai-chat passes them through unchanged, stream can be off (the blocking path); the
+    /// provider supplies model / reasoning opt-in / max_tokens (MOE-0027).
     #[test]
-    fn prompt_body_puts_instruction_before_text() {
-        let body = prompt_body("m", "Only output the translation.", "hello", false);
+    fn prompt_request_puts_instruction_before_text() {
+        let provider = providers::test_provider(Protocol::OpenAiChat, "http://x/v1");
+        let request = prompt_request(&provider, "Only output the translation.", "hello", false);
+        assert!(!request.reasoning);
+        assert_eq!(request.model, "test-model");
+        let body = request_body(provider.protocol, &request);
         assert_eq!(body["stream"], false);
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(
@@ -475,25 +500,11 @@ mod tests {
         );
         assert_eq!(body["messages"][1]["role"], "user");
         assert_eq!(body["messages"][1]["content"], "hello");
-        let streaming = prompt_body("m", "instruction", "text", true);
+        let streaming = request_body(
+            provider.protocol,
+            &prompt_request(&provider, "instruction", "text", true),
+        );
         assert_eq!(streaming["stream"], true);
-    }
-
-    /// Non-streaming response parsing: takes message.content; empty content → None.
-    #[test]
-    fn parse_completion_reads_message_content() {
-        let payload =
-            r#"{"choices":[{"message":{"role":"assistant","content":"the rewritten text"}}]}"#;
-        assert_eq!(
-            parse_completion(payload).as_deref(),
-            Some("the rewritten text")
-        );
-        assert_eq!(parse_completion(r#"{"choices":[]}"#), None);
-        assert_eq!(parse_completion("not-json"), None);
-        assert_eq!(
-            parse_completion(r#"{"choices":[{"message":{"content":""}}]}"#),
-            None
-        );
     }
 
     /// Result card actions: Apply writes back, ⌥⏎ copies, "{Command} Again" asks for the refine
@@ -583,7 +594,11 @@ mod tests {
         }
         let recorder = Arc::new(Recorder::default());
         let emitter: Arc<dyn Emitter> = recorder.clone();
-        let base_url = format!("http://{addr}/v1");
+        let provider = providers::test_provider(Protocol::OpenAiChat, &format!("http://{addr}/v1"));
+        let body = request_body(
+            provider.protocol,
+            &prompt_request(&provider, "Only output the translation.", "hello", true),
+        );
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         {
             // on_done is a generic run_stream hook; AI commands no longer wire it (Moe decides)
@@ -591,9 +606,10 @@ mod tests {
             std::thread::spawn(move || {
                 ai::run_stream(
                     ai::StreamRequest {
-                        base_url,
-                        key: "test-key".into(),
-                        body: prompt_body("m", "Only output the translation.", "hello", true),
+                        protocol: provider.protocol,
+                        base_url: provider.api_url,
+                        key: provider.key,
+                        body,
                         command_id: "aicmd.improve".into(),
                         stream_key: "aicmd:test-run".into(),
                         item_of: Arc::new(|text, reasoning, pending| {
@@ -603,6 +619,7 @@ mod tests {
                         on_done: Arc::new(move |text| {
                             recorder.done_texts.lock().unwrap().push(text.to_string());
                         }),
+                        model_hint: None,
                     },
                     emitter,
                 );

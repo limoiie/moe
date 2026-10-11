@@ -21,14 +21,22 @@
     >
       <div id="query-row" class="flex items-center gap-2.5 px-5 pt-4 pb-3">
         <span id="input-icon" class="moe-input-icon text-fg-subtle"></span>
-        <input
-          id="query"
-          class="moe-query-input w-full bg-transparent text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
-          placeholder="Search commands…"
-          autofocus
-          spellcheck="false"
-        />
+        <div class="flex min-w-0 flex-1 flex-col">
+          <input
+            id="query"
+            class="moe-query-input w-full bg-transparent text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
+            placeholder="Search commands…"
+            autofocus
+            spellcheck="false"
+          />
+          <!-- Chat page subtitle (MOE-0033): the active provider · model under the conversation
+               title, smaller and muted; hidden on every other page. -->
+          <span id="query-subtitle" class="hidden truncate text-[11px] leading-4 text-fg-subtle"></span>
+        </div>
       </div>
+      <!-- Chat page (MOE-0030 revision): the Input Bar above reads the conversation title
+           (read-only, same design as the command pages), and the composer row at the bottom
+           wears the root page's bottom-bar glass: add button · capsule input · actions button. -->
       <div
         id="banner"
         class="hidden items-center justify-between gap-3 border-b border-warning-line bg-warning-soft px-4 py-2 text-xs text-warning"
@@ -51,6 +59,10 @@
         <ul id="list" class="moe-scroll-fade min-h-0 flex-1 overflow-y-auto px-2"></ul>
         <div id="detail" class="md moe-scroll-fade hidden"></div>
       </div>
+
+      <!-- Chat page composer (MOE-0030): the shared pill (attach · draft · send) at the bottom of
+           the Quick Ask page, mounted by composer.ts; hidden on every other page. -->
+      <footer id="chat-composer" class="hidden shrink-0 px-2 pt-1"></footer>
 
       <!-- Bottom bar (ADR-0026): exactly one row tall, overlaying the list's last visible row band.
            Left: the avatar chip — Moe's avatar on the command layer, the Extension's icon + name

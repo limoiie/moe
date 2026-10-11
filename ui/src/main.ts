@@ -4,13 +4,16 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
-import { createActionPlan, type PageContext } from "./actions";
-import { createCard, type CardRow } from "./card";
+import { createActionPlan, type ActionRow, type PageContext } from "./actions";
+import { createCard } from "./card";
+import { createComposer } from "./composer";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
+import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
-import { GENERAL_KEY_LABELS, generalActionOf, type EntryAction } from "./keymap";
+import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
 import { logoEl } from "./logo";
+import { createModelSwitcher, type ActivePair } from "./models";
 import {
   CONVERSATION_PANE_CLASS,
   DETAIL_PANE_CLASS,
@@ -42,6 +45,7 @@ import type {
   Conversation,
   Item,
   Message,
+  ToolCall,
 } from "./types";
 
 // ---- Appearance (ADR-0035): the config theme override lands before the first render ----
@@ -77,6 +81,10 @@ interface View {
 
 const q = document.querySelector<HTMLInputElement>("#query")!;
 const queryRowEl = document.querySelector<HTMLDivElement>("#query-row")!;
+const querySubtitleEl = document.querySelector<HTMLSpanElement>("#query-subtitle")!;
+const chatComposerHostEl = document.querySelector<HTMLElement>("#chat-composer")!;
+const bottomBarEl = document.querySelector<HTMLDivElement>("#bottom-bar")!;
+const rootEl = document.querySelector<HTMLDivElement>("#root")!;
 const listEl = document.querySelector<HTMLUListElement>("#list")!;
 const detailEl = document.querySelector<HTMLDivElement>("#detail")!;
 const actionBarEl = document.querySelector<HTMLDivElement>("#action-bar")!;
@@ -123,7 +131,7 @@ const actionsCard = createCard({
   onFocusChange: () => renderActionBar(),
   onClose: () => {
     renderActionBar();
-    q.focus();
+    draftEl().focus();
   },
 });
 
@@ -133,8 +141,12 @@ const actionsCard = createCard({
 let chatConversationId: string | null = null;
 /** An answer is streaming: Enter stops it instead of sending (ADR-0036). */
 let chatGenerating = false;
+/** A send is in flight: Enter must not double-send while the stop check awaits (MOE-0030 r9). */
+let chatSending = false;
 /** The conversation title (first user message): the Input Bar's placeholder. */
 let chatTitle: string | null = null;
+/** The active provider · model shown under the page title (MOE-0033); null until fetched / unset. */
+let chatPair: ActivePair | null = null;
 /** Chat history, most recent first (⌃[ / ⌃] stepping; refreshed on entry, send and delete). */
 let chatConversations: Conversation[] = [];
 
@@ -150,6 +162,50 @@ let chatParts: ChatParts | null = null;
 /** Back while generating asks first (ADR-0036/0038): the dialog owns the keys while it is up and runs the stop on OK. */
 let confirmOpen = false;
 let confirmAction: (() => void) | null = null;
+
+/**
+ * The Quick Ask page's composer row and model switcher (MOE-0030): the page wears the root
+ * page's bottom-bar language — round glass add button, one capsule-like one-row input, round
+ * glass actions button — while the Input Bar above reads the conversation title. "Set AI Model"
+ * lives as a row inside the actions card the round button opens.
+ */
+const chatComposer = createComposer({
+  placeholder: "Ask anything",
+  onSend: () => void sendChatMessage(),
+  onStop: () => void stopChatGeneration(),
+  onActions: () => toggleActionsCard(),
+});
+chatComposerHostEl.append(chatComposer.root);
+
+const modelSwitcher = createModelSwitcher({
+  host: rootEl,
+  // Same anchor as the panel's actions card: bottom-right, above the composer row that opens it.
+  // The companion detail card floats to the left of the list (the panel is wide enough for the pair).
+  anchorClass: "bottom-14 right-2",
+  cardWidth: "w-80",
+  onApplied: (pair: ActivePair) => {
+    chatPair = pair; // the page title's subtitle follows the switch (MOE-0033)
+    syncChatTopbar();
+    toast(`${pair.providerName} · ${pair.modelName} is now the active model`);
+  },
+  onError: (message: string) => toast(`Failed to switch model: ${message}`, "alert"),
+  onClose: () => draftEl().focus(),
+});
+
+// On the chat page the Input Bar is a read-only title, not an input: clicks land in the composer.
+q.addEventListener("focus", () => {
+  if (view.get().mode === "chat") chatComposer.focus();
+});
+
+/** The input that owns the draft: the Input Bar, or the chat page's composer capsule. */
+function draftEl(): HTMLInputElement {
+  return view.get().mode === "chat" ? chatComposer.input : q;
+}
+
+/** One generating flag for the page (the actions card's Stop row follows it). */
+function setChatGenerating(on: boolean) {
+  chatGenerating = on;
+}
 
 // ---- Avatar chip (ADR-0026): the bottom-left card ----
 
@@ -263,14 +319,8 @@ function toast(text: string, icon = "check") {
 
 // ---- Floating action bar (Raycast-style): primary action + actions, keybindings still from the unified Rust keymap ----
 
-/** Semantic → display string (e.g. apply → "⏎", showAllActions → "⌘K / ⌘⇧P"). */
-const keyDisplay = new Map<string, string>();
-
 async function initActionBar() {
-  const entries = await invoke<[string, string][]>("keymap");
-  for (const [display, semantic] of entries) {
-    if (!keyDisplay.has(semantic)) keyDisplay.set(semantic, display);
-  }
+  await loadKeyDisplay();
   renderActionBar();
   renderChip(); // the chip's About tooltip picks up its binding now that the keymap is loaded
 }
@@ -303,7 +353,7 @@ function primaryActionOf(): { title: string; keys: string; run: () => void; disa
       title: "Send",
       keys: applyKeys,
       run: () => void sendChatMessage(),
-      disabled: q.value.trim() === "",
+      disabled: draftEl().value.trim() === "",
     };
   }
   if (v.mode === "items") {
@@ -549,6 +599,12 @@ function render() {
     detailEl.className = CONVERSATION_PANE_CLASS;
     syncChatHint();
   }
+  // Chat page chrome (MOE-0030): the composer row replaces the command layer's bottom bar, and
+  // the Input Bar becomes the page's read-only title; leaving the page restores both.
+  const chatPage = v.mode === "chat";
+  chatComposerHostEl.classList.toggle("hidden", !chatPage);
+  bottomBarEl.classList.toggle("hidden", chatPage);
+  syncChatTopbar();
   // Keyboard navigation: the focused row always stays in the viewport (long lists)
   focusedLi?.scrollIntoView({ block: "nearest" });
   if (v.mode !== "chat") renderDetail();
@@ -563,9 +619,7 @@ function updatePlaceholder() {
   const v = view.get();
   if (v.mode === "commands") {
     q.placeholder = QUERY_PLACEHOLDER;
-  } else if (v.mode === "chat") {
-    q.placeholder = chatTitle ?? "Ask anything…";
-  } else {
+  } else if (v.mode !== "chat") {
     const command = v.commands.find((c) => c.id === v.sourceCommandId);
     q.placeholder = v.sourceTitle ?? command?.title ?? "Results…";
   }
@@ -744,11 +798,45 @@ function syncChatHint() {
   parts.hint.classList.toggle("hidden", !parts.view.isEmpty());
 }
 
-/** Chat state changed outside render(): hint + Input Bar placeholder + action pill. */
+/** Chat state changed outside render(): hint + top bar title + action pill. */
 function refreshChatChrome() {
   syncChatHint();
+  syncChatTopbar();
   updatePlaceholder();
   renderActionBar();
+}
+
+/**
+ * The chat page's top bar is the Input Bar itself (MOE-0030 revision, the command page's own
+ * design): the leading slot keeps the back arrow (ADR-0034) and the field reads the conversation
+ * title, read-only — a title, not a draft.
+ */
+function syncChatTopbar() {
+  if (view.get().mode === "chat") {
+    q.readOnly = true;
+    q.value = chatTitle ?? "";
+    q.placeholder = "New Chat";
+    // The active pair under the title (MOE-0033): smaller and muted, so the title leads.
+    const pair = chatPair;
+    querySubtitleEl.textContent = pair ? `${pair.providerName} · ${pair.modelName}` : "";
+    querySubtitleEl.classList.toggle("hidden", !pair);
+  } else if (q.readOnly) {
+    q.readOnly = false;
+    q.value = "";
+    querySubtitleEl.textContent = "";
+    querySubtitleEl.classList.add("hidden");
+  }
+}
+
+/** The title's subtitle (MOE-0033): the active provider · model, refreshed on page entry and on
+ *  a switch through the switcher; a missing pair leaves the line hidden. */
+async function refreshChatPair() {
+  try {
+    chatPair = await invoke<ActivePair | null>("ai_active_pair");
+  } catch {
+    chatPair = null;
+  }
+  syncChatTopbar();
 }
 
 /** Inline error line of the page (failed send, load, delete): never a modal, the page stays usable. */
@@ -790,14 +878,46 @@ async function loadChatMessages() {
     if (chatConversationId !== id) return; // stepped away while loading
     chatTitle = conversationTitle(messages);
     for (const message of messages) parts.view.append(message);
-    // An unanswered question means a reply is on its way (the ask that opened the page) — or was
-    // interrupted: the page waits in generating mode, so Enter stops instead of stacking a question.
-    chatGenerating = messages[messages.length - 1]?.role === "user";
+    // An unanswered question means a reply is on its way (the ask that opened the page) — or it
+    // is not: a request that failed after persisting the question (or an app restart) would leave
+    // this page "generating" forever, swallowing every Enter into a silent Stop. The hint opens
+    // the page in waiting mode; `verifyPendingAnswer` checks the backend's live-stream registry
+    // shortly after, so a phantom state is repaired instead of trapping the chat (MOE-0030 r9).
+    const lastIsQuestion = messages[messages.length - 1]?.role === "user";
+    setChatGenerating(lastIsQuestion);
     if (chatGenerating) parts.view.updateStreaming("", true);
     parts.view.scrollToEnd();
+    if (lastIsQuestion) void verifyPendingAnswer(id);
   } catch (err) {
     setChatError(`Failed to load the chat: ${String(err)}`);
   }
+  refreshChatChrome();
+}
+
+/**
+ * The page loaded with an unanswered question: after a grace period (the worker registers its
+ * stream on spawn, which can trail this load by a beat), ask whether a generation is really live.
+ * If it is not, the waiting state is a phantom: settle it and say so instead of eating the next
+ * Enter (MOE-0030 revision 9).
+ */
+async function verifyPendingAnswer(id: string) {
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  if (chatConversationId !== id || !chatGenerating) return; // stepped away, or frames settled it
+  let live = true;
+  try {
+    live = await invoke<boolean>("conversation_streaming", { conversationId: id });
+  } catch {
+    // An older backend without the IPC: assume live (never invent a phantom warning).
+    return;
+  }
+  if (live || chatConversationId !== id || !chatGenerating) return;
+  setChatGenerating(false);
+  const parts = ensureChatParts();
+  parts.view.settleStreaming();
+  parts.view.discardAnswer(); // the waiting bubble was never a real answer
+  setChatError(
+    "The previous question never received an answer — the request may have failed (the app log has details), or Moe restarted. Ask again, or start a new chat (⌘N).",
+  );
   refreshChatChrome();
 }
 
@@ -817,9 +937,11 @@ async function loadChatConversations() {
 async function enterChat(conversationId: string | null, commandId?: string) {
   closeConfirm();
   closeActionsCard();
+  modelSwitcher.close();
+  chatComposer.closeAttach();
   clearDetail(); // resets the detail pane; the chat parts rebuild on the next render
   chatConversationId = conversationId;
-  chatGenerating = false;
+  setChatGenerating(false);
   view.update((v) => ({
     ...v,
     mode: "chat",
@@ -831,52 +953,82 @@ async function enterChat(conversationId: string | null, commandId?: string) {
   if (commandId) void refreshExtensionMeta(commandId);
   void loadChatMessages();
   void loadChatConversations();
-  q.focus();
+  void refreshChatPair();
+  draftEl().focus();
 }
 
 /** Enter on the page (ADR-0036): send the draft into the conversation and clear the input. */
 async function sendChatMessage() {
-  const message = q.value.trim();
-  const commandId = view.get().sourceCommandId;
-  if (!message || chatGenerating || !commandId) return;
+  if (chatSending) return;
+  const message = chatComposer.input.value.trim();
+  if (!message) return;
   const parts = ensureChatParts();
-  setChatError(null);
-  q.value = "";
-  const row = parts.view.append({ role: "user", content: message });
-  chatTitle = chatTitle ?? conversationTitle([{ role: "user", content: message }]);
-  parts.view.beginAnswer();
+  chatSending = true;
   try {
-    chatConversationId = await invoke<string>("panel_send", {
-      commandId,
-      conversationId: chatConversationId ?? "",
-      message,
-    });
-    chatGenerating = true;
+    if (chatGenerating) {
+      // Enter-as-stop (ADR-0036) — unless nothing is actually generating: the backend returns 0 for
+      // a stale flag (a request that failed after persisting the question, an app restart), and a
+      // Stop that stops nothing must not swallow the question (MOE-0030 revision 9).
+      const stopped = await stopChatGeneration();
+      if (stopped > 0) return;
+      // Nothing was actually streaming: the waiting bubble was never a real answer, drop it.
+      parts.view.discardAnswer();
+    }
+    // The page's command is always known: an entry that somehow lost it still sends as Quick Ask.
+    const commandId = view.get().sourceCommandId ?? "ai.quick-ask";
+    setChatError(null);
+    chatComposer.input.value = "";
+    const row = parts.view.append({ role: "user", content: message });
+    chatTitle = chatTitle ?? conversationTitle([{ role: "user", content: message }]);
+    // The generating state goes up before the invoke resolves (the worker starts answering as soon
+    // as it spawns): the indicator and the stop affordance must never lag behind the send.
+    parts.view.beginAnswer();
+    setChatGenerating(true);
     parts.view.updateStreaming("", true);
     parts.view.scrollToEnd();
     refreshChatChrome();
-    // The conversation appears in the history list (and in side_conversations) right away
-    void loadChatConversations();
-  } catch (err) {
-    // Rollback: the message was not persisted; restore the draft so the user does not retype it.
-    row.remove();
-    q.value = message;
-    setChatError(String(err));
-    chatGenerating = false;
-    refreshChatChrome();
+    try {
+      chatConversationId = await invokeWithTimeout<string>(
+        "panel_send",
+        {
+          commandId,
+          conversationId: chatConversationId ?? "",
+          message,
+        },
+        "The send",
+      );
+      // The conversation appears in the history list (and in side_conversations) right away
+      void loadChatConversations();
+    } catch (err) {
+      // Rollback: the message was not persisted; restore the draft so the user does not retype it,
+      // and the empty answer bubble must not linger.
+      row.remove();
+      parts.view.discardAnswer();
+      chatComposer.input.value = message;
+      setChatError(String(err));
+      toast(String(err), "alert");
+      setChatGenerating(false);
+      refreshChatChrome();
+    }
+  } finally {
+    chatSending = false;
   }
 }
 
-/** Stop the stream (Enter while generating, or the dialog): the generated part is kept (IIE4AD-365). */
-async function stopChatGeneration() {
+/** Stop the stream (Enter while generating, or the dialog): the generated part is kept (IIE4AD-365).
+ *  Returns how many streams were actually aborted — 0 means nothing was generating (a stale flag),
+ *  which lets Enter send instead of eating the question (MOE-0030 revision 9). */
+async function stopChatGeneration(): Promise<number> {
+  let stopped = 0;
   try {
-    await invoke<number>("stop_generation");
+    stopped = await invoke<number>("stop_generation");
   } catch (err) {
     setChatError(String(err));
   }
-  chatGenerating = false;
+  setChatGenerating(false);
   ensureChatParts().view.settleStreaming();
   refreshChatChrome();
+  return stopped;
 }
 
 /**
@@ -1027,7 +1179,7 @@ function closeConfirm() {
   confirmOpen = false;
   confirmAction = null;
   confirmCardEl.classList.add("hidden");
-  q.focus();
+  draftEl().focus();
 }
 
 confirmOkEl.addEventListener("click", () => {
@@ -1072,6 +1224,10 @@ function applyResult(
   }
   if ("openSideView" in res) {
     // The side view window is shown by the backend and receives the payload; the panel is already hidden
+    return;
+  }
+  if ("openSettings" in res) {
+    // The settings window is shown by the backend (MOE-0029); the panel is already hidden
     return;
   }
   if ("conversation" in res) {
@@ -1217,7 +1373,7 @@ function panelPageContext(): PageContext {
  * ("opening" the view you are already in would reset it). Then the favorite toggle, Remove from
  * Suggestions on a Suggestions row (⌃X, ADR-0025), and the Configure Extension placeholder.
  */
-async function commandCardRows(ctx: PageContext): Promise<CardRow[]> {
+async function commandCardRows(ctx: PageContext): Promise<ActionRow[]> {
   if (!ctx.commandId) return [];
   const commandId = ctx.commandId;
   let favorited = false;
@@ -1226,12 +1382,13 @@ async function commandCardRows(ctx: PageContext): Promise<CardRow[]> {
   } catch {
     // Ignore: the toggle still works, the label just may be stale
   }
-  const rows: CardRow[] = [];
+  const rows: ActionRow[] = [];
   if (ctx.mode === "commands") {
     rows.push({
       title: "Open Command",
       icon: "corner-down-left",
       keys: keyDisplay.get("apply") ?? "⏎",
+      rank: "primary",
       run: () => {
         const cmd = view.get().commands.find((c) => c.id === commandId);
         if (cmd) void applyCommand(cmd);
@@ -1249,10 +1406,17 @@ async function commandCardRows(ctx: PageContext): Promise<CardRow[]> {
       title: "Remove from Suggestions",
       icon: "trash-2",
       keys: GENERAL_KEY_LABELS.delete,
+      rank: "destructive",
       run: () => void deleteSuggestion(commandId),
     });
   }
-  rows.push({ title: "Configure Extension", icon: "settings-2", disabled: true, run: () => {} });
+  rows.push({
+    title: "Configure Extension",
+    icon: "settings-2",
+    rank: "settings",
+    disabled: true,
+    run: () => {},
+  });
   return rows;
 }
 
@@ -1260,10 +1424,30 @@ async function commandCardRows(ctx: PageContext): Promise<CardRow[]> {
  * "Actions": the object's own actions. A result page's object is its focused item — the shape
  * (list / split / detail) never changes it — while a chat page's object is the conversation.
  */
-function objectCardRows(ctx: PageContext): CardRow[] {
+function objectCardRows(ctx: PageContext): ActionRow[] {
   if (ctx.mode === "chat") {
     const hasAnswer = lastAnswerText() !== null;
     return [
+      // Switching the model is an action of the conversation (MOE-0030 revision): the round
+      // actions button's card carries it, not a header control; ⌥M lands the same action (MOE-0033).
+      {
+        title: "Change Model",
+        icon: "sparkles",
+        keys: keyDisplay.get("changeModel") ?? "⌥M",
+        run: () => modelSwitcher.open(),
+      },
+      ...(chatGenerating
+        ? [
+            {
+              title: "Stop Generation",
+              icon: "stop",
+              keys: keyDisplay.get("apply") ?? "⏎",
+              // While a stream runs, ⏎ stops it: the card's primary slot is Stop (ADR-0036).
+              rank: "primary" as const,
+              run: () => void stopChatGeneration(),
+            },
+          ]
+        : []),
       {
         title: "Open in Side View",
         icon: "panel-right",
@@ -1275,6 +1459,7 @@ function objectCardRows(ctx: PageContext): CardRow[] {
         title: "Copy Last Answer",
         icon: "copy",
         keys: keyDisplay.get("secondaryCopy") ?? "⌥⏎",
+        rank: "secondary",
         disabled: !hasAnswer,
         run: () => void copyLastAnswer(),
       },
@@ -1288,7 +1473,8 @@ function objectCardRows(ctx: PageContext): CardRow[] {
   }
   const item = ctx.item;
   if (!item) return [];
-  // The item's own declaration (ADR-0006): the first action carries the Apply semantic (⏎).
+  // The item's own declaration (ADR-0006): the first action carries the Apply semantic (⏎); the
+  // declared kind is also the row's canonical slot — primary first, secondaries next.
   return item.actions.map((action) => ({
     title: action.title,
     icon:
@@ -1298,6 +1484,7 @@ function objectCardRows(ctx: PageContext): CardRow[] {
           ? "corner-down-left"
           : "copy",
     keys: action.keybinding ?? (action.kind === "primary" ? "⏎" : null),
+    rank: action.kind === "primary" ? ("primary" as const) : ("secondary" as const),
     run: () => void runItemAction(item, action),
   }));
 }
@@ -1307,8 +1494,8 @@ function objectCardRows(ctx: PageContext): CardRow[] {
  * New ⌘N resolved from the Extension's declared entries, plus the delete slots where the page owns
  * records (a result page, or the chat page as Remove Chat / Remove All Chats, ADR-0036).
  */
-async function pageCardRows(ctx: PageContext): Promise<CardRow[]> {
-  const rows: CardRow[] = [];
+async function pageCardRows(ctx: PageContext): Promise<ActionRow[]> {
+  const rows: ActionRow[] = [];
   if (ctx.commandId) {
     const kinds: EntryAction[] = ["browse", "new"];
     const found = await Promise.all(
@@ -1337,12 +1524,14 @@ async function pageCardRows(ctx: PageContext): Promise<CardRow[]> {
       title: "Delete Record",
       icon: "trash-2",
       keys: GENERAL_KEY_LABELS.delete,
+      rank: "destructive",
       run: () => void deleteFocused(false),
     });
     rows.push({
       title: "Delete All Records",
       icon: "trash-2",
       keys: GENERAL_KEY_LABELS.deleteAll,
+      rank: "destructive",
       run: () => void deleteFocused(true),
     });
   } else if (ctx.mode === "chat") {
@@ -1350,6 +1539,7 @@ async function pageCardRows(ctx: PageContext): Promise<CardRow[]> {
       title: "Remove Chat",
       icon: "trash-2",
       keys: GENERAL_KEY_LABELS.delete,
+      rank: "destructive",
       disabled: !chatConversationId,
       run: () => void removeCurrentChat(),
     });
@@ -1357,13 +1547,22 @@ async function pageCardRows(ctx: PageContext): Promise<CardRow[]> {
       title: "Remove All Chats",
       icon: "trash-2",
       keys: GENERAL_KEY_LABELS.deleteAll,
+      rank: "destructive",
       run: () => void deleteAllChats(),
     });
   }
+  // The settings window (MOE-0029) is reachable from every page's card, like the tray item.
+  rows.push({
+    title: "Open Settings",
+    icon: "settings-2",
+    rank: "global",
+    run: () => void invoke("open_settings_window"),
+  });
   return rows;
 }
 
-/** The panel's card (ADR-0037): Actions → Command → General, loaded for every page kind. */
+/** The panel's card (ADR-0037): Actions / Command / General, each canonically ordered and
+ *  ordered among themselves by their topmost row (MOE-0033). */
 const panelActionPlan = createActionPlan([
   { title: "Actions", when: (ctx) => ctx.mode !== "commands", rows: objectCardRows },
   { title: "Command", when: (ctx) => ctx.commandId !== undefined, rows: commandCardRows },
@@ -1448,7 +1647,7 @@ async function materialize() {
   }
 }
 
-// ---- About card (ADR-0026): the avatar chip's menu, same UX as the actions card (sections, input at the bottom) ----
+// ---- About card (ADR-0026): the avatar chip's menu, same UX as the actions card (filter, ↑↓/⏎, input at the bottom) ----
 
 /** Feedback lands in the repository's issue tracker. */
 const FEEDBACK_URL = "https://github.com/limoiie/moe/issues";
@@ -1561,7 +1760,7 @@ async function toggleQuickAsk(wasVisible: boolean) {
     return;
   }
   // The panel was re-shown on the page: keep it and take the input focus back.
-  q.focus();
+  draftEl().focus();
 }
 
 /**
@@ -1730,7 +1929,7 @@ function closeAboutCard() {
   if (!aboutCardOpen) return;
   aboutCardOpen = false;
   aboutCardEl.classList.add("hidden");
-  q.focus();
+  draftEl().focus();
 }
 
 function toggleAboutCard() {
@@ -2078,6 +2277,12 @@ window.addEventListener("keydown", (e) => {
   }
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "a") {
     e.preventDefault();
+    // On the chat page the composer's own path row serves attachments (MOE-0030); the Input Bar's
+    // attachment mode belongs to the command layer.
+    if (view.get().mode === "chat") {
+      chatComposer.toggleAttach();
+      return;
+    }
     if (attaching) cancelAttach();
     else startAttach();
     return;
@@ -2164,12 +2369,22 @@ window.addEventListener("keydown", (e) => {
     void toggleSideChat();
     return;
   }
+  // Change Model (⌥M, MOE-0033): opens the switcher on the chat page — the same landing as the
+  // card's "Change Model" row, whose Kbd comes from the platform table. Physical `KeyM`: ⌥M types "µ".
+  if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyM") {
+    if (view.get().mode !== "chat") return; // the row (and the pair) live on the chat page
+    e.preventDefault();
+    closeActionsCard();
+    closeAboutCard();
+    modelSwitcher.toggle();
+    return;
+  }
   // The front-most list owns navigation and Backspace (ADR-0031): while a card is open, the card's
   // own input stops propagation for the keys it consumes; this guard covers focus sitting elsewhere.
   // Backspace with empty input = Back (layered back, ADR-0017):
   // leave it alone when the input is non-empty (normal delete); when empty, back out layer by layer, but the root layer does not close the panel (quit:false).
-  const cardOpen = actionsCard.isOpen() || aboutCardOpen;
-  if (!cardOpen && e.key === "Backspace" && q.value === "" && !e.isComposing && !e.repeat) {
+  const cardOpen = actionsCard.isOpen() || aboutCardOpen || modelSwitcher.isOpen();
+  if (!cardOpen && e.key === "Backspace" && draftEl().value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
     return;
@@ -2203,7 +2418,8 @@ window.addEventListener("keydown", (e) => {
     // On the Quick Ask page Enter sends the draft (⌥⏎ copies the last answer) — or stops the stream (ADR-0036)
     if (v.mode === "chat") {
       if (e.altKey) void copyLastAnswer();
-      else if (chatGenerating) void stopChatGeneration();
+      // `sendChatMessage` owns the Enter dialect: it stops a live stream and always sends when
+      // the stream is dead, so a stuck generation can never swallow the question (MOE-0030 r9).
       else void sendChatMessage();
       return;
     }
@@ -2353,14 +2569,14 @@ bannerActionEl.addEventListener("click", () => {
 // re-renders at most every ~50 ms, and the newest frame per key is what lands.
 const chatFrames = streamCoalescer<
   string,
-  { text: string; pending: boolean; reasoning: string }
+  { text: string; pending: boolean; reasoning: string; toolCalls?: ToolCall[] }
 >((frames) => {
   const frame = frames.get(chatConversationId ?? "");
   if (!frame || view.get().mode !== "chat") return;
   const parts = ensureChatParts();
-  parts.view.updateStreaming(frame.text, frame.pending, frame.reasoning);
+  parts.view.updateStreaming(frame.text, frame.pending, frame.reasoning, frame.toolCalls);
   parts.view.scrollToEnd();
-  chatGenerating = frame.pending;
+  setChatGenerating(frame.pending);
   refreshChatChrome();
   // The final frame (pending=false) marks the end of generation (IIE4AD-365)
   if (!frame.pending) void loadChatConversations();
@@ -2387,13 +2603,18 @@ void listen<CommandEventPayload>("command-event", (event) => {
   if (!payload) return;
   const v = view.get();
   if (v.mode === "chat") {
-    const meta = payload.item.payload as { conversationId?: string; reasoning?: string } | null;
+    const meta = payload.item.payload as {
+      conversationId?: string;
+      reasoning?: string;
+      toolCalls?: ToolCall[];
+    } | null;
     const conversationId = meta?.conversationId;
     if (!conversationId || conversationId !== chatConversationId) return;
     chatFrames.push(conversationId, {
       text: payload.item.detail ?? "",
       pending: payload.item.pending === true,
       reasoning: meta.reasoning ?? "",
+      toolCalls: meta.toolCalls,
     });
     return;
   }

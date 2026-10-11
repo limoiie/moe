@@ -1,5 +1,6 @@
 //! Parsing and defaults for `config.toml` (ADR-0008: the summon key is configurable).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -26,6 +27,28 @@ theme = \"system\"
 # base_url = \"https://api.deepseek.com/v1\"
 # model = \"deepseek-chat\"
 # Don't put the API key here: store it in the keychain via the command \"key <your-key>\" (or set MOE_AI_API_KEY)
+# tools = true                           # conversations may search the web / fetch pages / read files (the tool loop)
+# searxng_url = \"http://localhost:8080\"  # a SearXNG instance with JSON enabled; unset = no web_search tool
+# fetch_fallback = \"jina\"                # jina | none — keyless r.jina.ai retry when a page fetch is blocked or empty
+
+# Multi-provider (ADR-0040): pick an official provider by catalog id (deepseek, openai, anthropic,
+# google, xai, minimax, minimax-cn, mistral, groq, openrouter, …) and a model from its catalog list;
+# the key file is keys/<provider>. Legacy base_url above keeps working (it is an implicit `default`
+# provider).
+# provider = \"deepseek\"
+# model = \"deepseek-flash\"
+#
+# [ai.providers.openai]       # official providers: overrides only
+# protocol = \"openai-responses\"   # openai-chat | openai-responses | anthropic
+# models = [\"gpt-5.2\"]            # restrict the picker list (an unknown-model error lists these)
+# hidden_models = [\"gpt-5.1\"]     # models the settings window hides from the pickers
+# reasoning = false                # opt in/out of thinking blocks / reasoning summaries
+#
+# [ai.providers.my-gateway]   # custom endpoints state protocol, api_url and models
+# name = \"My Gateway\"
+# protocol = \"anthropic\"
+# api_url = \"https://gateway.example.com/anthropic\"
+# models = [\"claude-sonnet-5-5\"]
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,20 +119,129 @@ impl Default for SummonConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiConfig {
-    pub base_url: Option<String>,
+    /// Active provider id (ADR-0040): an official (catalog) id or a `[ai.providers.*]` key.
+    /// `None` = legacy mode (see `base_url`).
+    pub provider: Option<String>,
     pub model: Option<String>,
+    /// Legacy (ADR-0005): an OpenAI-compatible base URL; sugar for an implicit `default` provider.
+    pub base_url: Option<String>,
+    /// Provider overrides / custom providers by id (ADR-0040); `BTreeMap` for stable iteration.
+    pub providers: BTreeMap<String, ProviderConfig>,
+    /// Agentic Conversations advertise Tools; a kill-switch for new conversations (MOE-0026).
+    pub tools: bool,
+    /// The self-hosted SearXNG base URL; unset → `web_search` is not advertised at all.
+    pub searxng_url: Option<String>,
+    /// The `web_fetch` fallback when local extraction fails (MOE-0026).
+    pub fetch_fallback: FetchFallback,
+}
+
+/// One `[ai.providers.<id>]` block: official providers use it for overrides; custom providers
+/// state `protocol` + `api_url` + `models` (ADR-0040).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProviderConfig {
+    /// Display name (custom providers; official ones default to the catalog name).
+    pub name: Option<String>,
+    /// Override the protocol (e.g. OpenAI defaults to `openai-chat`; opt in to `openai-responses`).
+    pub protocol: Option<Protocol>,
+    /// Override the catalog/table base URL (required for custom providers).
+    pub api_url: Option<String>,
+    /// The model ids: the picker list for custom providers, an optional restriction for official
+    /// ones; also what an unknown-model error lists.
+    pub models: Option<Vec<String>>,
+    /// Models hidden from the pickers (the settings window's checkboxes, MOE-0029): subtracted
+    /// from the effective list (`models` restriction first, then this). The active pair is never
+    /// hidden from the surfaces that already use it — only from the pickers.
+    pub hidden_models: Option<Vec<String>>,
+    /// Override the reasoning opt-in (Anthropic `thinking` / Responses summaries); unset = the
+    /// catalogued model's flag (official providers) or off (custom).
+    pub reasoning: Option<bool>,
+}
+
+/// The wire protocols Moe speaks (ADR-0040): the OpenAI Chat Completions dialect (today's code;
+/// MOE-0026's tool loop is gated to it), the OpenAI Responses API, and Anthropic Messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Protocol {
+    OpenAiChat,
+    OpenAiResponses,
+    Anthropic,
+}
+
+impl Protocol {
+    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "openai-chat" => Ok(Self::OpenAiChat),
+            "openai-responses" => Ok(Self::OpenAiResponses),
+            "anthropic" => Ok(Self::Anthropic),
+            _ => Err(ConfigError::UnknownProtocol(raw.to_string())),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiChat => "openai-chat",
+            Self::OpenAiResponses => "openai-responses",
+            Self::Anthropic => "anthropic",
+        }
+    }
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            provider: None,
+            model: None,
+            base_url: None,
+            providers: BTreeMap::new(),
+            tools: true,
+            searxng_url: None,
+            fetch_fallback: FetchFallback::Jina,
+        }
+    }
+}
+
+/// The `web_fetch` fallback when the local GET/extraction fails (MOE-0026).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FetchFallback {
+    /// Retry through the keyless r.jina.ai reader (default).
+    #[default]
+    Jina,
+    /// Fail honestly to the model — no third-party reader.
+    None,
+}
+
+impl FetchFallback {
+    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "jina" => Ok(Self::Jina),
+            "none" => Ok(Self::None),
+            _ => Err(ConfigError::UnknownFetchFallback(raw.to_string())),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Jina => "jina",
+            Self::None => "none",
+        }
+    }
 }
 
 impl AiConfig {
-    /// AI commands are unavailable when no endpoint is configured (a setup item answers instead).
+    /// AI surfaces answer with a setup card when no provider is selected (ADR-0040) and no legacy
+    /// `base_url` is set (ADR-0005).
     pub fn configured(&self) -> bool {
-        self.base_url
+        self.provider
             .as_deref()
-            .is_some_and(|url| !url.trim().is_empty())
+            .is_some_and(|id| !id.trim().is_empty())
+            || self
+                .base_url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty())
     }
 
+    /// The legacy mode's model default (base_url without a model keeps working unchanged).
     pub fn model_or_default(&self) -> &str {
         self.model
             .as_deref()
@@ -173,8 +305,24 @@ struct RawUi {
 
 #[derive(Deserialize, Default)]
 struct RawAi {
+    provider: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
+    #[serde(default)]
+    providers: BTreeMap<String, RawProvider>,
+    tools: Option<bool>,
+    searxng_url: Option<String>,
+    fetch_fallback: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawProvider {
+    name: Option<String>,
+    protocol: Option<String>,
+    api_url: Option<String>,
+    models: Option<Vec<String>>,
+    hidden_models: Option<Vec<String>>,
+    reasoning: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -198,10 +346,43 @@ impl MoeConfig {
                 summon.double_tap_ms = ms;
             }
         }
-        let ai = raw.ai.map_or_else(AiConfig::default, |raw_ai| AiConfig {
-            base_url: raw_ai.base_url,
-            model: raw_ai.model,
-        });
+        let ai = match raw.ai {
+            Some(raw_ai) => {
+                let providers = raw_ai
+                    .providers
+                    .into_iter()
+                    .map(|(id, raw)| {
+                        let protocol = raw.protocol.as_deref().map(Protocol::parse).transpose()?;
+                        Ok((
+                            id,
+                            ProviderConfig {
+                                name: raw.name,
+                                protocol,
+                                api_url: raw.api_url,
+                                models: raw.models,
+                                hidden_models: raw.hidden_models,
+                                reasoning: raw.reasoning,
+                            },
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+                AiConfig {
+                    provider: raw_ai.provider,
+                    model: raw_ai.model,
+                    base_url: raw_ai.base_url,
+                    providers,
+                    tools: raw_ai.tools.unwrap_or(true),
+                    searxng_url: raw_ai.searxng_url,
+                    fetch_fallback: raw_ai
+                        .fetch_fallback
+                        .as_deref()
+                        .map(FetchFallback::parse)
+                        .transpose()?
+                        .unwrap_or_default(),
+                }
+            }
+            None => AiConfig::default(),
+        };
         let ui = match raw.ui {
             Some(raw_ui) => UiConfig {
                 theme: raw_ui
@@ -244,6 +425,8 @@ pub enum ConfigError {
     ComboMissingKey(String),
     DoubleTapRange(u64),
     UnknownTheme(String),
+    UnknownFetchFallback(String),
+    UnknownProtocol(String),
     Toml(String),
 }
 
@@ -262,6 +445,13 @@ impl fmt::Display for ConfigError {
             Self::UnknownTheme(raw) => {
                 write!(f, "unknown theme: {raw} (expected system | light | dark)")
             }
+            Self::UnknownFetchFallback(raw) => {
+                write!(f, "unknown fetch_fallback: {raw} (expected jina | none)")
+            }
+            Self::UnknownProtocol(raw) => write!(
+                f,
+                "unknown protocol: {raw} (expected openai-chat | openai-responses | anthropic)"
+            ),
             Self::Toml(msg) => write!(f, "invalid config.toml: {msg}"),
         }
     }
@@ -298,22 +488,98 @@ fn theme_line(theme: Theme) -> String {
     format!("theme = \"{}\"", theme.as_str())
 }
 
-/// Whether a config line assigns the `theme` key (a commented line never counts).
-fn is_theme_assignment(line: &str) -> bool {
+/// One TOML basic-string value: values come from config input (provider ids, model ids), so quotes
+/// and backslashes escape — the written file must always parse.
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Whether a config line assigns `key` (a commented line never counts).
+fn is_key_assignment(line: &str, key: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.starts_with('#') {
         return false;
     }
     trimmed
         .split_once('=')
-        .is_some_and(|(key, _)| key.trim() == "theme")
+        .is_some_and(|(found, _)| found.trim() == key)
 }
 
-/// Replace (or add) the `theme` key inside the `[ui]` section of config.toml text, keeping every
-/// other line — comments included — byte for byte (ADR-0035 amendment): the file is the user's, so
-/// the app never re-serializes it. Pure, so the surgery is unit-tested.
-pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
-    let key_line = theme_line(theme);
+/// Insert or replace one assignment inside `[section]`, keeping every other line byte for byte.
+/// A missing section is appended after a blank line.
+fn set_section_assignment(lines: Vec<String>, section: &str, key: &str, line: &str) -> Vec<String> {
+    set_section_assignment_opt(lines, section, key, Some(line))
+}
+
+/// Like [`set_section_assignment`] but `None` removes the assignment (an empty hidden-models list
+/// leaves no trace in the user's file). A removal never creates the section.
+fn set_section_assignment_opt(
+    mut lines: Vec<String>,
+    section: &str,
+    key: &str,
+    line: Option<&str>,
+) -> Vec<String> {
+    let header = format!("[{section}]");
+    match lines
+        .iter()
+        .position(|candidate| candidate.trim() == header)
+    {
+        Some(start) => {
+            let end = lines[start + 1..]
+                .iter()
+                .position(|candidate| candidate.trim_start().starts_with('['))
+                .map_or(lines.len(), |offset| start + 1 + offset);
+            match (start + 1..end).find(|&i| is_key_assignment(&lines[i], key)) {
+                Some(at) => match line {
+                    Some(line) => lines[at] = line.to_string(),
+                    None => {
+                        lines.remove(at);
+                        // A provider block that carried only this key leaves no trace: drop the
+                        // header (and the blank line that separated it) when nothing but
+                        // whitespace remains — user comments keep the block alive.
+                        let body_end = lines[start + 1..]
+                            .iter()
+                            .position(|candidate| candidate.trim_start().starts_with('['))
+                            .map_or(lines.len(), |offset| start + 1 + offset);
+                        if lines[start + 1..body_end]
+                            .iter()
+                            .all(|candidate| candidate.trim().is_empty())
+                        {
+                            lines.remove(start);
+                            if start > 0
+                                && lines[start - 1].trim().is_empty()
+                                && lines.get(start).is_none_or(|next| next.trim().is_empty())
+                            {
+                                lines.remove(start - 1);
+                            }
+                        }
+                    }
+                },
+                None => {
+                    if let Some(line) = line {
+                        lines.insert(start + 1, line.to_string());
+                    }
+                }
+            }
+        }
+        None => {
+            let Some(line) = line else { return lines };
+            if lines
+                .last()
+                .is_some_and(|candidate| !candidate.trim().is_empty())
+            {
+                lines.push(String::new());
+            }
+            lines.push(header);
+            lines.push(line.to_string());
+        }
+    }
+    lines
+}
+
+/// Edit several assignments of one section in place (each call recomputes the section, so the
+/// replacements compose); reversed iteration makes fresh insertions land in the given order.
+fn edit_section(text: &str, section: &str, assignments: &[(&str, String)]) -> String {
     let mut lines: Vec<String> = if text.is_empty() {
         Vec::new()
     } else {
@@ -323,33 +589,161 @@ pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();
     }
-    match lines.iter().position(|line| line.trim() == "[ui]") {
-        Some(start) => {
-            let end = lines[start + 1..]
-                .iter()
-                .position(|line| line.trim_start().starts_with('['))
-                .map_or(lines.len(), |offset| start + 1 + offset);
-            match (start + 1..end).find(|&i| is_theme_assignment(&lines[i])) {
-                Some(at) => lines[at] = key_line,
-                None => lines.insert(start + 1, key_line),
-            }
-        }
-        None => {
-            if lines.last().is_some_and(|line| !line.trim().is_empty()) {
-                lines.push(String::new());
-            }
-            lines.push("[ui]".to_string());
-            lines.push(key_line);
-        }
+    for (key, line) in assignments.iter().rev() {
+        lines = set_section_assignment(lines, section, key, line);
     }
     let mut out = lines.join("\n");
     out.push('\n');
     out
 }
 
+/// Like [`edit_section`] but each assignment may be a removal (`None`).
+fn edit_section_opt(text: &str, section: &str, assignments: &[(&str, Option<String>)]) -> String {
+    let mut lines: Vec<String> = if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').map(str::to_string).collect()
+    };
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    for (key, line) in assignments.iter().rev() {
+        lines = set_section_assignment_opt(lines, section, key, line.as_deref());
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// A TOML array of basic strings (`hidden_models = ["a", "b"]`).
+fn toml_string_array(values: &[String]) -> String {
+    let items: Vec<String> = values.iter().map(|value| toml_string(value)).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// Remove one whole `[section]` (header + body lines) from the line list, keeping every other
+/// line byte for byte (the settings window's provider removal, MOE-0032): the blank-line
+/// separator the section brought goes with it, and a missing section is a no-op.
+fn remove_section(mut lines: Vec<String>, section: &str) -> Vec<String> {
+    let header = format!("[{section}]");
+    // A hand-written header may carry a trailing comment (`[ai.providers.x]  # note`).
+    let Some(start) = lines.iter().position(|candidate| {
+        candidate
+            .trim()
+            .strip_prefix(&header)
+            .is_some_and(|rest| rest.trim().is_empty() || rest.trim_start().starts_with('#'))
+    }) else {
+        return lines;
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|candidate| candidate.trim_start().starts_with('['))
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    lines.drain(start..end);
+    // Collapse the blank seam the removal left (the separator line before the header).
+    let blank = |line: &String| line.trim().is_empty();
+    if start > 0 && lines.get(start - 1).is_some_and(blank) && lines.get(start).is_none_or(blank) {
+        lines.remove(start - 1);
+    }
+    lines
+}
+
+/// Replace (or add) the `theme` key inside the `[ui]` section of config.toml text, keeping every
+/// other line — comments included — byte for byte (ADR-0035 amendment): the file is the user's, so
+/// the app never re-serializes it. Pure, so the surgery is unit-tested.
+pub fn set_theme_in_toml(text: &str, theme: Theme) -> String {
+    edit_section(text, "ui", &[("theme", theme_line(theme))])
+}
+
+/// Replace (or add) the `provider` and `model` keys inside the `[ai]` section (the picker's
+/// apply, MOE-0028): the same comment-preserving in-place surgery as the theme writer.
+pub fn set_ai_selection_in_toml(text: &str, provider: &str, model: &str) -> String {
+    edit_section(
+        text,
+        "ai",
+        &[
+            ("provider", format!("provider = {}", toml_string(provider))),
+            ("model", format!("model = {}", toml_string(model))),
+        ],
+    )
+}
+
 /// Persist the appearance preference to `config.toml` (a missing file is created from the default
 /// template first, so its comments teach the other settings too).
 pub fn store_theme(theme: Theme) -> std::io::Result<()> {
+    edit_config_file(|text| set_theme_in_toml(text, theme))
+}
+
+/// Persist the picked provider/model pair (the model picker's apply, MOE-0028) with the same rule:
+/// the file's comments and every unrelated line survive byte for byte.
+pub fn store_ai_selection(provider: &str, model: &str) -> std::io::Result<()> {
+    edit_config_file(|text| set_ai_selection_in_toml(text, provider, model))
+}
+
+/// Replace (or add, or remove) the `searxng_url` key inside `[ai]` (the settings window's Web
+/// Search row, MOE-0034): a blank value removes the line again — unset means the `web_search`
+/// tool is not advertised at all. Pure, so the surgery is unit-tested.
+pub fn set_searxng_url_in_toml(text: &str, url: Option<&str>) -> String {
+    let line = url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("searxng_url = {}", toml_string(value)));
+    edit_section_opt(text, "ai", &[("searxng_url", line)])
+}
+
+/// Persist the settings window's SearXNG instance URL (MOE-0034), comment-preserving like every
+/// other writer: the file is the user's.
+pub fn store_searxng_url(url: Option<&str>) -> std::io::Result<()> {
+    edit_config_file(|text| set_searxng_url_in_toml(text, url))
+}
+
+/// Replace (or add, or remove) the `hidden_models` key inside `[ai.providers.<id>]` (the settings
+/// window's model checkboxes, MOE-0029): an empty list removes the line again, and a provider
+/// block that only carries hidden models is created for official providers too.
+pub fn set_provider_hidden_models_in_toml(text: &str, provider: &str, hidden: &[String]) -> String {
+    let line =
+        (!hidden.is_empty()).then(|| format!("hidden_models = {}", toml_string_array(hidden)));
+    edit_section_opt(
+        text,
+        &format!("ai.providers.{provider}"),
+        &[("hidden_models", line)],
+    )
+}
+
+/// Persist the settings window's picker visibility for one provider's models (MOE-0029).
+pub fn store_provider_hidden_models(provider: &str, hidden: &[String]) -> std::io::Result<()> {
+    edit_config_file(|text| set_provider_hidden_models_in_toml(text, provider, hidden))
+}
+
+/// Remove one provider from the config text (MOE-0032): its whole `[ai.providers.<id>]` block
+/// goes away, and — when the caller says the selection pointed at it — `[ai] provider` / `model`
+/// are removed too, so the AI surfaces fall back to their setup state (or the legacy `base_url`).
+/// Pure, so the surgery is unit-tested.
+pub fn remove_provider_in_toml(text: &str, provider: &str, clear_selection: bool) -> String {
+    let mut lines: Vec<String> = if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').map(str::to_string).collect()
+    };
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines = remove_section(lines, &format!("ai.providers.{provider}"));
+    let mut out = lines.join("\n");
+    out.push('\n');
+    if clear_selection {
+        out = edit_section_opt(&out, "ai", &[("provider", None), ("model", None)]);
+    }
+    out
+}
+
+/// Persist a provider removal (the settings window's Remove, MOE-0032).
+pub fn store_provider_removal(provider: &str, clear_selection: bool) -> std::io::Result<()> {
+    edit_config_file(|text| remove_provider_in_toml(text, provider, clear_selection))
+}
+
+/// Read config.toml (creating it from the default template when missing) and write back an edit.
+fn edit_config_file(edit: impl FnOnce(&str) -> String) -> std::io::Result<()> {
     let path = config_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -359,7 +753,7 @@ pub fn store_theme(theme: Theme) -> std::io::Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => DEFAULT_TEMPLATE.to_string(),
         Err(err) => return Err(err),
     };
-    std::fs::write(&path, set_theme_in_toml(&text, theme))
+    std::fs::write(&path, edit(&text))
 }
 
 #[cfg(test)]
@@ -427,6 +821,99 @@ mod tests {
         let cfg = MoeConfig::from_toml("[ai]\nbase_url = \"https://x/v1\"\n").unwrap();
         assert!(cfg.ai.configured());
         assert_eq!(cfg.ai.model_or_default(), "gpt-4o-mini");
+
+        // A provider counts as configured without a legacy base_url (ADR-0040)
+        let cfg =
+            MoeConfig::from_toml("[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-flash\"\n")
+                .unwrap();
+        assert!(cfg.ai.configured());
+        assert_eq!(cfg.ai.provider.as_deref(), Some("deepseek"));
+    }
+
+    /// The multi-provider schema (ADR-0040): provider + model select the pair, `[ai.providers.*]`
+    /// blocks override official defaults or define custom endpoints.
+    #[test]
+    fn provider_blocks_parse_and_validate_protocol() {
+        let cfg = MoeConfig::from_toml(
+            "[ai]\nprovider = \"my-gateway\"\nmodel = \"claude-sonnet-5-5\"\n\
+             [ai.providers.my-gateway]\nname = \"My Gateway\"\nprotocol = \"anthropic\"\n\
+             api_url = \"https://gateway.example.com/anthropic\"\nmodels = [\"claude-sonnet-5-5\"]\n\
+             reasoning = true\n",
+        )
+        .unwrap();
+        let provider = cfg.ai.providers.get("my-gateway").unwrap();
+        assert_eq!(provider.name.as_deref(), Some("My Gateway"));
+        assert_eq!(provider.protocol, Some(Protocol::Anthropic));
+        assert_eq!(
+            provider.api_url.as_deref(),
+            Some("https://gateway.example.com/anthropic")
+        );
+        assert_eq!(
+            provider.models.as_deref(),
+            Some(&["claude-sonnet-5-5".to_string()][..])
+        );
+        assert_eq!(provider.reasoning, Some(true));
+
+        // Unknown protocol strings fail at parse time, naming the vocabulary
+        let err = MoeConfig::from_toml(
+            "[ai.providers.x]\nprotocol = \"gemini\"\napi_url = \"https://x\"\n",
+        )
+        .unwrap_err();
+        assert_eq!(err, ConfigError::UnknownProtocol("gemini".into()));
+        assert!(
+            err.to_string()
+                .contains("openai-chat | openai-responses | anthropic")
+        );
+
+        // Protocol round-trips its config spelling
+        for (raw, protocol) in [
+            ("openai-chat", Protocol::OpenAiChat),
+            ("openai-responses", Protocol::OpenAiResponses),
+            ("anthropic", Protocol::Anthropic),
+        ] {
+            assert_eq!(Protocol::parse(raw).unwrap(), protocol);
+            assert_eq!(protocol.as_str(), raw);
+        }
+        assert!(
+            Protocol::parse(" OpenAI-Chat ").is_ok(),
+            "trimmed, case-insensitive"
+        );
+    }
+
+    /// An empty `[ai.providers.*]` block is legal (official providers are overrides-only).
+    #[test]
+    fn provider_block_shape_is_optional() {
+        let cfg = MoeConfig::from_toml(
+            "[ai]\nprovider = \"openai\"\n\n[ai.providers.openai]\nmodels = [\"gpt-5.2\"]\n",
+        )
+        .unwrap();
+        let provider = cfg.ai.providers.get("openai").unwrap();
+        assert_eq!(provider.protocol, None);
+        assert_eq!(provider.reasoning, None);
+        assert_eq!(
+            provider.models.as_deref(),
+            Some(&["gpt-5.2".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn ai_tool_settings_parse_with_defaults() {
+        let cfg = MoeConfig::from_toml("").unwrap();
+        assert!(cfg.ai.tools, "tools default on for new conversations");
+        assert_eq!(cfg.ai.searxng_url, None);
+        assert_eq!(cfg.ai.fetch_fallback, FetchFallback::Jina);
+        assert_eq!(FetchFallback::Jina.as_str(), "jina");
+        assert_eq!(FetchFallback::None.as_str(), "none");
+
+        let cfg = MoeConfig::from_toml(
+            "[ai]\ntools = false\nsearxng_url = \"http://localhost:8888\"\nfetch_fallback = \"none\"\n",
+        )
+        .unwrap();
+        assert!(!cfg.ai.tools);
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://localhost:8888"));
+        assert_eq!(cfg.ai.fetch_fallback, FetchFallback::None);
+
+        assert!(MoeConfig::from_toml("[ai]\nfetch_fallback = \"bogus\"\n").is_err());
     }
 
     #[test]
@@ -484,6 +971,192 @@ mod tests {
     fn default_template_parses_and_matches_defaults() {
         let cfg = MoeConfig::from_toml(DEFAULT_TEMPLATE).unwrap();
         assert_eq!(cfg, MoeConfig::default());
+    }
+
+    /// The picker's apply (MOE-0028): `provider`/`model` are written in place, comments and every
+    /// unrelated line survive, and a commented sample is not mistaken for an assignment.
+    #[test]
+    fn set_ai_selection_replaces_in_place_and_keeps_everything_else() {
+        let text = "# mine\n[summon]\nkey = \"double-option\"\n\n[ai]\n# provider = \"openai\"\nbase_url = \"https://x/v1\"\nmodel = \"old\"\n";
+        let out = set_ai_selection_in_toml(text, "deepseek", "deepseek-flash");
+        assert!(out.contains("provider = \"deepseek\""));
+        assert!(out.contains("model = \"deepseek-flash\""));
+        assert!(!out.contains("model = \"old\""));
+        assert!(out.contains("# mine"), "comments survive: {out}");
+        assert!(out.contains("# provider = \"openai\""), "{out}");
+        assert!(out.contains("base_url = \"https://x/v1\""), "{out}");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("deepseek"));
+        assert_eq!(cfg.ai.model.as_deref(), Some("deepseek-flash"));
+        assert_eq!(cfg.summon.key, SummonKey::DoubleTap(Modifier::Alt));
+    }
+
+    /// Fresh insertions land under the `[ai]` header in the given order; a missing section is
+    /// appended (the template already carries commented samples, so the write replaces them).
+    #[test]
+    fn set_ai_selection_inserts_both_keys_in_order() {
+        let out = set_ai_selection_in_toml("[summon]\nkey = \"double-cmd\"\n", "lab", "m");
+        assert!(
+            out.ends_with("[ai]\nprovider = \"lab\"\nmodel = \"m\"\n"),
+            "{out}"
+        );
+
+        let out = set_ai_selection_in_toml("[ai]\nbase_url = \"https://x\"\n", "lab", "m");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("lab"));
+        assert_eq!(cfg.ai.model.as_deref(), Some("m"));
+        assert_eq!(cfg.ai.base_url.as_deref(), Some("https://x"));
+        assert!(
+            out.contains("[ai]\nprovider = \"lab\"\nmodel = \"m\"\nbase_url"),
+            "{out}"
+        );
+
+        // The template's commented provider samples are replaced by real assignments
+        let out = set_ai_selection_in_toml(DEFAULT_TEMPLATE, "ollama", "llama3.2");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("ollama"));
+        assert!(cfg.ai.configured());
+    }
+
+    /// Values escape so the written file always parses, even with quotes or backslashes (custom
+    /// provider ids and model names are user input).
+    #[test]
+    fn set_ai_selection_escapes_values() {
+        let out = set_ai_selection_in_toml("", "x\"y", "m\\n");
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("x\"y"));
+        assert_eq!(cfg.ai.model.as_deref(), Some("m\\n"));
+    }
+
+    /// The settings window's picker visibility (MOE-0029): `hidden_models` lands in the provider's
+    /// block, creates the block for official providers, and an empty list removes the line again.
+    #[test]
+    fn set_provider_hidden_models_edits_the_provider_block() {
+        let hidden = vec!["gpt-5.1".to_string(), "gpt-5.1-mini".to_string()];
+
+        // Existing block: the key joins it, everything else survives
+        let text = "# mine\n[ai]\nprovider = \"openai\"\n\n[ai.providers.openai]\n# overrides\nmodels = [\"gpt-5.2\"]\n";
+        let out = set_provider_hidden_models_in_toml(text, "openai", &hidden);
+        assert!(out.contains("# mine"));
+        assert!(out.contains("# overrides"));
+        assert!(out.contains("models = [\"gpt-5.2\"]"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(
+            cfg.ai
+                .providers
+                .get("openai")
+                .unwrap()
+                .hidden_models
+                .as_deref(),
+            Some(&hidden[..])
+        );
+
+        // No block yet (official provider): one is created
+        let out = set_provider_hidden_models_in_toml(
+            "[ai]\nprovider = \"deepseek\"\n",
+            "deepseek",
+            &hidden,
+        );
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(
+            cfg.ai
+                .providers
+                .get("deepseek")
+                .unwrap()
+                .hidden_models
+                .as_deref(),
+            Some(&hidden[..])
+        );
+
+        // Empty list removes the line (and leaves a block-less file block-less)
+        let out = set_provider_hidden_models_in_toml(&out, "deepseek", &[]);
+        assert!(!out.contains("hidden_models"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert!(cfg.ai.providers.is_empty());
+
+        // Replacement in place, not duplicated
+        let out = set_provider_hidden_models_in_toml(text, "openai", &hidden);
+        let out = set_provider_hidden_models_in_toml(&out, "openai", &["gpt-5.2".to_string()]);
+        assert_eq!(out.matches("hidden_models").count(), 1);
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(
+            cfg.ai
+                .providers
+                .get("openai")
+                .unwrap()
+                .hidden_models
+                .as_deref(),
+            Some(&["gpt-5.2".to_string()][..])
+        );
+    }
+
+    /// The settings window's Web Search row (MOE-0034): replace / add / remove `[ai] searxng_url`.
+    #[test]
+    fn set_searxng_url_edits_the_ai_section() {
+        // Existing section: the key joins it, comments and unrelated lines survive
+        let text =
+            "[summon]\nkey = \"double-cmd\"\n\n[ai]\n# my endpoint\nmodel = \"deepseek-flash\"\n";
+        let out = set_searxng_url_in_toml(text, Some("http://localhost:8888"));
+        assert!(out.contains("# my endpoint"));
+        assert!(out.contains("model = \"deepseek-flash\""));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://localhost:8888"));
+
+        // Replacement in place, not duplicated; surrounding whitespace is trimmed
+        let out = set_searxng_url_in_toml(&out, Some("  http://127.0.0.1:8080  "));
+        assert_eq!(out.matches("searxng_url").count(), 1);
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://127.0.0.1:8080"));
+
+        // Blank (or None) removes the line again — unset = no web_search tool
+        let out = set_searxng_url_in_toml(&out, Some("   "));
+        assert!(!out.contains("searxng_url"));
+        assert!(out.contains("# my endpoint"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url, None);
+
+        // No [ai] section yet: one is created
+        let out = set_searxng_url_in_toml("[ui]\ntheme = \"dark\"\n", Some("http://searx.local"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://searx.local"));
+    }
+
+    /// The settings window's Remove (MOE-0032): the provider block leaves whole (its separator
+    /// blank line included), the active selection is cleared only when asked, and everything
+    /// else — comments, other sections — survives byte for byte. A missing provider is a no-op.
+    #[test]
+    fn remove_provider_edits_the_block_and_optionally_the_selection() {
+        let text = "# mine\n[summon]\nkey = \"double-option\"\n\n[ai]\n# pick\nprovider = \"alibaba\"\nmodel = \"qwen\"\n\n[ai.providers.alibaba]  # note\nhidden_models = [\"qwen-old\"]\n\n[ui]\ntheme = \"dark\"\n";
+        let out = remove_provider_in_toml(text, "alibaba", true);
+        assert!(!out.contains("ai.providers.alibaba"));
+        assert!(!out.contains("provider ="));
+        assert!(!out.contains("model ="));
+        assert!(out.contains("# mine"));
+        assert!(out.contains("# pick"));
+        assert!(out.contains("[ui]"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider, None);
+        assert_eq!(cfg.summon.key, SummonKey::DoubleTap(Modifier::Alt));
+        assert!(!out.contains("\n\n\n"), "no doubled blank seam: {out}");
+
+        // Block only (the provider was not the active pair): the selection stays
+        let out = remove_provider_in_toml(text, "alibaba", false);
+        assert!(!out.contains("ai.providers.alibaba"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("alibaba"));
+
+        // A provider that is not there (and no selection clearing asked) leaves the text alone
+        let out = remove_provider_in_toml("[ai]\nprovider = \"deepseek\"\n", "alibaba", false);
+        assert_eq!(out, "[ai]\nprovider = \"deepseek\"\n");
+        // With clear_selection the caller says the pair pointed at the removed id: the lines go,
+        // and the emptied [ai] section loses its header too (nothing is left to declare)
+        let out = remove_provider_in_toml(
+            "[ai]\nprovider = \"alibaba\"\nmodel = \"q\"\n",
+            "alibaba",
+            true,
+        );
+        assert_eq!(out, "\n");
+        assert!(MoeConfig::from_toml(&out).unwrap().ai.provider.is_none());
     }
 
     #[test]

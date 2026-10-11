@@ -99,6 +99,9 @@ pub enum ActionResult {
     OpenSideView {
         payload: serde_json::Value,
     },
+    /// Opens the settings window (MOE-0029): the platform shows it and dismisses the panel — the
+    /// settings surface is a window of its own, never a panel page (ADR-0009 amendment).
+    OpenSettings {},
     Silent,
 }
 

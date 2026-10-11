@@ -1,7 +1,7 @@
 {
   "identifier": "default",
-  "description": "Panel & chat webviews: core IPC, summon-key registration and window hiding",
-  "windows": ["panel", "chat"],
+  "description": "Panel, chat and settings webviews: core IPC, summon-key registration and window hiding",
+  "windows": ["panel", "chat", "settings"],
   "permissions": [
     "core:default",
     "core:window:allow-hide",
