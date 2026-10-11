@@ -929,6 +929,13 @@ body.moe-pointer-inside .moe-titlebar-title {
   border-left: 2px solid var(--moe-line-strong);
   padding-left: 9px;
 }
+/* Lists inside the excerpt start flush at its content edge (MOE-0037): tool results arrive as
+   ordered lists, and the prose indent would push them right of the heading label. Scoped to the
+   excerpt bodies (out-specifies `.md ol`); answer prose keeps its indent. */
+.moe-thinking-body.md :is(ul, ol) {
+  padding-left: 0;
+  list-style-position: inside;
+}
 @media (prefers-reduced-motion: no-preference) {
   .moe-thinking-live {
     background: linear-gradient(

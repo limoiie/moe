@@ -223,7 +223,7 @@ function toolRowEl(call: ToolCall): ToolRow {
     }),
   );
   const body = document.createElement("div");
-  body.className = "moe-thinking-body md mt-1.5 text-xs text-fg-muted";
+  body.className = "moe-thinking-body md mt-1.5 text-sm text-fg-muted";
   details.append(summary, body);
   const row: ToolRow = { details, label: labelEl, status, body };
   setToolRowStatus(row, call.status);
