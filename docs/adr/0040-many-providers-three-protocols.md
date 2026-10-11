@@ -109,3 +109,18 @@ other config surgery. An all-visible provider carries no line, and a block that 
 `hidden_models` is removed again when the list empties. The active pair is unaffected: hiding
 the model a conversation runs on only removes it from the pickers, never from the surface that
 already uses it.
+
+## Amendment: the tool loop speaks Anthropic too (MOE-0035)
+
+The "openai-chat only" agentic scope is halved: Anthropic-protocol providers (MiniMax's
+Claude-Code-compatible surface, Anthropic itself) create and continue Agentic Conversations. The
+adapter normalizes the OpenAI-shaped wire intermediate both ways — tool specs to
+`{name, description, input_schema}`, assistant rounds to `thinking` + `tool_use` blocks, runs of
+`tool` messages to `tool_result` blocks on user messages (results first) — and the shared delta
+vocabulary gained Anthropic's `input_json_delta` fragments and a `ReasoningSignature` variant.
+The record grows a `reasoning_signature` replay field: MiniMax requires the thinking signature
+"unchanged in later turns", and real Anthropic 400s on altered blocks mid-tool-use. MiniMax's
+surface whitelists only `thinking.type: disabled|adaptive` (M3.1 rejects even `disabled`, so
+reasoning-off must omit the key), making the `thinking` parameter a per-provider dialect:
+`adaptive` for `minimax*`, legacy `enabled`+budget for `anthropic`. `openai-responses` remains
+plain-conversation-only — its tool generalization is a separate follow-up.

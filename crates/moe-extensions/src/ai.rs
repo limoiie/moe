@@ -494,6 +494,9 @@ pub(crate) enum RoundEnd {
     Settled {
         answer: String,
         reasoning: String,
+        /// The reasoning block's signature (Anthropic `signature_delta`, MOE-0035): replayed
+        /// verbatim beside the reasoning, never rendered.
+        reasoning_signature: Option<String>,
         tool_calls: Vec<ToolCall>,
         stopped: bool,
     },
@@ -566,6 +569,7 @@ pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> R
 
     let mut raw = String::new();
     let mut reasoning_field = String::new();
+    let mut reasoning_signature: Option<String> = None;
     let mut fragments: Vec<ToolCallFragment> = Vec::new();
     let mut stopped = false;
     for line in BufReader::new(response).lines() {
@@ -589,6 +593,7 @@ pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> R
                 let (tagged, answer) = split_reasoning(&raw);
                 emit(answer, prefer_reasoning(&reasoning_field, tagged), true);
             }
+            SseLine::ReasoningSignature(signature) => reasoning_signature = Some(signature),
             SseLine::ToolCalls(batch) => fragments.extend(batch),
             SseLine::Done => break,
             SseLine::Ignore => {}
@@ -605,6 +610,7 @@ pub(crate) fn stream_once(request: RoundRequest, emitter: Arc<dyn Emitter>) -> R
     RoundEnd::Settled {
         answer,
         reasoning,
+        reasoning_signature,
         tool_calls,
         stopped,
     }
@@ -731,13 +737,16 @@ fn chat_request(provider: &ActiveProvider, messages: Vec<Message>, stream: bool)
         stream,
         reasoning: provider.reasoning,
         max_tokens: provider.max_tokens,
+        tools: Vec::new(),
+        anthropic_thinking: providers::anthropic_thinking(provider),
     }
 }
 
 /// One chat turn's transport: plain Conversations stream as today (one round, no tools); Agentic
 /// Conversations run the tool loop (MOE-0026). Both receive the record ending in the new question
 /// and emit `ai.quick-ask` / `ai.side` events; the conversation id is the stream key (Stop scope).
-/// The tool loop is gated to `openai-chat` (ADR-0040) — the callers decide `agentic` accordingly.
+/// The tool loop is gated to the tool-capable protocols (`openai-chat` and `anthropic` —
+/// ADR-0040, MOE-0035); the callers decide `agentic` accordingly.
 fn spawn_chat_turn(
     config: &MoeConfig,
     provider: ActiveProvider,
@@ -748,6 +757,7 @@ fn spawn_chat_turn(
     emitter: Arc<dyn Emitter>,
 ) {
     let model_hint = provider.model_hint();
+    let anthropic_thinking = providers::anthropic_thinking(&provider);
     if agentic {
         let tool_ctx = tools::ToolContext::new(
             config.ai.searxng_url.clone(),
@@ -780,6 +790,10 @@ fn spawn_chat_turn(
                     base_url: provider.api_url,
                     key: provider.key,
                     model: provider.model,
+                    protocol: provider.protocol,
+                    reasoning: provider.reasoning,
+                    max_tokens: provider.max_tokens,
+                    anthropic_thinking,
                     record: messages,
                     tool_specs,
                     tools: tool_ctx,
@@ -832,13 +846,20 @@ fn spawn_chat_turn(
     }
 }
 
-/// ADR-0040: the tool loop is gated to `openai-chat`. A stored agentic Conversation can only be
-/// continued on it — the record replays Tool Calls that the other protocols cannot express.
+/// ADR-0040 (widened by MOE-0035): the tool loop is gated to `openai-chat` and `anthropic`. A
+/// stored agentic Conversation can only be continued on a protocol that replays its Tool Calls —
+/// the OpenAI-shaped wire intermediate covers both dialects.
 fn continue_agentic(stored: Option<bool>, provider: &ActiveProvider) -> Result<bool, MoeError> {
-    if stored == Some(true) && provider.protocol != Protocol::OpenAiChat {
+    if stored == Some(true)
+        && !matches!(
+            provider.protocol,
+            Protocol::OpenAiChat | Protocol::Anthropic
+        )
+    {
         return Err(MoeError::Internal(format!(
-            "this conversation replays Tool results and needs an openai-chat provider: switch \
-             [ai] provider back, or start a new chat (the active provider uses {})",
+            "this conversation replays Tool results and needs an openai-chat or anthropic \
+             provider: switch [ai] provider back, or start a new chat (the active provider \
+             uses {})",
             provider.protocol.as_str()
         )));
     }
@@ -937,7 +958,11 @@ impl AiShell {
         };
         let replayable = continue_agentic(stored_agentic, &provider)?;
         let agentic = if starting {
-            config.ai.tools && provider.protocol == Protocol::OpenAiChat
+            config.ai.tools
+                && matches!(
+                    provider.protocol,
+                    Protocol::OpenAiChat | Protocol::Anthropic
+                )
         } else {
             replayable
         };
@@ -1280,7 +1305,11 @@ impl Extension for AiShell {
         };
         let replayable = continue_agentic(stored_agentic, &provider)?;
         let agentic = if starting {
-            config.ai.tools && provider.protocol == Protocol::OpenAiChat
+            config.ai.tools
+                && matches!(
+                    provider.protocol,
+                    Protocol::OpenAiChat | Protocol::Anthropic
+                )
         } else {
             replayable
         };

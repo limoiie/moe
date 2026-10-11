@@ -208,6 +208,21 @@ impl ActiveProvider {
 }
 
 /// Resolve the active provider from the loaded config (catalog + on-disk/env keys).
+/// The Anthropic adapter's thinking dialect for one provider (MOE-0035): MiniMax's surface
+/// whitelists only `disabled|adaptive` — and M3.1 rejects even `disabled`, so reasoning-off must
+/// *omit* the key — while legacy Anthropic models want `enabled` + `budget_tokens`.
+pub fn anthropic_thinking(provider: &ActiveProvider) -> super::AnthropicThinking {
+    use super::AnthropicThinking;
+    if !provider.reasoning {
+        return AnthropicThinking::Omit;
+    }
+    if provider.id.starts_with("minimax") {
+        AnthropicThinking::Adaptive
+    } else {
+        AnthropicThinking::EnabledBudget
+    }
+}
+
 pub fn resolve(config: &MoeConfig) -> Result<ActiveProvider, String> {
     resolve_with(config, &moe_platform::model_catalog::load(), |id, env| {
         keychain::ai_api_key_for(id, env)

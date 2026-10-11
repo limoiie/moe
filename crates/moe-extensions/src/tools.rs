@@ -186,6 +186,41 @@ fn search_results_text(body: &str) -> Result<String, String> {
     Ok(out.trim_end().to_string())
 }
 
+/// Probe a SearXNG instance for the settings window's Test button (MOE-0034): one real search
+/// round-trip (`format=json`) folded into a human-readable summary. Errors carry the same fix
+/// hints as the tool itself, so the window can show them verbatim.
+pub fn probe_searxng(base: &str) -> Result<String, String> {
+    let base = base.trim();
+    if !(base.starts_with("http://") || base.starts_with("https://")) {
+        return Err("the instance URL needs to be an absolute http(s) URL".into());
+    }
+    let url = format!(
+        "{}/search?q={}&format=json",
+        base.trim_end_matches('/'),
+        percent_encode("moe")
+    );
+    let response = http_client()?
+        .get(&url)
+        .send()
+        .map_err(|err| format!("search instance unreachable: {err}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!(
+            "search instance returned {status} — enable the JSON format (add `json` to `search.formats` in its settings.yml)"
+        ));
+    }
+    let body = response
+        .text()
+        .map_err(|err| format!("could not read the search response: {err}"))?;
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|err| format!("search instance returned invalid JSON: {err}"))?;
+    let count = json["results"].as_array().map_or(0, Vec::len);
+    Ok(format!(
+        "{count} {} for «moe» — JSON search works",
+        if count == 1 { "result" } else { "results" }
+    ))
+}
+
 fn web_fetch(raw_url: &str, ctx: &ToolContext) -> Result<String, String> {
     let url = raw_url.trim();
     if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -543,6 +578,27 @@ mod tests {
         assert!(err.contains("403"), "status is in the error: {err}");
         assert!(err.contains("formats"), "the hint names the fix: {err}");
         server.join().unwrap();
+    }
+
+    /// The settings window's Test button (MOE-0034): a summary on success, the fix hint on failure.
+    #[test]
+    fn probe_searxng_summarizes_and_hints() {
+        let body = r#"{"results":[{"title":"a","url":"https://a.example","content":"x"},{"title":"b","url":"https://b.example","content":"y"}]}"#;
+        let (base, server) = serve_once("200 OK", body);
+        assert_eq!(
+            probe_searxng(&base).unwrap(),
+            "2 results for «moe» — JSON search works"
+        );
+        server.join().unwrap();
+
+        let (base, server) = serve_once("403 Forbidden", "");
+        let err = probe_searxng(&base).unwrap_err();
+        assert!(err.contains("403"), "status is in the error: {err}");
+        assert!(err.contains("formats"), "the hint names the fix: {err}");
+        server.join().unwrap();
+
+        // A non-http URL is rejected before any network is touched
+        assert!(probe_searxng("localhost:8080").is_err());
     }
 
     #[test]

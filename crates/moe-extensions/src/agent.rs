@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::ai::{
     FrameBuilder, RoundEnd, RoundRequest, StreamFinish, begin_stream, end_stream, stream_once,
 };
-use crate::ai_client::chat_body_with_tools;
+use crate::ai_client::{AnthropicThinking, ChatRequest, request_body};
 use crate::attachment;
 use crate::tools::{self, ToolContext};
 
@@ -72,6 +72,13 @@ pub fn wire_messages(history: &[Message], agentic: bool) -> Vec<serde_json::Valu
                 {
                     value["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
                 }
+                if let Some(signature) = message
+                    .reasoning_signature
+                    .as_deref()
+                    .filter(|signature| !signature.is_empty())
+                {
+                    value["reasoning_signature"] = serde_json::Value::String(signature.to_string());
+                }
                 if !message.tool_calls.is_empty() {
                     value["tool_calls"] = serde_json::Value::Array(
                         message
@@ -104,6 +111,13 @@ pub(crate) struct AgentTurnRequest {
     pub base_url: String,
     pub key: String,
     pub model: String,
+    /// The provider's protocol: the loop speaks `openai-chat` (MOE-0026) and `anthropic`
+    /// (MOE-0035); the gate in `ai.rs` admits only these.
+    pub protocol: Protocol,
+    pub reasoning: bool,
+    pub max_tokens: u64,
+    /// The Anthropic adapter's thinking dialect (the other protocols ignore it).
+    pub anthropic_thinking: AnthropicThinking,
     /// The whole record; every round replays it and appends the round's messages.
     pub record: Vec<Message>,
     /// The advertised tool definitions (config-gated once per turn).
@@ -141,6 +155,10 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
         base_url,
         key,
         model,
+        protocol,
+        reasoning,
+        max_tokens,
+        anthropic_thinking,
         mut record,
         tool_specs,
         mut tools,
@@ -166,15 +184,18 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
             });
         }
     };
-    let settle = |text: String, reasoning: String, pending_hint: bool| {
-        let mut message = assistant_message(&text);
-        message.reasoning = non_empty(reasoning.clone());
-        persist(&message);
-        emit(text, reasoning, pending_hint);
-    };
+    let settle =
+        |text: String, reasoning: String, signature: Option<String>, pending_hint: bool| {
+            let mut message = assistant_message(&text);
+            message.reasoning = non_empty(reasoning.clone());
+            message.reasoning_signature = signature;
+            persist(&message);
+            emit(text, reasoning, pending_hint);
+        };
 
     let mut last_answer = String::new();
     let mut last_reasoning = String::new();
+    let mut last_signature: Option<String> = None;
 
     for round in 1..=MAX_ROUNDS {
         // A stop that landed between rounds settles without firing another request.
@@ -182,18 +203,34 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
             .as_ref()
             .is_some_and(|flag| flag.load(Ordering::Relaxed))
         {
-            settle(stop_text(&last_answer), last_reasoning, false);
+            settle(
+                stop_text(&last_answer),
+                last_reasoning,
+                last_signature,
+                false,
+            );
             end_stream(&stream_key);
             return;
         }
 
         let wire = wire_messages(&record, true);
-        let body = chat_body_with_tools(&model, wire, &tool_specs, true);
+        let body = request_body(
+            protocol,
+            &ChatRequest {
+                model: model.clone(),
+                messages: wire,
+                stream: true,
+                reasoning,
+                max_tokens,
+                tools: tool_specs.clone(),
+                anthropic_thinking,
+            },
+        );
         let outcome = stream_once(
             RoundRequest {
-                // The loop's wire is OpenAI chat completions by construction (MOE-0026); tool
-                // deltas for the other protocols are the follow-up that generalizes it (ADR-0040).
-                protocol: Protocol::OpenAiChat,
+                // The loop speaks the provider's protocol (MOE-0026 for openai-chat, MOE-0035
+                // for anthropic); the adapters normalize both into the shared delta vocabulary.
+                protocol,
                 base_url: base_url.clone(),
                 key: key.clone(),
                 body,
@@ -204,22 +241,23 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
             },
             emitter.clone(),
         );
-        let (answer, reasoning, tool_calls, stopped) = match outcome {
+        let (answer, reasoning, reasoning_signature, tool_calls, stopped) = match outcome {
             RoundEnd::Failed(card) => {
-                settle(card, String::new(), false);
+                settle(card, String::new(), None, false);
                 end_stream(&stream_key);
                 return;
             }
             RoundEnd::Settled {
                 answer,
                 reasoning,
+                reasoning_signature,
                 tool_calls,
                 stopped,
-            } => (answer, reasoning, tool_calls, stopped),
+            } => (answer, reasoning, reasoning_signature, tool_calls, stopped),
         };
 
         if stopped {
-            settle(stop_text(&answer), reasoning, false);
+            settle(stop_text(&answer), reasoning, reasoning_signature, false);
             end_stream(&stream_key);
             return;
         }
@@ -228,6 +266,7 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
             settle(
                 "(the endpoint returned no content)".to_string(),
                 reasoning,
+                reasoning_signature,
                 false,
             );
             end_stream(&stream_key);
@@ -240,6 +279,7 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
         let forced = !tool_calls.is_empty() && round == MAX_ROUNDS;
         let mut message = assistant_message(&answer);
         message.reasoning = non_empty(reasoning.clone());
+        message.reasoning_signature = reasoning_signature.clone();
         if !forced {
             message.tool_calls = tool_calls.clone();
         } else if answer.trim().is_empty() {
@@ -249,6 +289,7 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
         }
         last_answer = message.content.clone();
         last_reasoning = reasoning.clone();
+        last_signature = reasoning_signature;
         persist(&message);
         record.push(message);
 
@@ -301,7 +342,7 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
                     persist(&result_message);
                     record.push(result_message);
                 }
-                settle(stop_text(&answer), reasoning, false);
+                settle(stop_text(&answer), reasoning, last_signature.clone(), false);
                 end_stream(&stream_key);
                 return;
             }
@@ -422,6 +463,7 @@ mod tests {
         assert_eq!(wire.len(), 2);
         assert_eq!(wire[0]["role"], "user");
         assert!(wire[1].get("reasoning_content").is_none());
+        assert!(wire[1].get("reasoning_signature").is_none());
         assert!(wire[1].get("tool_calls").is_none());
     }
 
@@ -435,6 +477,7 @@ mod tests {
             ..Message::default()
         };
         assistant.reasoning = Some("checking".into());
+        assistant.reasoning_signature = Some("sig123".into());
         assistant.tool_calls = vec![ToolCall {
             id: "call_1".into(),
             name: "web_search".into(),
@@ -457,6 +500,7 @@ mod tests {
         assert_eq!(wire[0]["content"], SYSTEM_PROMPT);
         assert_eq!(wire[1]["role"], "user");
         assert_eq!(wire[2]["reasoning_content"], "checking");
+        assert_eq!(wire[2]["reasoning_signature"], "sig123");
         assert_eq!(wire[2]["tool_calls"][0]["id"], "call_1");
         assert_eq!(wire[2]["tool_calls"][0]["type"], "function");
         assert_eq!(wire[2]["tool_calls"][0]["function"]["name"], "web_search");
@@ -611,6 +655,10 @@ mod tests {
                     base_url,
                     key: "test-key".into(),
                     model: "m".into(),
+                    protocol: Protocol::OpenAiChat,
+                    reasoning: false,
+                    max_tokens: 8192,
+                    anthropic_thinking: AnthropicThinking::Omit,
                     record: vec![Message {
                         role: Role::User,
                         content: "read the note".into(),
@@ -724,6 +772,10 @@ mod tests {
                     base_url,
                     key: "test-key".into(),
                     model: "m".into(),
+                    protocol: Protocol::OpenAiChat,
+                    reasoning: false,
+                    max_tokens: 8192,
+                    anthropic_thinking: AnthropicThinking::Omit,
                     record: vec![Message {
                         role: Role::User,
                         content: "keep reading".into(),
@@ -826,6 +878,10 @@ mod tests {
                     base_url,
                     key: "test-key".into(),
                     model: "m".into(),
+                    protocol: Protocol::OpenAiChat,
+                    reasoning: false,
+                    max_tokens: 8192,
+                    anthropic_thinking: AnthropicThinking::Omit,
                     record: vec![Message {
                         role: Role::User,
                         content: "fetch slowly".into(),

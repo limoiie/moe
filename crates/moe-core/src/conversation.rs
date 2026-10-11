@@ -46,6 +46,11 @@ pub struct Message {
     /// copied or written back (the Thinking block renders it, ADR-0024 amendments).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// The thinking block's provider signature (Anthropic dialects, MOE-0035): replayed verbatim
+    /// beside `reasoning` — MiniMax requires it "unchanged in later turns", and real Anthropic
+    /// 400s on altered blocks mid-tool-use; never rendered, never copied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_signature: Option<String>,
     /// Assistant-round tool calls, replayed verbatim when the conversation is agentic (MOE-0026).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,

@@ -680,6 +680,23 @@ pub fn store_ai_selection(provider: &str, model: &str) -> std::io::Result<()> {
     edit_config_file(|text| set_ai_selection_in_toml(text, provider, model))
 }
 
+/// Replace (or add, or remove) the `searxng_url` key inside `[ai]` (the settings window's Web
+/// Search row, MOE-0034): a blank value removes the line again — unset means the `web_search`
+/// tool is not advertised at all. Pure, so the surgery is unit-tested.
+pub fn set_searxng_url_in_toml(text: &str, url: Option<&str>) -> String {
+    let line = url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("searxng_url = {}", toml_string(value)));
+    edit_section_opt(text, "ai", &[("searxng_url", line)])
+}
+
+/// Persist the settings window's SearXNG instance URL (MOE-0034), comment-preserving like every
+/// other writer: the file is the user's.
+pub fn store_searxng_url(url: Option<&str>) -> std::io::Result<()> {
+    edit_config_file(|text| set_searxng_url_in_toml(text, url))
+}
+
 /// Replace (or add, or remove) the `hidden_models` key inside `[ai.providers.<id>]` (the settings
 /// window's model checkboxes, MOE-0029): an empty list removes the line again, and a provider
 /// block that only carries hidden models is created for official providers too.
@@ -1071,6 +1088,37 @@ mod tests {
                 .as_deref(),
             Some(&["gpt-5.2".to_string()][..])
         );
+    }
+
+    /// The settings window's Web Search row (MOE-0034): replace / add / remove `[ai] searxng_url`.
+    #[test]
+    fn set_searxng_url_edits_the_ai_section() {
+        // Existing section: the key joins it, comments and unrelated lines survive
+        let text =
+            "[summon]\nkey = \"double-cmd\"\n\n[ai]\n# my endpoint\nmodel = \"deepseek-flash\"\n";
+        let out = set_searxng_url_in_toml(text, Some("http://localhost:8888"));
+        assert!(out.contains("# my endpoint"));
+        assert!(out.contains("model = \"deepseek-flash\""));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://localhost:8888"));
+
+        // Replacement in place, not duplicated; surrounding whitespace is trimmed
+        let out = set_searxng_url_in_toml(&out, Some("  http://127.0.0.1:8080  "));
+        assert_eq!(out.matches("searxng_url").count(), 1);
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://127.0.0.1:8080"));
+
+        // Blank (or None) removes the line again — unset = no web_search tool
+        let out = set_searxng_url_in_toml(&out, Some("   "));
+        assert!(!out.contains("searxng_url"));
+        assert!(out.contains("# my endpoint"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url, None);
+
+        // No [ai] section yet: one is created
+        let out = set_searxng_url_in_toml("[ui]\ntheme = \"dark\"\n", Some("http://searx.local"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.searxng_url.as_deref(), Some("http://searx.local"));
     }
 
     /// The settings window's Remove (MOE-0032): the provider block leaves whole (its separator

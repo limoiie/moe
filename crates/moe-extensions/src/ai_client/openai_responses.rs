@@ -147,6 +147,8 @@ mod tests {
             stream: true,
             reasoning,
             max_tokens: 2048,
+            tools: Vec::new(),
+            anthropic_thinking: crate::ai_client::AnthropicThinking::Omit,
         }
     }
 

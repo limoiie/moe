@@ -151,7 +151,10 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   each group shows its protocol and key state with an inline key row (saved to the provider's own
   0600 file), and every model row carries its catalog facts, a checkbox for the picker visibility
   (`hidden_models` in the provider's block) and a click-to-activate pair switch. A search connects
-  more catalog providers by saving their key. The **General** pane carries the theme rows and the
+  more catalog providers by saving their key, and a **Web Search** row at the pane's end carries
+  the agent's SearXNG instance (`searxng_url`): save a URL to offer conversations the `web_search`
+  tool, **Test** it for a live JSON round-trip (a 403 names the `formats` fix), or save an empty
+  value to turn search off. The **General** pane carries the theme rows and the
   config-file entry; the file stays the escape hatch for everything else.
 - **Model switcher (MOE-0029/0030)**: both chat surfaces' actions cards carry a **Change Model**
   row (`⌥M`, MOE-0033; plus **Stop Generation** while a stream runs). It lists the bare model
@@ -250,7 +253,8 @@ Every shortcut is rendered as Kbd blocks, one key per block.
   variables and the model list come from the embedded model catalog (refreshed daily), and each
   model's context window, output limit, tool/image/reasoning support and pricing are catalogued.
   Custom endpoints state `protocol` + `api_url` + `models`. Tool-using (agentic) conversations run
-  on `openai-chat` only; the other protocols open plain conversations.
+  on `openai-chat` and `anthropic` protocol providers (MOE-0035 — MiniMax's Claude-Code surface
+  included); `openai-responses` opens plain conversations.
 
   The API key lives per provider in `~/Library/Application Support/moe/keys/<provider-id>` (0600,
   never echoed; the implicit `default` provider keeps the legacy `api-key` file; an unsigned app

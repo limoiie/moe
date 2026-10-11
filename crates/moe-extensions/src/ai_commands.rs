@@ -207,6 +207,8 @@ fn prompt_request(
         stream,
         reasoning: provider.reasoning,
         max_tokens: provider.max_tokens,
+        tools: Vec::new(),
+        anthropic_thinking: providers::anthropic_thinking(provider),
     }
 }
 

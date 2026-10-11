@@ -64,6 +64,7 @@ impl Db {
                  content TEXT NOT NULL,
                  attachments TEXT NOT NULL DEFAULT '[]',
                  reasoning TEXT,
+                 reasoning_signature TEXT,
                  tool_calls TEXT NOT NULL DEFAULT '[]',
                  tool_call_id TEXT,
                  created_unix INTEGER NOT NULL
@@ -84,6 +85,11 @@ impl Db {
                 "messages",
                 "reasoning",
                 "ALTER TABLE messages ADD COLUMN reasoning TEXT",
+            ),
+            (
+                "messages",
+                "reasoning_signature",
+                "ALTER TABLE messages ADD COLUMN reasoning_signature TEXT",
             ),
             (
                 "messages",
@@ -144,8 +150,8 @@ impl Db {
         self.conn
             .execute(
                 "INSERT INTO messages
-                     (conversation_id, role, content, attachments, reasoning, tool_calls, tool_call_id, created_unix)
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+                     (conversation_id, role, content, attachments, reasoning, reasoning_signature, tool_calls, tool_call_id, created_unix)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
                  WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ?1)",
                 rusqlite::params![
                     conversation_id,
@@ -153,6 +159,7 @@ impl Db {
                     message.content,
                     attachments,
                     message.reasoning,
+                    message.reasoning_signature,
                     tool_calls,
                     message.tool_call_id,
                     ts
@@ -300,7 +307,7 @@ impl Db {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT role, content, attachments, reasoning, tool_calls, tool_call_id FROM messages
+                "SELECT role, content, attachments, reasoning, tool_calls, tool_call_id, reasoning_signature FROM messages
                  WHERE conversation_id = ?1 ORDER BY id ASC",
             )
             .map_err(|err| err.to_string())?;
@@ -316,6 +323,7 @@ impl Db {
                     reasoning: row.get(3)?,
                     tool_calls: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
                     tool_call_id: row.get(5)?,
+                    reasoning_signature: row.get(6)?,
                 })
             })
             .map_err(|err| err.to_string())?;

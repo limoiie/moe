@@ -49,10 +49,15 @@ pub fn chat_body_with_tools(
     body
 }
 
-/// The shared request → this protocol's body: exactly `chat_body_with_stream` (the other request
-/// fields are protocol options this dialect does not use — MOE-0026's wire stays untouched).
+/// The shared request → this protocol's body: `chat_body_with_stream` plus the tools passthrough
+/// when the request advertises any (an empty tool list keeps MOE-0026's wire byte-identical).
 pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
-    chat_body_with_stream(&request.model, request.messages.clone(), request.stream)
+    chat_body_with_tools(
+        &request.model,
+        request.messages.clone(),
+        &request.tools,
+        request.stream,
+    )
 }
 
 /// Outcome of processing one SSE line.

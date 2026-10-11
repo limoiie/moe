@@ -28,8 +28,11 @@ pub enum SseLine {
     /// Incremental reasoning (`reasoning_content`, Anthropic `thinking_delta`, Responses
     /// reasoning-summary deltas).
     Reasoning(String),
+    /// The reasoning block's provider signature (Anthropic `signature_delta`, MOE-0035): replayed
+    /// verbatim beside the reasoning text — MiniMax requires it "unchanged in later turns".
+    ReasoningSignature(String),
     /// Tool-call fragments; accumulate by index via [`merge_tool_call_fragments`] (the request must
-    /// have advertised tools — MOE-0026; only `openai-chat` produces these in v1).
+    /// have advertised tools — MOE-0026; produced by `openai-chat` and `anthropic`, MOE-0035).
     ToolCalls(Vec<ToolCallFragment>),
     /// Stream end (`[DONE]`, `message_stop`, `response.completed`).
     Done,
@@ -79,6 +82,26 @@ pub struct ChatRequest {
     pub reasoning: bool,
     /// Anthropic requires `max_tokens`; the resolver clamps it to the catalogued output limit.
     pub max_tokens: u64,
+    /// The advertised tool definitions in OpenAI function shape; each adapter normalizes them
+    /// (Anthropic → `{name, description, input_schema}`, MOE-0035). Empty = no tools.
+    pub tools: Vec<serde_json::Value>,
+    /// The Anthropic adapter's `thinking` dialect (MOE-0035), resolved per provider in `ai.rs`;
+    /// the other protocols ignore it.
+    pub anthropic_thinking: AnthropicThinking,
+}
+
+/// Which `thinking` parameter the Anthropic adapter sends (MOE-0035): MiniMax's surface
+/// whitelists only `disabled|adaptive` — and M3.1 even 400s on `disabled`, so "off" must *omit*
+/// the key — while legacy Anthropic models want `enabled` + `budget_tokens`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnthropicThinking {
+    /// No `thinking` key at all.
+    #[default]
+    Omit,
+    /// `{"type":"enabled","budget_tokens":N}` (legacy Anthropic surface).
+    EnabledBudget,
+    /// `{"type":"adaptive"}` (MiniMax's Anthropic-compatible surface).
+    Adaptive,
 }
 
 /// The protocol's endpoint: each adapter appends its canonical path to the base URL.

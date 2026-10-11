@@ -1127,6 +1127,25 @@ fn ai_remove_provider(provider: String) -> Result<(), String> {
     moe_extensions::ai_models::remove_provider(&provider).map_err(|err| err.to_string())
 }
 
+/// The settings window's Web Search row (MOE-0034): the configured SearXNG instance, if any.
+#[tauri::command]
+fn ai_searxng_url() -> Option<String> {
+    MoeConfig::load().ai.searxng_url
+}
+
+/// Save — or with a blank value, remove — `[ai] searxng_url` (the comment-preserving writer).
+#[tauri::command]
+fn ai_set_searxng_url(url: Option<String>) -> Result<(), String> {
+    moe_platform::config::store_searxng_url(url.as_deref()).map_err(|err| err.to_string())
+}
+
+/// The row's Test button: one real search round-trip against the instance — `(async)` keeps the
+/// blocking HTTP (the tools' 20 s budget) off the main thread.
+#[tauri::command(async)]
+fn ai_test_searxng(url: String) -> Result<String, String> {
+    moe_extensions::tools::probe_searxng(&url)
+}
+
 /// Is a generation actually live for this conversation? The chat page's load-time truth
 /// (MOE-0030 revision 9): "the last message is a question" is only a hint, a failed request
 /// would otherwise leave the page generating forever and swallow every Enter into a silent stop.
@@ -1594,6 +1613,9 @@ fn main() {
             ai_set_model_visibility,
             ai_save_provider_key,
             ai_remove_provider,
+            ai_searxng_url,
+            ai_set_searxng_url,
+            ai_test_searxng,
             conversation_streaming,
             open_settings_window,
             open_input_monitoring_settings,

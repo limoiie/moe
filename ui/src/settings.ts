@@ -257,6 +257,7 @@ async function renderAi() {
   }
   for (const provider of providers) paneEl.append(providerCard(provider));
   paneEl.append(connectCard());
+  paneEl.append(await webSearchCard());
 }
 
 /** One provider group: header (name, protocol, key state) + the model rows. */
@@ -592,6 +593,106 @@ function connectCard(): HTMLElement {
   };
   input.addEventListener("input", () => void load(input.value));
   void load("");
+  return el;
+}
+
+// ---- AI pane: Web Search (the agent's SearXNG tool, MOE-0034) ----
+
+/**
+ * The SearXNG instance row: a URL capsule + Test + Save. Saving an empty value removes the key
+ * again — unset means the model is never offered `web_search` at all (tools.rs `specs`).
+ */
+async function webSearchCard(): Promise<HTMLElement> {
+  const el = card();
+  const header = document.createElement("header");
+  header.className = "flex items-center gap-2 border-b border-line px-4 py-2.5";
+  header.append(iconEl("globe", { size: 15, className: "text-fg-subtle" }));
+  const title = document.createElement("span");
+  title.className = "min-w-0 flex-1 text-xs font-medium text-fg-muted";
+  title.textContent = "Web Search";
+  header.append(title);
+
+  let current: string | null = null;
+  try {
+    current = await invoke<string | null>("ai_searxng_url");
+  } catch {
+    current = null;
+  }
+  header.append(badge(current ? "configured" : "off", current ? "success" : "muted"));
+
+  const row = document.createElement("div");
+  row.className = "flex items-center gap-2 px-4 py-3";
+  const field = capsuleInput({ placeholder: "http://localhost:8080" });
+  field.input.value = current ?? "";
+  field.msg.className += " max-w-56 truncate";
+  const testButton = roundButton("search", "Test the instance");
+  const saveButton = roundButton("check", "Save");
+  row.append(field.capsule, testButton, saveButton);
+
+  const sub = document.createElement("p");
+  sub.className = "border-t border-line px-4 py-2 text-[11px] leading-relaxed text-fg-subtle";
+  sub.textContent =
+    "A self-hosted SearXNG instance with the JSON format enabled — when set, conversations may call web_search (chat and Anthropic protocol providers; the tool needs no API key). Save an empty value to turn web search off.";
+
+  el.append(header, row, sub);
+
+  const input = field.input;
+  const msg = field.msg;
+  const say = (text: string) => {
+    msg.textContent = text;
+    msg.title = text;
+  };
+  /** The trimmed field value, or null when it is neither empty nor an http(s) URL. */
+  const checkedUrl = (): string | null => {
+    const value = input.value.trim();
+    if (value && !/^https?:\/\//i.test(value)) {
+      say("http(s) URL");
+      return null;
+    }
+    say("");
+    return value;
+  };
+  const save = async () => {
+    const value = checkedUrl();
+    if (value === null) return;
+    try {
+      await invoke("ai_set_searxng_url", { url: value || null });
+      toast(value ? "Web search saved" : "Web search turned off");
+      await renderPane();
+    } catch (err) {
+      say(String(err));
+    }
+  };
+  const test = async () => {
+    const value = checkedUrl();
+    if (value === null) return;
+    if (!value) {
+      say("nothing to test");
+      return;
+    }
+    for (const button of [testButton, saveButton]) {
+      button.disabled = true;
+      button.classList.add("opacity-50");
+    }
+    try {
+      toast(await invoke<string>("ai_test_searxng", { url: value }), "search");
+    } catch (err) {
+      say(String(err));
+    } finally {
+      for (const button of [testButton, saveButton]) {
+        button.disabled = false;
+        button.classList.remove("opacity-50");
+      }
+    }
+  };
+  saveButton.addEventListener("click", () => void save());
+  testButton.addEventListener("click", () => void test());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void save();
+    }
+  });
   return el;
 }
 
