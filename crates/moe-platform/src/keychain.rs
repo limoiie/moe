@@ -153,8 +153,27 @@ pub fn ai_api_key() -> Option<String> {
 
 /// Save a key for the active provider (`key <value>` / Moe: Save AI Key).
 pub fn set_ai_api_key(key: &str) -> Result<(), String> {
-    let path = provider_key_path(&active_provider_id()).ok_or_else(|| "no data dir".to_string())?;
+    set_provider_key(&active_provider_id(), key)
+}
+
+/// Save a key for one named provider (the settings window's key rows, MOE-0029); the file is the
+/// provider's own (`keys/<id>`, the legacy `api-key` file for `default`).
+pub fn set_provider_key(provider_id: &str, key: &str) -> Result<(), String> {
+    let path = provider_key_path(provider_id).ok_or_else(|| "no data dir".to_string())?;
     write_key_file_at(&path, key)
+}
+
+/// Delete one provider's key file (the settings window's Remove, MOE-0032): a provider without
+/// a key file — or without a data dir — is success; removing twice must not fail.
+pub fn remove_provider_key(provider_id: &str) -> Result<(), String> {
+    let Some(path) = provider_key_path(provider_id) else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 #[cfg(target_os = "macos")]

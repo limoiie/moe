@@ -32,6 +32,8 @@ export interface ConversationView {
   ): void;
   /** Hide the generation indicator without touching the text (a user-requested stop); later frames still land here. */
   settleStreaming(): void;
+  /** Drop a streaming bubble that never received text (a failed send): no empty bubble is left. */
+  discardAnswer(): void;
   /** The last answer's text (null when there is none yet): the copy / write-back target. */
   lastAnswer(): string | null;
   /** Whether no message is shown (the blank new-chat state). */
@@ -346,6 +348,9 @@ export function createConversationView(container: HTMLElement): ConversationView
       const body = document.createElement("div");
       const indicator = generatingEl();
       root.append(details, activity, body, indicator);
+      // Attach the bubble to the log: without this the whole answer (and its indicator) renders
+      // into a detached node — persisted and streamed correctly, but never visible (MOE-0030 r10).
+      container.append(root);
       streaming = { reasoning: details, reasoningLabel: label, reasoningBody, activity, body, indicator };
     }
     return streaming;
@@ -387,6 +392,13 @@ export function createConversationView(container: HTMLElement): ConversationView
         const seconds = Math.round((Date.now() - thinkingStartedAt) / 1000);
         streaming.reasoningLabel.textContent = thinkingLabel(false, seconds);
         streaming.reasoningLabel.classList.remove("moe-thinking-live");
+      }
+    },
+    discardAnswer() {
+      if (streaming && streaming.body.textContent.trim() === "") {
+        streaming.body.parentElement?.remove();
+        streaming = null;
+        thinkingStartedAt = null;
       }
     },
     lastAnswer() {

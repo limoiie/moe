@@ -252,6 +252,20 @@ pub(crate) fn stop_all_streams() -> usize {
     streams.len()
 }
 
+/// Whether a generation is live for this key (a conversation id for chat streams): the UI asks
+/// instead of trusting "the last message is a question" — a request that failed after persisting
+/// the question, or an app restart, must not keep the chat page in a phantom generating state
+/// (MOE-0030 revision 9).
+pub fn is_streaming(key: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    active_streams()
+        .lock()
+        .expect("streams poisoned")
+        .contains_key(key)
+}
+
 /// Frame builder: answer + reasoning + pending → Item (chat streams and AI command streams each have
 /// their own card shape; the answer is the body, the reasoning rides the payload for the UI).
 pub(crate) type FrameBuilder = Arc<dyn Fn(&str, &str, bool) -> Item + Send + Sync>;
@@ -754,7 +768,13 @@ fn spawn_chat_turn(
             let conversation = conversation.clone();
             Arc::new(move |message| persist_message(Some(&conversation), message))
         };
+        // Start/finish log lines (MOE-0030 revision 9): a turn that never logs "started" never
+        // reached the request, one that starts but never finishes was cut by the endpoint — the
+        // app log alone tells the two apart.
+        let log_id = conversation.clone();
+        let log_model = provider.model.clone();
         std::thread::spawn(move || {
+            eprintln!("moe: agentic chat turn started (conversation {log_id}, model {log_model})");
             run_agentic_turn(
                 AgentTurnRequest {
                     base_url: provider.api_url,
@@ -773,6 +793,7 @@ fn spawn_chat_turn(
                 },
                 emitter,
             );
+            eprintln!("moe: agentic chat turn finished (conversation {log_id})");
         });
     } else {
         let body = request_body(provider.protocol, &chat_request(&provider, messages, true));
@@ -787,7 +808,10 @@ fn spawn_chat_turn(
             let conversation = conversation.clone();
             Arc::new(move |text| persist_assistant(Some(&conversation), text))
         };
+        let log_id = stream_key.clone();
+        let log_model = provider.model.clone();
         std::thread::spawn(move || {
+            eprintln!("moe: chat turn started (conversation {log_id}, model {log_model})");
             run_stream(
                 StreamRequest {
                     protocol: provider.protocol,
@@ -803,6 +827,7 @@ fn spawn_chat_turn(
                 },
                 emitter,
             );
+            eprintln!("moe: chat turn finished (conversation {log_id})");
         });
     }
 }
@@ -1670,6 +1695,19 @@ This is a test case, do you know?"#;
                 payload: serde_json::json!({ "conversationId": "7", "reasoning": "" })
             }
         );
+    }
+
+    /// The live-stream truth (MOE-0030 revision 9): a registered key reads as streaming and
+    /// disappears on end — the chat page's phantom-generating repair leans on exactly this.
+    #[test]
+    fn is_streaming_tracks_the_registry() {
+        let _guard = STREAM_TEST_LOCK.lock().expect("stream test lock");
+        assert!(!is_streaming("test-is-streaming"));
+        let _flag = begin_stream("test-is-streaming").expect("registers");
+        assert!(is_streaming("test-is-streaming"));
+        end_stream("test-is-streaming");
+        assert!(!is_streaming("test-is-streaming"));
+        assert!(!is_streaming(""));
     }
 
     /// Stop generation: requesting a stop after registration should hit the cancellation flag (IIE4AD-365).

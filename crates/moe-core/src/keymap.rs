@@ -48,6 +48,9 @@ pub enum SystemKey {
     /// Open Side Chat: open the AI chat in the Side View directly, without entering a panel page.
     /// Default ⌘⇧' — also a global hotkey.
     OpenSideChat,
+    /// Change Model: open the chat surfaces' model switcher (the active pair's card, MOE-0029/0030).
+    /// Default ⌥M — the chat surfaces only; the actions card's "Change Model" row shows the same Kbd.
+    ChangeModel,
 }
 
 /// (display string, semantic). The UI and keyboard events bind by semantic; the display string goes into the Hints Bar.
@@ -72,6 +75,7 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("⌘⇧A", K::Attach),
         ("⌘'", K::QuickAsk),
         ("⌘⇧'", K::OpenSideChat),
+        ("⌥M", K::ChangeModel),
     ]
 }
 
@@ -104,7 +108,7 @@ mod tests {
         }
         assert_eq!(
             seen.len(),
-            17,
+            18,
             "keep the Hints Bar grouping in sync when adding semantics"
         );
     }
@@ -176,5 +180,16 @@ mod tests {
     fn display_of_reads_the_table() {
         assert_eq!(display_of(SystemKey::OpenConfig), Some("⌘,"));
         assert_eq!(display_of(SystemKey::Favorite), Some("⌘⇧F"));
+    }
+
+    /// Change Model is a chat-surface semantic: ⌥M opens the model switcher (MOE-0033).
+    #[test]
+    fn change_model_keeps_its_default_binding() {
+        let table = default_keymap();
+        let display = table
+            .iter()
+            .find(|(_, k)| *k == SystemKey::ChangeModel)
+            .map(|(d, _)| *d);
+        assert_eq!(display, Some("⌥M"));
     }
 }

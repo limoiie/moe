@@ -1,5 +1,7 @@
-//! Moe's own meta-extension: settings entry points (ADR-0009 — no settings UI in v1).
+//! Moe's own meta-extension: settings entry points (ADR-0009 and its MOE-0029 amendment: the
+//! settings window carries the AI provider management; the config file stays the escape hatch).
 //!
+//! - "Open Settings" (the settings window: providers, models, keys — MOE-0029)
 //! - "Open Config File" (regular command; declares its ⌘, invocation shortcut from the platform keymap)
 //! - `key <your-key>` (capturing fallback): stores the API key in a local key file (0600), never echoed
 
@@ -53,6 +55,18 @@ impl Extension for Moe {
     fn commands(&self) -> Vec<CommandMeta> {
         vec![
             CommandMeta {
+                id: "moe.open-settings".into(),
+                extension_id: "moe".into(),
+                title: "Open Settings".into(),
+                subtitle: Some("AI providers, models and keys (the settings window)".into()),
+                icon: Some("settings-2".into()),
+                input: InputKind::None,
+                live: false,
+                keybinding: None,
+                extension_title: None,
+                kind: None,
+            },
+            CommandMeta {
                 id: "moe.open-config".into(),
                 extension_id: "moe".into(),
                 title: "Open Config File".into(),
@@ -89,6 +103,7 @@ impl Extension for Moe {
         _selection: Option<&Selection>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
+            "moe.open-settings" => Ok(ActionResult::OpenSettings {}),
             "moe.open-config" => {
                 moe_platform::config::open_in_editor()
                     .map_err(|err| MoeError::Internal(err.to_string()))?;

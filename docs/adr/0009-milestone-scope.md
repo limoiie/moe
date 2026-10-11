@@ -17,3 +17,13 @@
 除此之外仍无设置 UI：key 继续用 `key <value>` 保存，provider 块继续手写 config.toml。理由：
 catalog（MOE-0025）的事实只有被看见才有价值，而手抄 model id 与属性正是多 provider 工作要消除的
 摩擦；选择器只读目录 + 单键切换，不承担管理职责，因此不构成通用设置面板的前例。
+
+## 增补：设置窗口（MOE-0029）
+
+「v1 不做设置 UI」再收窄一步：Moe 有了一个**设置窗口**（普通窗口，侧栏分节、每节一 pane），
+AI 节管理本机在用的 provider——key（各自的 0600 key 文件）、模型在 picker 中的可见性
+（`hidden_models`）、活跃 provider/model 对——以及 General 节的主题与配置文件入口。
+理由：多 provider 工作已经把配置面推到 key 文件 + provider 块 + 目录事实三处，纯文件管理
+正是 MOE-0027/0028 要消除的摩擦的最后一块；窗口只管理「已连接」的 provider（目录浏览仍归
+MOE-0028 的 picker），不承担通用设置面板的职责。其余排除条款不变：provider 块的其余字段、
+catalog 属性编辑、OAuth 仍留在配置文件与后续 issue。

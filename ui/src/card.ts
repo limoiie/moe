@@ -1,10 +1,13 @@
-// The floating "card": a filter input + rows grouped into Raycast-style sections (ADR-0026 amendment).
-// The panel's actions card and the Side View's More Actions card are this one component (ADR-0028):
-// identical rows, sections, filter, ↑↓/⏎ navigation, Esc/empty-⌫ dismissal and click-outside handling —
-// only the anchor and the input's edge differ, and those are HTML structure, not this module.
+// The floating "card": a filter input + rows, optionally grouped into Raycast-style sections
+// (ADR-0026 amendment). The panel's actions card and the Side View's More Actions card are this one
+// component (ADR-0028): identical rows, sections, filter, ↑↓/⏎ navigation, Esc/empty-⌫ dismissal
+// and click-outside handling — only the anchor and the input's edge differ, and those are HTML
+// structure, not this module. A section without a title renders headerless; a row marked
+// `separator` draws a thin rule above itself (the actions card's rank groups, ADR-0037 amendment).
 //
 // The owner supplies the DOM elements and the sections per open; the card owns the rest.
-// Headers never join navigation; while filtering, rows flatten and headers hide (the Raycast convention).
+// Headers never join navigation; while filtering, rows flatten and headers (and separators) hide
+// (the Raycast convention).
 
 import { iconEl } from "./icons";
 import { kbdEl } from "./kbd";
@@ -12,17 +15,29 @@ import { kbdEl } from "./kbd";
 export interface CardRow {
   /** Row label; also what the filter matches. */
   title: string;
-  /** Lucide semantic name (icons.ts). */
-  icon: string;
+  /** Lucide semantic name (icons.ts); omitted when `leading` carries the visual instead. */
+  icon?: string;
+  /** Custom leading element (a provider mark, MOE-0030): rendered before the icon slot. */
+  leading?: HTMLElement;
+  /** Custom trailing element (ability tiles, MOE-0030): rendered before the check mark. */
+  trailing?: HTMLElement;
+  /** A trailing check mark (the switcher's active model, MOE-0029). */
+  checked?: boolean;
   /** Kbd display string (e.g. "⌘N"); null/undefined = the row has no key block. */
   keys?: string | null;
   /** Placeholder rows ("not built yet") render dimmed, are skipped by ↑↓ and can never run (ADR-0029). */
   disabled?: boolean;
+  /** Draw a hairline above this row: the first row of a rank group inside an actions section
+   *  (ADR-0037 amendment). Ignored while filtering (rows flatten, headers hide). */
+  separator?: boolean;
   run: () => void;
 }
 
 export interface CardSection {
-  title: string;
+  /** Section header; absent renders the rows as one headerless list (the actions card's canonical order). */
+  title?: string;
+  /** Custom element before the header text (a provider mark, MOE-0030). */
+  leading?: HTMLElement;
   rows: CardRow[];
 }
 
@@ -32,6 +47,19 @@ export interface CardOptions {
   inputEl: HTMLInputElement;
   /** Message when there is nothing to show and no filter is set (a filtered-empty card always reads "No matching actions"). */
   emptyText?: string;
+  /**
+   * Server-side filtering (the model switcher, MOE-0030): the owner replaces the sections per
+   * query, so the card can offer rows it has not loaded (the backend ranks and caps them). Absent
+   * = the card filters its own sections client-side by row title. Either way the input sits where
+   * the owner's markup put it — the menu cards keep it at the bottom (ADR-0028 amendment).
+   */
+  onQuery?: (query: string) => CardSection[] | Promise<CardSection[]>;
+  /**
+   * Hover follows focus (the model switcher's companion detail card, MOE-0030): pointing at a row
+   * focuses it, so the detail card follows the mouse the way it follows ↑↓. The guard keeps the
+   * re-render from looping on the element the pointer already sits over.
+   */
+  focusOnHover?: boolean;
   /** The focused row changed (open, ↑↓, filter): the panel's action pill follows it. */
   onFocusChange?: (row: CardRow | undefined) => void;
   /** The card was hidden (e.g. return focus to the window's input bar / composer). */
@@ -54,11 +82,15 @@ export function createCard(options: CardOptions): Card {
   /** Focus over the flat row order (sections are rendering only; headers are never focused). */
   let focus = 0;
   let open = false;
+  /** Bumped per query so out-of-order server responses drop (see the input listener). */
+  let queryToken = 0;
 
-  /** Filter rows by title (case-insensitive); a section whose rows all filtered out disappears. */
+  /** Filter rows by title (case-insensitive); a section whose rows all filtered out disappears.
+      Server-filtered cards (`onQuery`) arrive pre-filtered — a client title filter on top would
+      hide exactly the capability matches the backend found. */
   function filtered(): CardSection[] {
     const needle = inputEl.value.trim().toLowerCase();
-    if (!needle) return sections;
+    if (options.onQuery || !needle) return sections;
     return sections
       .map((section) => ({
         title: section.title,
@@ -71,15 +103,27 @@ export function createCard(options: CardOptions): Card {
     return filtered().flatMap((section) => section.rows);
   }
 
-  function headerEl(title: string): HTMLLIElement {
+  function headerEl(title: string, leading?: HTMLElement): HTMLLIElement {
     const li = document.createElement("li");
     li.className =
-      "select-none px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
-    li.textContent = title;
+      "select-none flex items-center gap-1.5 px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
+    if (leading) li.append(leading);
+    const text = document.createElement("span");
+    text.className = "min-w-0 truncate";
+    text.textContent = title;
+    li.append(text);
     return li;
   }
 
-  function rowEl(row: CardRow, focused: boolean): HTMLLIElement {
+  /** A hairline between rank groups inside a section (ADR-0037 amendment); never focusable. */
+  function separatorEl(): HTMLLIElement {
+    const li = document.createElement("li");
+    li.className = "mx-2.5 my-1 border-t border-line";
+    li.setAttribute("role", "presentation");
+    return li;
+  }
+
+  function rowEl(row: CardRow, focused: boolean, index: number): HTMLLIElement {
     const li = document.createElement("li");
     const disabled = row.disabled === true;
     li.className =
@@ -90,22 +134,37 @@ export function createCard(options: CardOptions): Card {
           ? "bg-surface-selected text-fg"
           : "text-fg");
     if (focused) li.dataset.focused = "true";
-    li.append(
-      iconEl(row.icon, {
-        size: 15,
-        className: disabled ? "text-fg-faint" : focused ? "text-fg" : "text-fg-subtle",
-      }),
-    );
+    if (row.leading) li.append(row.leading);
+    if (row.icon) {
+      li.append(
+        iconEl(row.icon, {
+          size: 15,
+          className: disabled ? "text-fg-faint" : focused ? "text-fg" : "text-fg-subtle",
+        }),
+      );
+    }
     const title = document.createElement("span");
     title.className = "min-w-0 flex-1 truncate";
     title.textContent = row.title;
     li.append(title);
+    if (row.trailing) li.append(row.trailing);
+    if (row.checked) {
+      li.append(iconEl("check", { size: 14, className: "shrink-0 text-accent" }));
+    }
     if (row.keys) {
       const kbd = kbdEl(row.keys, { firstOnly: true });
       kbd.classList.add("shrink-0");
       li.append(kbd);
     }
     if (!disabled) li.addEventListener("click", () => runRow(row));
+    if (options.focusOnHover && !disabled) {
+      li.addEventListener("mouseenter", () => {
+        if (index !== focus) {
+          focus = index;
+          render();
+        }
+      });
+    }
     return li;
   }
 
@@ -131,12 +190,15 @@ export function createCard(options: CardOptions): Card {
     let index = 0;
     let focusedLi: HTMLLIElement | null = null;
     for (const section of filtered()) {
-      if (showHeaders) lis.push(headerEl(section.title));
+      if (showHeaders && section.title) lis.push(headerEl(section.title, section.leading));
+      let firstRow = true;
       for (const row of section.rows) {
-        const li = rowEl(row, index === focus);
+        if (showHeaders && row.separator && !firstRow) lis.push(separatorEl());
+        const li = rowEl(row, index === focus, index);
         if (index === focus) focusedLi = li;
         lis.push(li);
         index += 1;
+        firstRow = false;
       }
     }
     listEl.replaceChildren(...lis);
@@ -187,6 +249,17 @@ export function createCard(options: CardOptions): Card {
 
   inputEl.addEventListener("input", () => {
     focus = 0;
+    if (options.onQuery) {
+      // A late response must not overwrite a newer query's sections.
+      const token = ++queryToken;
+      const value = inputEl.value;
+      void Promise.resolve(options.onQuery(value)).then((next) => {
+        if (token !== queryToken || !open) return;
+        sections = next;
+        render();
+      });
+      return;
+    }
     render();
   });
 

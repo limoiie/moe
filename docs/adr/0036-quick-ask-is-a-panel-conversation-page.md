@@ -127,3 +127,63 @@ Both keys **toggle their surface**, the summon key's own semantics (a visible wi
 The registered hotkey consumes the chord, so the global path and the in-panel fallback cannot
 double-fire. On macOS these are Carbon hotkeys: no Input Monitoring grant is needed, so both keys
 work even before the double-tap summon listener is authorized.
+## Amendment: the page is a normal chat layout (MOE-0030)
+
+The page kept one flaw from its birth: the conversation lived under the panel's top Input Bar,
+which served as its composer — a chat whose input sits where every other page's search sits.
+Raycast's own quick chat moved to the normal chat layout, and so does this page:
+
+- **The Input Bar row yields to a chat header on the page**: back arrow + conversation title on
+  the left, the model chip and the actions button in the top-right corner. The Input Bar stays
+  the command layer's and the result pages' input (ADR-0034 unchanged there); on the chat page
+  its leading-slot identity moves to the header's back button.
+- **The composer pill sits at the bottom** — the shared component (`ui/src/composer.ts`) the
+  Side View mounts too: round attach button, rounded field with the path-input row, the growing
+  draft and the round send/stop button inside the field's right edge. Enter sends (stops while
+  generating), ⌘⇧A opens the composer's path row on the page; the Input Bar's attachment mode
+  stays a command-layer mode.
+- **The bottom bar hides on the page** (ADR-0026): the composer carries send/stop, so the action
+  pill would duplicate it; the avatar chip's About card stays reachable from the command layer.
+- **The model chip opens the switcher card** (MOE-0029's rows): the ranked models grouped by
+  provider, the current one checked; Enter/click writes `[ai] provider` / `[ai] model` in place.
+  Both chat surfaces carry the chip, so switching providers never leaves the conversation.
+
+The page dialect (Enter sends, Back confirms while generating, ⌃[/⌃] step, ⌘N/⌃X slots) is
+unchanged — only the focused element and the chrome moved.
+
+## Amendment (revision): the page wears the panel's own chrome (owner review, MOE-0030)
+
+The amendment above gave the page a header of its own (back + title left, chip + actions in the
+top-right) and a composer pill with an inner send button. The owner's review folded the page
+fully into the panel's existing design language instead:
+
+- **The top bar is the Input Bar itself** — the command pages' own row: the leading slot keeps the
+  back arrow (ADR-0034) and the field reads the conversation title, read-only. The page invents no
+  second header design; chat pages and command pages share one top bar.
+- **The composer row is the bottom bar's language**: the round glass add button, one capsule-like
+  one-row input, and the round glass actions button — the about chip's and the action pill's glass
+  (surface-float + sheen + blur, squircle capsule, `--moe-row-h` tall). Enter sends and stops while
+  generating; the capsule carries no send button of its own, and the add button swaps it into the
+  attachment path input.
+- **The actions button moved from the top-right to the bottom-right end of that row**, and the
+  model switcher is a row inside the card it opens ("Set AI Model", plus "Stop Generation" while a
+  stream runs) on both chat surfaces — switching models is an action of the conversation, not a
+  header control. The header chip is gone.
+- On the page the bottom bar (chip + pill, ADR-0026) still yields to the composer row; the about
+  card stays a command-layer affordance.
+
+## Amendment: the title carries the active pair, and ⌥M changes the model (MOE-0033)
+
+With the header chip gone (above), nothing on either chat surface said which provider and model
+the conversation would run on. The pair now rides the title on both surfaces:
+
+- **Under the title, smaller and muted**: the panel's chat page shows `Provider · Model` beneath
+  the conversation title in the Input Bar row (11px, `text-fg-subtle`, hidden on every other
+  page); the Side View shows the same line under its centered titlebar title. It follows a switch
+  through the model switcher immediately (`onApplied`) and is fetched on page entry / window show
+  (`ai_active_pair`); an unset pair leaves the line hidden.
+- **`SystemKey::ChangeModel`, default ⌥M** joins the unified keymap (the AI surfaces' key family
+  with ⌘' / ⌘⇧'), and the actions card's row is renamed **Change Model** with the `⌥M` Kbd from
+  the table (the view layer never invents keys). The key lands the same action as the row — the
+  model switcher — on the chat surfaces only (the panel's chat page; the Side View); the physical
+  `KeyM` is matched because ⌥M types "µ" on macOS layouts.

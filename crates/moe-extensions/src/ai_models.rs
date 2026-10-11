@@ -8,14 +8,20 @@
 //! `vision tools` finds the models that have both.
 
 use moe_core::contract::{Action, ActionKind, ActionResult, Item, MoeError};
-use moe_platform::config::{MoeConfig, Protocol};
+use moe_platform::config::{MoeConfig, Protocol, ProviderConfig};
 use moe_platform::keychain;
-use moe_platform::model_catalog::{self, Catalog, Model as CatalogModel};
+use moe_platform::model_catalog::{self, Catalog, Cost, Model as CatalogModel};
 
 use crate::ai_client::providers;
 
 /// Rows per query: the list is search-driven, and the cap keeps the live IPC payload small.
 const ROW_LIMIT: usize = 50;
+
+/// Models per provider in the switcher card's unfiltered head (MOE-0030): a catalog-rich
+/// provider (a hundred models) must not push every other provider past the row cap — the card's
+/// first screen is the switching surface, so each provider gets a slice of it. A query lifts the
+/// per-provider cap: search reaches the whole catalog.
+const HEAD_PER_PROVIDER: usize = 10;
 
 /// One selectable model, resolved from the catalog and the config.
 struct Row<'a> {
@@ -57,13 +63,7 @@ pub fn choose_model_with(
     filter_rows(&mut rows, query);
     // Provider-major so the list's group headers (`Item.group`, ADR-0018 amendment) never repeat:
     // the active provider first, then every other provider by name; newest first within a group.
-    rows.sort_by(|a, b| {
-        b.current
-            .cmp(&a.current)
-            .then_with(|| a.provider_name.cmp(b.provider_name))
-            .then_with(|| release_date(b).cmp(release_date(a)))
-            .then_with(|| a.model_name.cmp(b.model_name))
-    });
+    rank_rows(&mut rows);
     rows.truncate(ROW_LIMIT);
     if rows.is_empty() {
         return ActionResult::list(vec![no_match_item(query)]);
@@ -139,7 +139,20 @@ pub fn apply_selection_with(
     Ok(ActionResult::detail(vec![card_item(&card)]))
 }
 
-/// Every selectable row: the catalog's providers plus config-only (custom) providers.
+/// The picker's order (MOE-0028), shared by the picker list and the switcher card (MOE-0029):
+/// the active provider first, then every other provider by name; newest first within a group.
+fn rank_rows(rows: &mut Vec<Row<'_>>) {
+    rows.sort_by(|a, b| {
+        b.current
+            .cmp(&a.current)
+            .then_with(|| a.provider_name.cmp(b.provider_name))
+            .then_with(|| release_date(b).cmp(release_date(a)))
+            .then_with(|| a.model_name.cmp(b.model_name))
+    });
+}
+
+/// Every selectable row: the catalog's providers plus config-only (custom) providers. Models the
+/// settings window hid (`hidden_models`, MOE-0029) stay out of the pickers.
 fn all_rows<'a>(config: &'a MoeConfig, catalog: &'a Catalog) -> Vec<Row<'a>> {
     let current_provider = config
         .ai
@@ -150,6 +163,9 @@ fn all_rows<'a>(config: &'a MoeConfig, catalog: &'a Catalog) -> Vec<Row<'a>> {
     let mut rows = Vec::new();
     for (provider_id, provider) in catalog.entries() {
         let block = config.ai.providers.get(provider_id);
+        let hidden = block
+            .and_then(|block| block.hidden_models.as_deref())
+            .unwrap_or_default();
         let protocol = block
             .and_then(|b| b.protocol)
             .or_else(|| providers::default_of(provider_id).map(|table| table.protocol));
@@ -162,6 +178,9 @@ fn all_rows<'a>(config: &'a MoeConfig, catalog: &'a Catalog) -> Vec<Row<'a>> {
             &provider.name
         };
         for (model_id, model) in &provider.models {
+            if hidden.contains(model_id) {
+                continue;
+            }
             rows.push(Row {
                 provider_id,
                 provider_name,
@@ -191,7 +210,11 @@ fn all_rows<'a>(config: &'a MoeConfig, catalog: &'a Catalog) -> Vec<Row<'a>> {
             .as_deref()
             .filter(|name| !name.trim().is_empty())
             .unwrap_or(id);
+        let hidden = block.hidden_models.as_deref().unwrap_or_default();
         for model_id in block.models.iter().flatten() {
+            if hidden.contains(model_id) {
+                continue;
+            }
             rows.push(Row {
                 provider_id: id,
                 provider_name: name,
@@ -278,27 +301,7 @@ fn release_date<'a>(row: &'a Row<'a>) -> &'a str {
 
 /// One picker row: model name, provider + facts, the apply action, and the detail card.
 fn model_item(row: &Row<'_>, has_key: &dyn Fn(&str) -> bool) -> Item {
-    let mut facts: Vec<String> = Vec::new();
-    if let Some(context) = row
-        .meta
-        .and_then(|meta| meta.limit.as_ref())
-        .and_then(|limit| limit.context)
-    {
-        facts.push(format!("{} ctx", token_count(context)));
-    }
-    if row.meta.is_some_and(|meta| meta.tool_call) {
-        facts.push("tools".into());
-    }
-    if row.meta.is_some_and(is_vision) {
-        facts.push("vision".into());
-    }
-    if row.meta.is_some_and(|meta| meta.reasoning) {
-        facts.push("reasoning".into());
-    }
-    if let Some(status) = row.meta.and_then(|meta| meta.status.as_deref()) {
-        facts.push(status.to_string());
-    }
-    let facts = facts.join(" · ");
+    let facts = facts_of(row).join(" · ");
 
     Item {
         id: format!("ai.model.{}.{}", row.provider_id, row.model_id),
@@ -324,6 +327,635 @@ fn model_item(row: &Row<'_>, has_key: &dyn Fn(&str) -> bool) -> Item {
         detail: Some(model_markdown(row, has_key(row.provider_id))),
         pending: false,
     }
+}
+
+/// The headline facts of a row (picker subtitle, switcher card): context window, the capability
+/// flags the catalog carries, and the lifecycle status.
+fn facts_of(row: &Row<'_>) -> Vec<String> {
+    let mut facts: Vec<String> = Vec::new();
+    if let Some(context) = row
+        .meta
+        .and_then(|meta| meta.limit.as_ref())
+        .and_then(|limit| limit.context)
+    {
+        facts.push(format!("{} ctx", token_count(context)));
+    }
+    if row.meta.is_some_and(|meta| meta.tool_call) {
+        facts.push("tools".into());
+    }
+    if row.meta.is_some_and(is_vision) {
+        facts.push("vision".into());
+    }
+    if row.meta.is_some_and(|meta| meta.reasoning) {
+        facts.push("reasoning".into());
+    }
+    if let Some(status) = row.meta.and_then(|meta| meta.status.as_deref()) {
+        facts.push(status.to_string());
+    }
+    facts
+}
+
+/// The settings row's chips (MOE-0029): the same vocabulary as [`facts_of`], the context window
+/// as a bare token count (the column carries the unit).
+fn model_facts(meta: &CatalogModel) -> Vec<String> {
+    let mut facts: Vec<String> = Vec::new();
+    if let Some(context) = meta.limit.as_ref().and_then(|limit| limit.context) {
+        facts.push(token_count(context));
+    }
+    if meta.tool_call {
+        facts.push("tools".into());
+    }
+    if is_vision(meta) {
+        facts.push("vision".into());
+    }
+    if meta.reasoning {
+        facts.push("reasoning".into());
+    }
+    if let Some(status) = &meta.status {
+        facts.push(status.clone());
+    }
+    facts
+}
+
+/// The display name of a provider: the config block's name, else the catalog's, else the id.
+fn provider_display_name(
+    provider_id: &str,
+    block: Option<&ProviderConfig>,
+    catalog: &Catalog,
+) -> String {
+    block
+        .and_then(|block| block.name.as_deref())
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            catalog.get(provider_id).map(|provider| {
+                if provider.name.trim().is_empty() {
+                    provider_id.to_string()
+                } else {
+                    provider.name.clone()
+                }
+            })
+        })
+        .unwrap_or_else(|| provider_id.to_string())
+}
+
+/// The catalog release date of a model (the settings order); undated sorts last.
+fn release_date_of(meta: &CatalogModel) -> &str {
+    meta.release_date.as_deref().unwrap_or("")
+}
+
+// ---- The settings window and the chat views' model switcher (MOE-0029) ----
+
+/// The active provider/model pair: the chat views' model chip and the settings window's radios.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivePair {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub model_id: String,
+    pub model_name: String,
+}
+
+/// The live active pair from config + catalog.
+pub fn active_pair() -> Option<ActivePair> {
+    let config = MoeConfig::load();
+    let catalog = model_catalog::load();
+    active_pair_with(&config, &catalog)
+}
+
+/// The active pair with injected config/catalog (tests): `[ai] provider` + `[ai] model`, named
+/// from the catalog (or the config block, or the bare ids when neither knows them).
+pub fn active_pair_with(config: &MoeConfig, catalog: &Catalog) -> Option<ActivePair> {
+    let provider_id = config
+        .ai
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    let model_id = config
+        .ai
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())?;
+    let block = config.ai.providers.get(provider_id);
+    let provider_name = provider_display_name(provider_id, block, catalog);
+    let model_name = catalog
+        .get(provider_id)
+        .and_then(|provider| provider.models.get(model_id))
+        .map(model_name)
+        .unwrap_or(model_id)
+        .to_string();
+    Some(ActivePair {
+        provider_id: provider_id.to_string(),
+        provider_name,
+        model_id: model_id.to_string(),
+        model_name,
+    })
+}
+
+/// One row of the chat views' model switcher card (MOE-0029/0030): the rows are bare names —
+/// each provider's rows carry a resolvable key (the switcher only lists what can run), and the
+/// focused row's facts live in the companion detail card (`ModelDetail`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelOption {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub model_id: String,
+    pub model_name: String,
+    /// The row is the active pair.
+    pub current: bool,
+    /// The companion card's structured facts.
+    pub detail: ModelDetail,
+}
+
+/// The companion detail card's fields (MOE-0030 revisions): one field per rendered line — the card
+/// pairs a muted label with a right-aligned value, so nothing has to be parsed or wrapped out of a
+/// joined prose string.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDetail {
+    /// Bare counts (`204k`, `1M`): the card owns the labels and units.
+    pub context: Option<String>,
+    pub max_output: Option<String>,
+    /// The input modalities (`text`, `image`, `pdf`, …) and the output ones: the card draws them
+    /// as the rounded tile row, `in → out`.
+    pub modalities_in: Vec<String>,
+    pub modalities_out: Vec<String>,
+    /// Short tags: tool calls / reasoning / structured output / attachments / open weights / vision.
+    pub capabilities: Vec<String>,
+    /// The lifecycle status (`beta`, `deprecated`): a chip, never buried in a dates line.
+    pub status: Option<String>,
+    /// Per-million pricing, one row each: `$0.28/M tokens`.
+    pub price_input: Option<String>,
+    pub price_output: Option<String>,
+    pub price_cache_read: Option<String>,
+    pub price_cache_write: Option<String>,
+    pub released: Option<String>,
+    pub knowledge: Option<String>,
+    pub doc: Option<String>,
+}
+
+/// The switcher card's rows for a query (empty = the ranked head, like the picker).
+pub fn model_options(query: &str) -> Vec<ModelOption> {
+    let config = MoeConfig::load();
+    let catalog = model_catalog::load();
+    let has_key = |provider_id: &str| {
+        keychain::ai_api_key_for(provider_id, &env_names(&catalog, provider_id)).is_some()
+    };
+    model_options_with(query, &config, &catalog, &has_key)
+}
+
+/// The switcher rows with injected config/catalog/key lookup (tests). Only providers with a
+/// resolvable key are listed (MOE-0030 revision: the switcher shows what can run; the palette
+/// picker remains the catalog browser for unkeyed providers). An empty query returns a
+/// provider-balanced head (active provider first, then each provider's newest); a query filters
+/// the whole ranked list, so search reaches models the head cap left out.
+pub fn model_options_with(
+    query: &str,
+    config: &MoeConfig,
+    catalog: &Catalog,
+    has_key: &dyn Fn(&str) -> bool,
+) -> Vec<ModelOption> {
+    let mut rows = all_rows(config, catalog);
+    rows.retain(|row| has_key(row.provider_id));
+    filter_rows(&mut rows, query);
+    rank_rows(&mut rows);
+    if query.trim().is_empty() {
+        let mut seen: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        rows.retain(|row| {
+            let count = seen.entry(row.provider_id).or_insert(0);
+            *count += 1;
+            *count <= HEAD_PER_PROVIDER
+        });
+    } else {
+        rows.truncate(ROW_LIMIT);
+    }
+    // The row check means the active pair, not the active provider (MOE-0030 revision): the
+    // picker's provider-level "Current" belongs to its group headers, never to every row here.
+    let active_model = config
+        .ai
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
+    rows.iter()
+        .map(|row| ModelOption {
+            provider_id: row.provider_id.to_string(),
+            provider_name: row.provider_name.to_string(),
+            model_id: row.model_id.to_string(),
+            model_name: row.model_name.to_string(),
+            current: row.current && active_model == Some(row.model_id),
+            detail: model_detail(row.meta, row.doc),
+        })
+        .collect()
+}
+
+/// The catalogued facts of one row as the detail card's fields; a custom provider's model has no
+/// catalog metadata, so only the docs link lands.
+fn model_detail(meta: Option<&CatalogModel>, doc: Option<&str>) -> ModelDetail {
+    let limit = meta.and_then(|meta| meta.limit.as_ref());
+    let cost = meta.and_then(|meta| meta.cost.as_ref());
+    ModelDetail {
+        context: limit.and_then(|limit| limit.context).map(token_count),
+        max_output: limit.and_then(|limit| limit.output).map(token_count),
+        modalities_in: meta
+            .map(|meta| meta.modalities.input.clone())
+            .unwrap_or_default(),
+        modalities_out: meta
+            .map(|meta| meta.modalities.output.clone())
+            .unwrap_or_default(),
+        capabilities: meta.map(capability_words).unwrap_or_default(),
+        status: meta.and_then(|meta| meta.status.clone()),
+        price_input: cost.and_then(|cost| cost.input).map(per_million),
+        price_output: cost.and_then(|cost| cost.output).map(per_million),
+        price_cache_read: cost.and_then(|cost| cost.cache_read).map(per_million),
+        price_cache_write: cost.and_then(|cost| cost.cache_write).map(per_million),
+        released: meta.and_then(|meta| meta.release_date.clone()),
+        knowledge: meta.and_then(|meta| meta.knowledge.clone()),
+        doc: doc.map(str::to_string),
+    }
+}
+
+/// The capability labels the catalog carries (the picker's detail vocabulary); `vision` means the
+/// model takes image input (the modality flag, not the coarser attachment flag).
+fn capability_words(meta: &CatalogModel) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    if meta.tool_call {
+        words.push("tool calls".into());
+    }
+    if meta.reasoning {
+        words.push("reasoning".into());
+    }
+    if meta.structured_output {
+        words.push("structured output".into());
+    }
+    if meta.attachment {
+        words.push("attachments".into());
+    }
+    if meta.open_weights {
+        words.push("open weights".into());
+    }
+    if meta
+        .modalities
+        .input
+        .iter()
+        .any(|modality| modality == "image")
+    {
+        words.push("vision".into());
+    }
+    words
+}
+
+/// `$0.28/M tokens` — one priced unit for a detail-card fact row (the picker's markdown keeps the
+/// long form from [`pricing_of`]).
+fn per_million(price_per_million: f64) -> String {
+    format!("{}/M tokens", price(price_per_million))
+}
+
+/// `$0.28 in / $0.42 out per M tokens · cache read $0.028`; None when the catalog carries no cost.
+fn pricing_of(cost: &Cost) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let (Some(input), Some(output)) = (cost.input, cost.output) {
+        parts.push(format!(
+            "{} in / {} out per M tokens",
+            price(input),
+            price(output)
+        ));
+    }
+    if let Some(read) = cost.cache_read {
+        parts.push(format!("cache read {}", price(read)));
+    }
+    if let Some(write) = cost.cache_write {
+        parts.push(format!("cache write {}", price(write)));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// `released 2026-08-21 · knowledge cutoff 2025-09 · status beta`; None when nothing is catalogued.
+fn dates_of(meta: &CatalogModel) -> Option<String> {
+    let mut dates: Vec<String> = Vec::new();
+    if let Some(released) = &meta.release_date {
+        dates.push(format!("released {released}"));
+    }
+    if let Some(knowledge) = &meta.knowledge {
+        dates.push(format!("knowledge cutoff {knowledge}"));
+    }
+    if let Some(status) = &meta.status {
+        dates.push(format!("status {status}"));
+    }
+    (!dates.is_empty()).then(|| dates.join(" · "))
+}
+
+/// One model row of the settings window (MOE-0029): the catalog's facts as chips, whether the
+/// model shows in the pickers, and whether it is half of the active pair.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSettings {
+    pub id: String,
+    pub name: String,
+    pub facts: Vec<String>,
+    /// The model shows in the pickers (the `hidden_models` checkbox).
+    pub enabled: bool,
+    /// The model is half of the active pair.
+    pub active: bool,
+}
+
+/// One provider group of the settings window (MOE-0029): the providers this install actually
+/// uses — the configured blocks, the catalog providers with a resolvable key, the active one,
+/// and the legacy implicit `default` endpoint (`base_url` without a provider).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSettings {
+    pub id: String,
+    pub name: String,
+    /// The id comes from the model catalog (custom blocks are false).
+    pub official: bool,
+    pub protocol: Option<String>,
+    pub api_url: Option<String>,
+    pub doc: Option<String>,
+    pub has_key: bool,
+    /// A `[ai.providers.<id>]` block exists (the remove action edits config only then).
+    pub has_block: bool,
+    pub key_path: String,
+    /// The catalog's env var names (official providers): how a key resolves without a file.
+    pub env_names: Vec<String>,
+    /// The provider is the active one (`[ai] provider`).
+    pub active: bool,
+    pub models: Vec<ModelSettings>,
+}
+
+/// The settings window's provider groups (key / visibility / active-pair management, MOE-0029).
+pub fn settings_providers() -> Vec<ProviderSettings> {
+    let config = MoeConfig::load();
+    let catalog = model_catalog::load();
+    let has_key = |provider_id: &str| {
+        keychain::ai_api_key_for(provider_id, &env_names(&catalog, provider_id)).is_some()
+    };
+    settings_providers_with(&config, &catalog, &has_key)
+}
+
+/// The provider groups with injected config/catalog/key lookup (tests).
+pub fn settings_providers_with(
+    config: &MoeConfig,
+    catalog: &Catalog,
+    has_key: &dyn Fn(&str) -> bool,
+) -> Vec<ProviderSettings> {
+    let active_id = config
+        .ai
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let active_model = config
+        .ai
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
+
+    let mut ids: Vec<String> = config.ai.providers.keys().cloned().collect();
+    for (provider_id, _) in catalog.entries() {
+        if !ids.iter().any(|id| id == provider_id) && has_key(provider_id) {
+            ids.push(provider_id.to_string());
+        }
+    }
+    if let Some(active_id) = active_id
+        && !ids.iter().any(|id| id == active_id)
+    {
+        ids.push(active_id.to_string());
+    }
+
+    let mut providers: Vec<ProviderSettings> = ids
+        .into_iter()
+        .map(|id| {
+            let block = config.ai.providers.get(&id);
+            let protocol = block
+                .and_then(|block| block.protocol)
+                .or_else(|| providers::default_of(&id).map(|table| table.protocol));
+            let api_url = block
+                .and_then(|block| block.api_url.clone())
+                .or_else(|| catalog.get(&id).and_then(|provider| provider.api.clone()));
+            let hidden = block
+                .and_then(|block| block.hidden_models.as_deref())
+                .unwrap_or_default();
+            let models: Vec<ModelSettings> = match catalog.get(&id) {
+                Some(provider) => {
+                    let mut catalogued: Vec<(&String, &CatalogModel)> =
+                        provider.models.iter().collect();
+                    catalogued.sort_by(|a, b| {
+                        release_date_of(b.1)
+                            .cmp(release_date_of(a.1))
+                            .then_with(|| model_name(a.1).cmp(model_name(b.1)))
+                    });
+                    catalogued
+                        .into_iter()
+                        .map(|(model_id, meta)| ModelSettings {
+                            id: model_id.clone(),
+                            name: model_name(meta).to_string(),
+                            facts: model_facts(meta),
+                            enabled: !hidden.contains(model_id),
+                            active: active_id == Some(id.as_str())
+                                && active_model == Some(model_id.as_str()),
+                        })
+                        .collect()
+                }
+                None => block
+                    .and_then(|block| block.models.clone())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|model_id| ModelSettings {
+                        active: active_id == Some(id.as_str())
+                            && active_model == Some(model_id.as_str()),
+                        enabled: !hidden.contains(&model_id),
+                        facts: Vec::new(),
+                        name: model_id.clone(),
+                        id: model_id,
+                    })
+                    .collect(),
+            };
+            ProviderSettings {
+                name: provider_display_name(&id, block, catalog),
+                official: catalog.get(&id).is_some(),
+                protocol: protocol.map(|protocol| protocol.as_str().to_string()),
+                api_url,
+                doc: catalog.get(&id).and_then(|provider| provider.doc.clone()),
+                has_key: has_key(&id),
+                has_block: block.is_some(),
+                key_path: keychain::provider_key_path(&id)
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| format!("keys/{id}")),
+                env_names: env_names(catalog, &id),
+                active: active_id == Some(id.as_str()),
+                models,
+                id,
+            }
+        })
+        .collect();
+
+    // The legacy endpoint (ADR-0040's implicit `default` provider): one model, the configured one.
+    if active_id.is_none()
+        && config
+            .ai
+            .base_url
+            .as_deref()
+            .is_some_and(|url| !url.trim().is_empty())
+    {
+        let model = config.ai.model_or_default().to_string();
+        providers.push(ProviderSettings {
+            id: keychain::DEFAULT_PROVIDER_ID.to_string(),
+            name: "Default endpoint".to_string(),
+            official: false,
+            protocol: Some(Protocol::OpenAiChat.as_str().to_string()),
+            api_url: config.ai.base_url.clone(),
+            doc: None,
+            has_key: has_key(keychain::DEFAULT_PROVIDER_ID),
+            has_block: config
+                .ai
+                .providers
+                .contains_key(keychain::DEFAULT_PROVIDER_ID),
+            key_path: keychain::provider_key_path(keychain::DEFAULT_PROVIDER_ID)
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| format!("keys/{}", keychain::DEFAULT_PROVIDER_ID)),
+            env_names: Vec::new(),
+            active: true,
+            models: vec![ModelSettings {
+                id: model.clone(),
+                name: model.clone(),
+                facts: Vec::new(),
+                enabled: true,
+                active: active_model.is_none_or(|active| active == model.as_str()),
+            }],
+        });
+    }
+
+    providers.sort_by(|a, b| b.active.cmp(&a.active).then_with(|| a.name.cmp(&b.name)));
+    providers
+}
+
+/// A catalog provider the settings window does not manage yet (its "Connect a provider" search).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogProvider {
+    pub id: String,
+    pub name: String,
+    pub protocol: Option<String>,
+    pub doc: Option<String>,
+    pub env_names: Vec<String>,
+    pub model_count: usize,
+}
+
+/// The connectable catalog providers for a query (a name/id substring), excluding the groups the
+/// settings window already lists; capped so the search card stays small.
+pub fn catalog_providers(query: &str) -> Vec<CatalogProvider> {
+    let config = MoeConfig::load();
+    let catalog = model_catalog::load();
+    let has_key = |provider_id: &str| {
+        keychain::ai_api_key_for(provider_id, &env_names(&catalog, provider_id)).is_some()
+    };
+    catalog_providers_with(query, &config, &catalog, &has_key)
+}
+
+/// The connectable providers with injected config/catalog/key lookup (tests).
+pub fn catalog_providers_with(
+    query: &str,
+    config: &MoeConfig,
+    catalog: &Catalog,
+    has_key: &dyn Fn(&str) -> bool,
+) -> Vec<CatalogProvider> {
+    let managed = settings_providers_with(config, catalog, has_key);
+    let query = query.trim().to_lowercase();
+    let mut out: Vec<CatalogProvider> = catalog
+        .entries()
+        .filter(|(id, _)| !managed.iter().any(|provider| provider.id == *id))
+        .filter(|(id, provider)| {
+            query.is_empty() || provider.name.to_lowercase().contains(&query) || id.contains(&query)
+        })
+        .map(|(id, provider)| CatalogProvider {
+            id: id.to_string(),
+            name: if provider.name.trim().is_empty() {
+                id.to_string()
+            } else {
+                provider.name.clone()
+            },
+            protocol: providers::default_of(id).map(|table| table.protocol.as_str().to_string()),
+            doc: provider.doc.clone(),
+            env_names: provider.env.clone(),
+            model_count: provider.models.len(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.truncate(30);
+    out
+}
+
+/// Toggle one model's picker visibility (the settings window's checkbox, MOE-0029): the
+/// provider's `hidden_models` list gains or loses the model; the store is injected for tests.
+pub fn set_model_visibility(
+    provider: &str,
+    model: &str,
+    enabled: bool,
+    store: impl FnOnce(&str, &[String]) -> Result<(), String>,
+) -> Result<(), MoeError> {
+    let config = MoeConfig::load();
+    set_model_visibility_with(provider, model, enabled, store, &config)
+}
+
+/// Remove a provider from this install (the settings window's Remove, MOE-0032): the key file and
+/// the config block go, and the active pair is cleared when it pointed at the provider — nothing
+/// about it remains half-removed. A provider that was only the active pair (an official catalog id
+/// without key or block) is removed by clearing that pair.
+pub fn remove_provider(id: &str) -> Result<(), MoeError> {
+    let config = MoeConfig::load();
+    remove_provider_with(
+        id,
+        &config,
+        keychain::remove_provider_key,
+        |id, clear_selection| {
+            moe_platform::config::store_provider_removal(id, clear_selection)
+                .map_err(|err| err.to_string())
+        },
+    )
+}
+
+/// The removal with injected config and stores (tests).
+pub fn remove_provider_with(
+    id: &str,
+    config: &MoeConfig,
+    remove_key: impl FnOnce(&str) -> Result<(), String>,
+    store: impl FnOnce(&str, bool) -> Result<(), String>,
+) -> Result<(), MoeError> {
+    let active = config.ai.provider.as_deref().map(str::trim) == Some(id);
+    let has_block = config.ai.providers.contains_key(id);
+    remove_key(id).map_err(MoeError::Internal)?;
+    // A keyed-only official provider that is not the active pair needs no config edit.
+    if has_block || active {
+        store(id, active).map_err(MoeError::Internal)?;
+    }
+    Ok(())
+}
+
+/// The visibility toggle with an injected config (tests).
+pub fn set_model_visibility_with(
+    provider: &str,
+    model: &str,
+    enabled: bool,
+    store: impl FnOnce(&str, &[String]) -> Result<(), String>,
+    config: &MoeConfig,
+) -> Result<(), MoeError> {
+    let mut hidden = config
+        .ai
+        .providers
+        .get(provider)
+        .and_then(|block| block.hidden_models.clone())
+        .unwrap_or_default();
+    if enabled {
+        hidden.retain(|hidden| hidden != model);
+    } else if !hidden.iter().any(|hidden| hidden == model) {
+        hidden.push(model.to_string());
+    }
+    store(provider, &hidden).map_err(MoeError::Internal)
 }
 
 /// The detail pane: the catalogued properties, the provider facts, and the key state.
@@ -400,37 +1032,11 @@ fn catalog_facts(meta: &CatalogModel) -> String {
     if !capabilities.is_empty() {
         md.push_str(&format!("**Capabilities**: {}\n", capabilities.join(" · ")));
     }
-    if let Some(cost) = &meta.cost {
-        let mut parts: Vec<String> = Vec::new();
-        if let (Some(input), Some(output)) = (cost.input, cost.output) {
-            parts.push(format!(
-                "{} in / {} out per M tokens",
-                price(input),
-                price(output)
-            ));
-        }
-        if let Some(read) = cost.cache_read {
-            parts.push(format!("cache read {}", price(read)));
-        }
-        if let Some(write) = cost.cache_write {
-            parts.push(format!("cache write {}", price(write)));
-        }
-        if !parts.is_empty() {
-            md.push_str(&format!("**Pricing**: {}\n", parts.join(" · ")));
-        }
+    if let Some(pricing) = meta.cost.as_ref().and_then(pricing_of) {
+        md.push_str(&format!("**Pricing**: {pricing}\n"));
     }
-    let mut dates: Vec<String> = Vec::new();
-    if let Some(released) = &meta.release_date {
-        dates.push(format!("released {released}"));
-    }
-    if let Some(knowledge) = &meta.knowledge {
-        dates.push(format!("knowledge cutoff {knowledge}"));
-    }
-    if let Some(status) = &meta.status {
-        dates.push(format!("status {status}"));
-    }
-    if !dates.is_empty() {
-        md.push_str(&format!("**Dates**: {}\n", dates.join(" · ")));
+    if let Some(dates) = dates_of(meta) {
+        md.push_str(&format!("**Dates**: {dates}\n"));
     }
     md
 }
@@ -811,6 +1417,303 @@ mod tests {
         assert!(
             apply_selection_with(&bare, |_, _| Ok(()), &config(), &catalog(), &key_ok).is_err()
         );
+    }
+
+    /// The settings window (MOE-0029): one group per provider in use — the active one first, then
+    /// by name — carrying the key state and per-model visibility / active flags.
+    #[test]
+    fn settings_lists_the_providers_in_use_with_visibility_and_active_flags() {
+        let providers = settings_providers_with(&config(), &catalog(), &key_ok);
+        let ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["deepseek", "beta", "custom"]);
+
+        let deepseek = &providers[0];
+        assert!(deepseek.active);
+        assert!(deepseek.official);
+        assert_eq!(deepseek.protocol.as_deref(), Some("openai-chat"));
+        assert!(deepseek.has_key);
+        assert!(!deepseek.env_names.is_empty());
+        let models: Vec<(&str, bool, bool)> = deepseek
+            .models
+            .iter()
+            .map(|m| (m.id.as_str(), m.enabled, m.active))
+            .collect();
+        assert_eq!(
+            models,
+            vec![("deepseek-new", true, true), ("deepseek-old", true, false)]
+        );
+        assert_eq!(
+            deepseek.models[0].facts,
+            vec!["1M", "tools", "vision", "reasoning", "beta"]
+        );
+
+        let custom = providers.iter().find(|p| p.id == "custom").unwrap();
+        assert!(!custom.official);
+        assert_eq!(custom.protocol.as_deref(), Some("anthropic"));
+        assert_eq!(custom.models.len(), 1);
+        assert!(custom.models[0].enabled);
+        assert!(!custom.models[0].active);
+    }
+
+    /// Hidden models (MOE-0029): they leave the picker and the switcher but stay in the settings
+    /// list (unchecked), and the visibility toggle edits `hidden_models` both ways.
+    #[test]
+    fn hidden_models_leave_the_pickers_and_the_toggle_round_trips() {
+        let mut config = config();
+        config.ai.providers.insert(
+            "deepseek".into(),
+            ProviderConfig {
+                hidden_models: Some(vec!["deepseek-old".to_string()]),
+                ..Default::default()
+            },
+        );
+        let ids: Vec<String> = match choose_model_with("", &config, &catalog(), &key_ok) {
+            ActionResult::List { items, .. } => items.into_iter().map(|item| item.id).collect(),
+            other => panic!("expected a list, got {other:?}"),
+        };
+        assert!(!ids.contains(&"ai.model.deepseek.deepseek-old".to_string()));
+        let options = model_options_with("", &config, &catalog(), &key_ok);
+        assert!(
+            !options
+                .iter()
+                .any(|option| option.model_id == "deepseek-old")
+        );
+
+        let providers = settings_providers_with(&config, &catalog(), &key_ok);
+        let old = providers[0]
+            .models
+            .iter()
+            .find(|m| m.id == "deepseek-old")
+            .unwrap();
+        assert!(!old.enabled);
+
+        // Hide one more, then show the first again: the stored list follows both ways
+        let mut stored: Vec<(String, Vec<String>)> = Vec::new();
+        set_model_visibility_with(
+            "deepseek",
+            "deepseek-new",
+            false,
+            |provider, hidden| {
+                stored.push((provider.to_string(), hidden.to_vec()));
+                Ok(())
+            },
+            &config,
+        )
+        .expect("hides");
+        assert_eq!(
+            stored.last().unwrap(),
+            &(
+                "deepseek".to_string(),
+                vec!["deepseek-old".into(), "deepseek-new".into()]
+            )
+        );
+        let mut hidden_config = config.clone();
+        hidden_config
+            .ai
+            .providers
+            .get_mut("deepseek")
+            .unwrap()
+            .hidden_models = Some(stored.last().unwrap().1.clone());
+        set_model_visibility_with(
+            "deepseek",
+            "deepseek-old",
+            true,
+            |provider, hidden| {
+                stored.push((provider.to_string(), hidden.to_vec()));
+                Ok(())
+            },
+            &hidden_config,
+        )
+        .expect("shows");
+        assert_eq!(stored.last().unwrap().1, vec!["deepseek-new".to_string()]);
+    }
+
+    /// The chip and the switcher card (MOE-0029): the active pair is named from the catalog, the
+    /// card ranks like the picker, and its query filters the same way.
+    #[test]
+    fn active_pair_and_switcher_rows_carry_the_current_pair() {
+        let pair = active_pair_with(&config(), &catalog()).unwrap();
+        assert_eq!(pair.provider_id, "deepseek");
+        assert_eq!(pair.provider_name, "DeepSeek");
+        assert_eq!(pair.model_id, "deepseek-new");
+        assert_eq!(pair.model_name, "DeepSeek New");
+
+        let options = model_options_with("", &config(), &catalog(), &key_ok);
+        assert!(options[0].current);
+        assert_eq!(
+            options.iter().filter(|option| option.current).count(),
+            1,
+            "exactly the active pair carries the check, never the whole provider"
+        );
+        assert_eq!(options[0].detail.context.as_deref(), Some("1M"));
+        assert_eq!(options[0].detail.max_output.as_deref(), Some("393k"));
+        assert_eq!(options[0].detail.modalities_in, vec!["text", "image"]);
+        assert_eq!(options[0].detail.modalities_out, vec!["text"]);
+        assert_eq!(
+            options[0].detail.capabilities,
+            vec![
+                "tool calls",
+                "reasoning",
+                "structured output",
+                "attachments",
+                "vision"
+            ]
+        );
+        assert_eq!(options[0].detail.status.as_deref(), Some("beta"));
+        assert_eq!(
+            options[0].detail.price_input.as_deref(),
+            Some("$0.28/M tokens")
+        );
+        assert_eq!(
+            options[0].detail.price_output.as_deref(),
+            Some("$0.42/M tokens")
+        );
+        assert_eq!(
+            options[0].detail.price_cache_read.as_deref(),
+            Some("$0.028/M tokens")
+        );
+        assert_eq!(options[0].detail.price_cache_write, None);
+        assert_eq!(options[0].detail.released.as_deref(), Some("2026-08-21"));
+        assert_eq!(options[0].detail.knowledge.as_deref(), Some("2025-09"));
+        let vision = model_options_with("vision", &config(), &catalog(), &key_ok);
+        assert_eq!(vision.len(), 2);
+    }
+
+    /// The switcher only lists what can run (MOE-0030 revision): providers without a resolvable
+    /// key leave the card entirely — the active provider included, search included; the palette
+    /// picker keeps browsing them for discovery.
+    #[test]
+    fn switcher_lists_only_keyed_providers() {
+        let only_beta = |provider_id: &str| provider_id == "beta";
+        let options = model_options_with("", &config(), &catalog(), &only_beta);
+        assert!(!options.is_empty());
+        assert!(options.iter().all(|option| option.provider_id == "beta"));
+
+        // An unkeyed provider never surfaces, not even through a search
+        let found = model_options_with("deepseek", &config(), &catalog(), &only_beta);
+        assert!(found.is_empty());
+    }
+
+    /// The switcher's unfiltered head is provider-balanced (MOE-0030): a catalog-rich provider
+    /// cannot push every other provider out of the card's first screen — but a query reaches the
+    /// models the head cap left out.
+    #[test]
+    fn switcher_head_caps_per_provider_and_search_reaches_beyond() {
+        let catalog: Catalog = serde_json::from_str(
+            r#"{
+              "rich": {
+                "name": "Rich",
+                "models": {
+                  "m01": { "name": "M 01" }, "m02": { "name": "M 02" },
+                  "m03": { "name": "M 03" }, "m04": { "name": "M 04" },
+                  "m05": { "name": "M 05" }, "m06": { "name": "M 06" },
+                  "m07": { "name": "M 07" }, "m08": { "name": "M 08" },
+                  "m09": { "name": "M 09" }, "m10": { "name": "M 10" },
+                  "m11": { "name": "M 11" }, "m12": { "name": "M 12" }
+                }
+              },
+              "small": {
+                "name": "Small",
+                "models": { "s1": { "name": "S 1" } }
+              }
+            }"#,
+        )
+        .expect("fixture catalog parses");
+        let config = MoeConfig::from_toml("[ai]\nprovider = \"rich\"\nmodel = \"m01\"\n").unwrap();
+
+        let head = model_options_with("", &config, &catalog, &key_ok);
+        let rich = head.iter().filter(|o| o.provider_id == "rich").count();
+        let small = head.iter().filter(|o| o.provider_id == "small").count();
+        assert_eq!(rich, 10, "the active provider's head is capped too");
+        assert_eq!(small, 1, "the second provider stays reachable in the head");
+
+        // Search lifts the cap: the eleventh model is findable
+        let found = model_options_with("m11", &config, &catalog, &key_ok);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].model_id, "m11");
+    }
+
+    /// The settings window's Remove (MOE-0032): the key file always goes; the config is edited
+    /// only for a block or the active pair — with the selection cleared exactly then.
+    #[test]
+    fn remove_provider_clears_the_key_block_and_active_selection() {
+        let config = config();
+        let mut removed_keys: Vec<String> = Vec::new();
+        let mut stored: Vec<(String, bool)> = Vec::new();
+
+        // The active official provider without a block: the pair is cleared
+        remove_provider_with(
+            "deepseek",
+            &config,
+            |id| {
+                removed_keys.push(id.to_string());
+                Ok(())
+            },
+            |id, clear| {
+                stored.push((id.to_string(), clear));
+                Ok(())
+            },
+        )
+        .expect("removes");
+        assert_eq!(removed_keys, vec!["deepseek"]);
+        assert_eq!(stored, vec![("deepseek".to_string(), true)]);
+
+        // A custom block that is not the active pair: the block goes, the selection stays
+        stored.clear();
+        remove_provider_with(
+            "custom",
+            &config,
+            |_| Ok(()),
+            |id, clear| {
+                stored.push((id.to_string(), clear));
+                Ok(())
+            },
+        )
+        .expect("removes");
+        assert_eq!(stored, vec![("custom".to_string(), false)]);
+
+        // Neither block nor active pair (a keyed-only official provider): no config edit at all
+        stored.clear();
+        remove_provider_with(
+            "beta",
+            &config,
+            |_| Ok(()),
+            |id, clear| {
+                stored.push((id.to_string(), clear));
+                Ok(())
+            },
+        )
+        .expect("removes");
+        assert!(stored.is_empty());
+    }
+
+    /// Legacy configs (`base_url`, no provider): the settings window shows the implicit `default`
+    /// provider with its one configured model, and no pair is active until one is picked.
+    #[test]
+    fn legacy_base_url_configs_show_as_the_default_provider() {
+        let config =
+            MoeConfig::from_toml("[ai]\nbase_url = \"https://x/v1\"\nmodel = \"m-1\"\n").unwrap();
+        let providers = settings_providers_with(&config, &catalog(), &|_: &str| false);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "default");
+        assert!(providers[0].active);
+        assert_eq!(providers[0].api_url.as_deref(), Some("https://x/v1"));
+        assert_eq!(providers[0].models.len(), 1);
+        assert!(providers[0].models[0].active);
+        assert_eq!(active_pair_with(&config, &catalog()), None);
+    }
+
+    /// The settings window's "Connect a provider" search: unmanaged catalog providers only.
+    #[test]
+    fn catalog_providers_excludes_the_managed_groups() {
+        let all = catalog_providers_with("", &config(), &catalog(), &|_: &str| false);
+        let ids: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
+        // deepseek (active) and custom (block) are managed; beta is merely catalogued
+        assert_eq!(ids, vec!["beta"]);
+        assert!(catalog_providers_with("deep", &config(), &catalog(), &|_: &str| false).is_empty());
+        // With a key, beta becomes managed and drops out of the search
+        let keyed = catalog_providers_with("", &config(), &catalog(), &|id: &str| id == "beta");
+        assert!(keyed.is_empty());
     }
 
     /// Token formatting: plain below a thousand, `k` truncated, `M` with one significant decimal.

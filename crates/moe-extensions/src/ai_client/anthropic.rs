@@ -19,7 +19,15 @@ use super::{ChatRequest, SseLine};
 pub const API_VERSION: &str = "2023-06-01";
 
 pub fn endpoint_url(api_url: &str) -> String {
-    format!("{}/v1/messages", api_url.trim_end_matches('/'))
+    let base = api_url.trim_end_matches('/');
+    // A catalogued base may already carry the version root: MiniMax's Anthropic-compatible
+    // surface is `https://api.minimax.io/anthropic/v1` (models.dev; MOE-0031), where the
+    // endpoint is `…/v1/messages` — an existing `/v1` suffix is never duplicated.
+    if base.ends_with("/v1") {
+        format!("{base}/messages")
+    } else {
+        format!("{base}/v1/messages")
+    }
 }
 
 /// Request body (module notes): `model`/`stream`/`max_tokens`/`messages`, the top-level `system`
@@ -171,6 +179,25 @@ pub fn completion_text(payload: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The endpoint join (MOE-0031): Anthropic's bare host gets `/v1/messages`; a base that
+    /// already carries the version root (MiniMax's Anthropic-compatible surface) gains only
+    /// `/messages` — and a trailing slash never doubles.
+    #[test]
+    fn endpoint_url_respects_an_existing_version_root() {
+        assert_eq!(
+            endpoint_url("https://api.anthropic.com"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            endpoint_url("https://api.minimax.io/anthropic/v1/"),
+            "https://api.minimax.io/anthropic/v1/messages"
+        );
+        assert_eq!(
+            endpoint_url("https://api.minimax.cn/anthropic/v1"),
+            "https://api.minimax.cn/anthropic/v1/messages"
+        );
+    }
 
     /// Recorded `content_block_delta` lines: `text_delta` is answer text, `thinking_delta` is
     /// reasoning; empty payloads and the non-text delta types land on the ignore path.

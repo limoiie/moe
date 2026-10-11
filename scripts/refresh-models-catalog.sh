@@ -25,8 +25,8 @@ USER_AGENT="moe-model-catalog/0.1 (+https://github.com/)"
 # The runtime refresh expands this with every provider models.dev carries.
 # Edit freely — the script fails loudly if an id disappears upstream.
 PROVIDERS=(
-  alibaba anthropic cohere deepseek google groq lmstudio meta mistral
-  moonshotai openai openrouter perplexity togetherai xai zai zhipuai
+  alibaba anthropic cohere deepseek google groq lmstudio meta minimax minimax-cn
+  mistral moonshotai openai openrouter perplexity togetherai xai zai zhipuai
 )
 
 tmp="$(mktemp)"

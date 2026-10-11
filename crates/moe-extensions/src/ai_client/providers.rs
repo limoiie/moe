@@ -135,6 +135,20 @@ const OFFICIAL: &[(&str, Protocol, &str, &str)] = &[
         "http://localhost:11434/v1",
         "https://docs.ollama.com/api/openai-compatibility",
     ),
+    (
+        // MiniMax's Anthropic-compatible surface (models.dev's npm hint @ai-sdk/anthropic): the
+        // base already carries the version root, so the endpoint join adds only `/messages`.
+        "minimax",
+        Protocol::Anthropic,
+        "https://api.minimax.io/anthropic/v1",
+        "https://platform.minimax.io/docs/api-reference/text-anthropic-api",
+    ),
+    (
+        "minimax-cn",
+        Protocol::Anthropic,
+        "https://api.minimax.cn/anthropic/v1",
+        "https://platform.minimaxi.com/document/Anthropic",
+    ),
 ];
 
 /// The official table's entry for a provider id, if any.
@@ -441,6 +455,31 @@ mod tests {
         assert_eq!(provider.protocol, Protocol::Anthropic);
         assert_eq!(provider.api_url, "https://api.anthropic.com");
         assert!(provider.reasoning, "Claude models reason in the snapshot");
+    }
+
+    /// MiniMax (MOE-0031): both regions resolve from the snapshot + table with the Anthropic
+    /// protocol, the catalogued base (version root included), and a working endpoint join — the
+    /// catalogued base is never doubled into `…/v1/v1/messages`.
+    #[test]
+    fn minimax_providers_resolve_over_their_anthropic_surface() {
+        for (id, api) in [
+            ("minimax", "https://api.minimax.io/anthropic/v1"),
+            ("minimax-cn", "https://api.minimax.cn/anthropic/v1"),
+        ] {
+            let provider = resolve_toml(&format!(
+                "[ai]\nprovider = \"{id}\"\nmodel = \"MiniMax-M2.5\"\n"
+            ))
+            .expect("resolves");
+            assert_eq!(provider.id, id);
+            assert_eq!(provider.protocol, Protocol::Anthropic);
+            assert_eq!(provider.api_url, api);
+            assert!(provider.models.contains(&"MiniMax-M2.5".to_string()));
+            assert!(provider.reasoning, "MiniMax models reason in the snapshot");
+            assert_eq!(
+                crate::ai_client::endpoint_url(provider.protocol, &provider.api_url),
+                format!("{api}/messages")
+            );
+        }
     }
 
     /// Blocks override official defaults (protocol, api_url, models, reasoning).

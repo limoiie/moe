@@ -32,14 +32,16 @@ theme = \"system\"
 # fetch_fallback = \"jina\"                # jina | none — keyless r.jina.ai retry when a page fetch is blocked or empty
 
 # Multi-provider (ADR-0040): pick an official provider by catalog id (deepseek, openai, anthropic,
-# google, xai, mistral, groq, openrouter, …) and a model from its catalog list; the key file is
-# keys/<provider>. Legacy base_url above keeps working (it is an implicit `default` provider).
+# google, xai, minimax, minimax-cn, mistral, groq, openrouter, …) and a model from its catalog list;
+# the key file is keys/<provider>. Legacy base_url above keeps working (it is an implicit `default`
+# provider).
 # provider = \"deepseek\"
 # model = \"deepseek-flash\"
 #
 # [ai.providers.openai]       # official providers: overrides only
 # protocol = \"openai-responses\"   # openai-chat | openai-responses | anthropic
 # models = [\"gpt-5.2\"]            # restrict the picker list (an unknown-model error lists these)
+# hidden_models = [\"gpt-5.1\"]     # models the settings window hides from the pickers
 # reasoning = false                # opt in/out of thinking blocks / reasoning summaries
 #
 # [ai.providers.my-gateway]   # custom endpoints state protocol, api_url and models
@@ -148,6 +150,10 @@ pub struct ProviderConfig {
     /// The model ids: the picker list for custom providers, an optional restriction for official
     /// ones; also what an unknown-model error lists.
     pub models: Option<Vec<String>>,
+    /// Models hidden from the pickers (the settings window's checkboxes, MOE-0029): subtracted
+    /// from the effective list (`models` restriction first, then this). The active pair is never
+    /// hidden from the surfaces that already use it — only from the pickers.
+    pub hidden_models: Option<Vec<String>>,
     /// Override the reasoning opt-in (Anthropic `thinking` / Responses summaries); unset = the
     /// catalogued model's flag (official providers) or off (custom).
     pub reasoning: Option<bool>,
@@ -315,6 +321,7 @@ struct RawProvider {
     protocol: Option<String>,
     api_url: Option<String>,
     models: Option<Vec<String>>,
+    hidden_models: Option<Vec<String>>,
     reasoning: Option<bool>,
 }
 
@@ -353,6 +360,7 @@ impl MoeConfig {
                                 protocol,
                                 api_url: raw.api_url,
                                 models: raw.models,
+                                hidden_models: raw.hidden_models,
                                 reasoning: raw.reasoning,
                             },
                         ))
@@ -499,11 +507,17 @@ fn is_key_assignment(line: &str, key: &str) -> bool {
 
 /// Insert or replace one assignment inside `[section]`, keeping every other line byte for byte.
 /// A missing section is appended after a blank line.
-fn set_section_assignment(
+fn set_section_assignment(lines: Vec<String>, section: &str, key: &str, line: &str) -> Vec<String> {
+    set_section_assignment_opt(lines, section, key, Some(line))
+}
+
+/// Like [`set_section_assignment`] but `None` removes the assignment (an empty hidden-models list
+/// leaves no trace in the user's file). A removal never creates the section.
+fn set_section_assignment_opt(
     mut lines: Vec<String>,
     section: &str,
     key: &str,
-    line: &str,
+    line: Option<&str>,
 ) -> Vec<String> {
     let header = format!("[{section}]");
     match lines
@@ -516,11 +530,40 @@ fn set_section_assignment(
                 .position(|candidate| candidate.trim_start().starts_with('['))
                 .map_or(lines.len(), |offset| start + 1 + offset);
             match (start + 1..end).find(|&i| is_key_assignment(&lines[i], key)) {
-                Some(at) => lines[at] = line.to_string(),
-                None => lines.insert(start + 1, line.to_string()),
+                Some(at) => match line {
+                    Some(line) => lines[at] = line.to_string(),
+                    None => {
+                        lines.remove(at);
+                        // A provider block that carried only this key leaves no trace: drop the
+                        // header (and the blank line that separated it) when nothing but
+                        // whitespace remains — user comments keep the block alive.
+                        let body_end = lines[start + 1..]
+                            .iter()
+                            .position(|candidate| candidate.trim_start().starts_with('['))
+                            .map_or(lines.len(), |offset| start + 1 + offset);
+                        if lines[start + 1..body_end]
+                            .iter()
+                            .all(|candidate| candidate.trim().is_empty())
+                        {
+                            lines.remove(start);
+                            if start > 0
+                                && lines[start - 1].trim().is_empty()
+                                && lines.get(start).is_none_or(|next| next.trim().is_empty())
+                            {
+                                lines.remove(start - 1);
+                            }
+                        }
+                    }
+                },
+                None => {
+                    if let Some(line) = line {
+                        lines.insert(start + 1, line.to_string());
+                    }
+                }
             }
         }
         None => {
+            let Some(line) = line else { return lines };
             if lines
                 .last()
                 .is_some_and(|candidate| !candidate.trim().is_empty())
@@ -554,6 +597,57 @@ fn edit_section(text: &str, section: &str, assignments: &[(&str, String)]) -> St
     out
 }
 
+/// Like [`edit_section`] but each assignment may be a removal (`None`).
+fn edit_section_opt(text: &str, section: &str, assignments: &[(&str, Option<String>)]) -> String {
+    let mut lines: Vec<String> = if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').map(str::to_string).collect()
+    };
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    for (key, line) in assignments.iter().rev() {
+        lines = set_section_assignment_opt(lines, section, key, line.as_deref());
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// A TOML array of basic strings (`hidden_models = ["a", "b"]`).
+fn toml_string_array(values: &[String]) -> String {
+    let items: Vec<String> = values.iter().map(|value| toml_string(value)).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// Remove one whole `[section]` (header + body lines) from the line list, keeping every other
+/// line byte for byte (the settings window's provider removal, MOE-0032): the blank-line
+/// separator the section brought goes with it, and a missing section is a no-op.
+fn remove_section(mut lines: Vec<String>, section: &str) -> Vec<String> {
+    let header = format!("[{section}]");
+    // A hand-written header may carry a trailing comment (`[ai.providers.x]  # note`).
+    let Some(start) = lines.iter().position(|candidate| {
+        candidate
+            .trim()
+            .strip_prefix(&header)
+            .is_some_and(|rest| rest.trim().is_empty() || rest.trim_start().starts_with('#'))
+    }) else {
+        return lines;
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|candidate| candidate.trim_start().starts_with('['))
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    lines.drain(start..end);
+    // Collapse the blank seam the removal left (the separator line before the header).
+    let blank = |line: &String| line.trim().is_empty();
+    if start > 0 && lines.get(start - 1).is_some_and(blank) && lines.get(start).is_none_or(blank) {
+        lines.remove(start - 1);
+    }
+    lines
+}
+
 /// Replace (or add) the `theme` key inside the `[ui]` section of config.toml text, keeping every
 /// other line — comments included — byte for byte (ADR-0035 amendment): the file is the user's, so
 /// the app never re-serializes it. Pure, so the surgery is unit-tested.
@@ -584,6 +678,51 @@ pub fn store_theme(theme: Theme) -> std::io::Result<()> {
 /// the file's comments and every unrelated line survive byte for byte.
 pub fn store_ai_selection(provider: &str, model: &str) -> std::io::Result<()> {
     edit_config_file(|text| set_ai_selection_in_toml(text, provider, model))
+}
+
+/// Replace (or add, or remove) the `hidden_models` key inside `[ai.providers.<id>]` (the settings
+/// window's model checkboxes, MOE-0029): an empty list removes the line again, and a provider
+/// block that only carries hidden models is created for official providers too.
+pub fn set_provider_hidden_models_in_toml(text: &str, provider: &str, hidden: &[String]) -> String {
+    let line =
+        (!hidden.is_empty()).then(|| format!("hidden_models = {}", toml_string_array(hidden)));
+    edit_section_opt(
+        text,
+        &format!("ai.providers.{provider}"),
+        &[("hidden_models", line)],
+    )
+}
+
+/// Persist the settings window's picker visibility for one provider's models (MOE-0029).
+pub fn store_provider_hidden_models(provider: &str, hidden: &[String]) -> std::io::Result<()> {
+    edit_config_file(|text| set_provider_hidden_models_in_toml(text, provider, hidden))
+}
+
+/// Remove one provider from the config text (MOE-0032): its whole `[ai.providers.<id>]` block
+/// goes away, and — when the caller says the selection pointed at it — `[ai] provider` / `model`
+/// are removed too, so the AI surfaces fall back to their setup state (or the legacy `base_url`).
+/// Pure, so the surgery is unit-tested.
+pub fn remove_provider_in_toml(text: &str, provider: &str, clear_selection: bool) -> String {
+    let mut lines: Vec<String> = if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').map(str::to_string).collect()
+    };
+    if lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines = remove_section(lines, &format!("ai.providers.{provider}"));
+    let mut out = lines.join("\n");
+    out.push('\n');
+    if clear_selection {
+        out = edit_section_opt(&out, "ai", &[("provider", None), ("model", None)]);
+    }
+    out
+}
+
+/// Persist a provider removal (the settings window's Remove, MOE-0032).
+pub fn store_provider_removal(provider: &str, clear_selection: bool) -> std::io::Result<()> {
+    edit_config_file(|text| remove_provider_in_toml(text, provider, clear_selection))
 }
 
 /// Read config.toml (creating it from the default template when missing) and write back an edit.
@@ -870,6 +1009,106 @@ mod tests {
         let cfg = MoeConfig::from_toml(&out).unwrap();
         assert_eq!(cfg.ai.provider.as_deref(), Some("x\"y"));
         assert_eq!(cfg.ai.model.as_deref(), Some("m\\n"));
+    }
+
+    /// The settings window's picker visibility (MOE-0029): `hidden_models` lands in the provider's
+    /// block, creates the block for official providers, and an empty list removes the line again.
+    #[test]
+    fn set_provider_hidden_models_edits_the_provider_block() {
+        let hidden = vec!["gpt-5.1".to_string(), "gpt-5.1-mini".to_string()];
+
+        // Existing block: the key joins it, everything else survives
+        let text = "# mine\n[ai]\nprovider = \"openai\"\n\n[ai.providers.openai]\n# overrides\nmodels = [\"gpt-5.2\"]\n";
+        let out = set_provider_hidden_models_in_toml(text, "openai", &hidden);
+        assert!(out.contains("# mine"));
+        assert!(out.contains("# overrides"));
+        assert!(out.contains("models = [\"gpt-5.2\"]"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(
+            cfg.ai
+                .providers
+                .get("openai")
+                .unwrap()
+                .hidden_models
+                .as_deref(),
+            Some(&hidden[..])
+        );
+
+        // No block yet (official provider): one is created
+        let out = set_provider_hidden_models_in_toml(
+            "[ai]\nprovider = \"deepseek\"\n",
+            "deepseek",
+            &hidden,
+        );
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(
+            cfg.ai
+                .providers
+                .get("deepseek")
+                .unwrap()
+                .hidden_models
+                .as_deref(),
+            Some(&hidden[..])
+        );
+
+        // Empty list removes the line (and leaves a block-less file block-less)
+        let out = set_provider_hidden_models_in_toml(&out, "deepseek", &[]);
+        assert!(!out.contains("hidden_models"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert!(cfg.ai.providers.is_empty());
+
+        // Replacement in place, not duplicated
+        let out = set_provider_hidden_models_in_toml(text, "openai", &hidden);
+        let out = set_provider_hidden_models_in_toml(&out, "openai", &["gpt-5.2".to_string()]);
+        assert_eq!(out.matches("hidden_models").count(), 1);
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(
+            cfg.ai
+                .providers
+                .get("openai")
+                .unwrap()
+                .hidden_models
+                .as_deref(),
+            Some(&["gpt-5.2".to_string()][..])
+        );
+    }
+
+    /// The settings window's Remove (MOE-0032): the provider block leaves whole (its separator
+    /// blank line included), the active selection is cleared only when asked, and everything
+    /// else — comments, other sections — survives byte for byte. A missing provider is a no-op.
+    #[test]
+    fn remove_provider_edits_the_block_and_optionally_the_selection() {
+        let text = "# mine\n[summon]\nkey = \"double-option\"\n\n[ai]\n# pick\nprovider = \"alibaba\"\nmodel = \"qwen\"\n\n[ai.providers.alibaba]  # note\nhidden_models = [\"qwen-old\"]\n\n[ui]\ntheme = \"dark\"\n";
+        let out = remove_provider_in_toml(text, "alibaba", true);
+        assert!(!out.contains("ai.providers.alibaba"));
+        assert!(!out.contains("provider ="));
+        assert!(!out.contains("model ="));
+        assert!(out.contains("# mine"));
+        assert!(out.contains("# pick"));
+        assert!(out.contains("[ui]"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider, None);
+        assert_eq!(cfg.summon.key, SummonKey::DoubleTap(Modifier::Alt));
+        assert!(!out.contains("\n\n\n"), "no doubled blank seam: {out}");
+
+        // Block only (the provider was not the active pair): the selection stays
+        let out = remove_provider_in_toml(text, "alibaba", false);
+        assert!(!out.contains("ai.providers.alibaba"));
+        let cfg = MoeConfig::from_toml(&out).unwrap();
+        assert_eq!(cfg.ai.provider.as_deref(), Some("alibaba"));
+
+        // A provider that is not there (and no selection clearing asked) leaves the text alone
+        let out = remove_provider_in_toml("[ai]\nprovider = \"deepseek\"\n", "alibaba", false);
+        assert_eq!(out, "[ai]\nprovider = \"deepseek\"\n");
+        // With clear_selection the caller says the pair pointed at the removed id: the lines go,
+        // and the emptied [ai] section loses its header too (nothing is left to declare)
+        let out = remove_provider_in_toml(
+            "[ai]\nprovider = \"alibaba\"\nmodel = \"q\"\n",
+            "alibaba",
+            true,
+        );
+        assert_eq!(out, "\n");
+        assert!(MoeConfig::from_toml(&out).unwrap().ai.provider.is_none());
     }
 
     #[test]

@@ -34,3 +34,14 @@ a bare three-button menu without a filter or keyboard selection on the other.
   elsewhere (e.g. Hide Side View); harmless there, and consistent with the panel's return-to-input.
 - The About card keeps its own renderer (ADR-0026: duplicated by intent); if it adopts
   `createCard`, that ADR's "wait for a third card" is fulfilled rather than violated.
+## Amendment: the filter input sits at the bottom on every menu card (MOE-0030 revision)
+
+The Side View's cards used to anchor their filter input at the top edge (the history card's
+shape); the panel's cards kept it at the bottom. The model switcher's arrival made the mismatch
+visible — two menu cards, two input edges, one window. The bottom edge wins everywhere: rows
+first, filter last, on the panel's and the Side View's actions card, the history card, the about
+card and the switcher card alike. The card component itself is order-agnostic (the owner's markup
+places the input); the convention is this amendment. The switcher additionally filters
+server-side (`createCard`'s `onQuery`): its rows are ranked and capped backend-side, so a client
+title filter would hide exactly the capability matches the backend found — with `onQuery` the
+card replaces its sections per query instead of filtering what it loaded.

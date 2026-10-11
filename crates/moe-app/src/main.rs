@@ -748,7 +748,8 @@ fn invoke_command(
     Ok(result)
 }
 
-/// Platform effects of a command result (ADR-0002/0004): write-back delivery and side-view materialization.
+/// Platform effects of a command result (ADR-0002/0004): write-back delivery, side-view
+/// materialization, and the settings window (MOE-0029).
 fn apply_result_effects(app: &AppHandle, result: &ActionResult) -> Result<(), String> {
     if let ActionResult::WriteBack { text } = result {
         deliver_writeback(app, text.clone())?;
@@ -756,7 +757,28 @@ fn apply_result_effects(app: &AppHandle, result: &ActionResult) -> Result<(), St
     if let ActionResult::OpenSideView { payload } = result {
         open_side_view(app, payload.clone());
     }
+    if let ActionResult::OpenSettings {} = result {
+        open_settings(app);
+    }
     Ok(())
+}
+
+/// Open the settings window (MOE-0029): an ordinary app window (not a floating panel) — the
+/// panel is dismissed like for the side view, and the window keeps its frame between opens.
+fn open_settings(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        hide_panel_blocking(&handle);
+        let Some(window) = handle.get_webview_window("settings") else {
+            eprintln!("moe: settings window does not exist");
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        refresh_window_shadow(&window);
+        let _ = window.show();
+        let _ = window.set_focus();
+        eprintln!("moe: settings shown");
+    });
 }
 
 #[tauri::command]
@@ -1039,6 +1061,86 @@ fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: String) -> Resul
     Ok(parsed.as_str().to_string())
 }
 
+// ---- AI provider management (MOE-0029): the settings window and the chat views' model switcher ----
+
+/// The active provider/model pair: the chat views' model chip and the settings window's radios.
+#[tauri::command]
+fn ai_active_pair() -> Option<moe_extensions::ai_models::ActivePair> {
+    moe_extensions::ai_models::active_pair()
+}
+
+/// The model switcher card's rows (chat views): the picker's ranking, filtered by the query.
+#[tauri::command]
+fn ai_model_options(query: String) -> Vec<moe_extensions::ai_models::ModelOption> {
+    moe_extensions::ai_models::model_options(&query)
+}
+
+/// Switch the active pair (the switcher card, the settings rows): `[ai] provider` / `[ai] model`
+/// are written in place (the picker's apply rule, MOE-0028), and the new pair comes back.
+#[tauri::command]
+fn ai_set_pair(
+    provider: String,
+    model: String,
+) -> Result<Option<moe_extensions::ai_models::ActivePair>, String> {
+    moe_platform::config::store_ai_selection(&provider, &model).map_err(|err| err.to_string())?;
+    Ok(moe_extensions::ai_models::active_pair())
+}
+
+/// The settings window's provider groups: the providers this install uses, with their key state
+/// and per-model visibility / active flags.
+#[tauri::command]
+fn ai_settings_providers() -> Vec<moe_extensions::ai_models::ProviderSettings> {
+    moe_extensions::ai_models::settings_providers()
+}
+
+/// The settings window's "Connect a provider" search: unmanaged catalog providers.
+#[tauri::command]
+fn ai_catalog_providers(query: String) -> Vec<moe_extensions::ai_models::CatalogProvider> {
+    moe_extensions::ai_models::catalog_providers(&query)
+}
+
+/// A settings checkbox: show / hide one model in the pickers (the provider's `hidden_models`).
+#[tauri::command]
+fn ai_set_model_visibility(provider: String, model: String, enabled: bool) -> Result<(), String> {
+    moe_extensions::ai_models::set_model_visibility(
+        &provider,
+        &model,
+        enabled,
+        |provider, hidden| {
+            moe_platform::config::store_provider_hidden_models(provider, hidden)
+                .map_err(|err| err.to_string())
+        },
+    )
+    .map_err(|err| err.to_string())
+}
+
+/// A settings key row: save one provider's key file (0600; never the config file, ADR-0019).
+#[tauri::command]
+fn ai_save_provider_key(provider: String, key: String) -> Result<(), String> {
+    moe_platform::keychain::set_provider_key(&provider, &key)
+}
+
+/// A settings group action: remove a provider (MOE-0032) — its key file, its config block,
+/// and the active pair when it pointed at it.
+#[tauri::command]
+fn ai_remove_provider(provider: String) -> Result<(), String> {
+    moe_extensions::ai_models::remove_provider(&provider).map_err(|err| err.to_string())
+}
+
+/// Is a generation actually live for this conversation? The chat page's load-time truth
+/// (MOE-0030 revision 9): "the last message is a question" is only a hint, a failed request
+/// would otherwise leave the page generating forever and swallow every Enter into a silent stop.
+#[tauri::command]
+fn conversation_streaming(conversation_id: String) -> bool {
+    moe_extensions::ai::is_streaming(&conversation_id)
+}
+
+/// Show the settings window from the UI (the side view's gear button).
+#[tauri::command]
+fn open_settings_window(app: AppHandle) {
+    open_settings(&app);
+}
+
 #[tauri::command]
 fn open_input_monitoring_settings() {
     #[cfg(target_os = "macos")]
@@ -1061,7 +1163,7 @@ fn open_accessibility_settings() {
     }
 }
 
-/// Menu bar resident: tray icon + menu (Show Panel / AI Chat / Launch at Login / Open Config File / Quit).
+/// Menu bar resident: tray icon + menu (Show Panel / AI Chat / Settings / Launch at Login / Open Config File / Quit).
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
@@ -1071,6 +1173,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
     let show = MenuItem::with_id(app, "tray.show", "Show Panel", true, None::<&str>)?;
     let chat = MenuItem::with_id(app, "tray.chat", "AI Chat", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "tray.settings", "Settings…", true, None::<&str>)?;
     let autostart = CheckMenuItem::with_id(
         app,
         "tray.autostart",
@@ -1082,7 +1185,12 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let config = MenuItem::with_id(app, "tray.config", "Open Config File", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "tray.quit", "Quit Moe", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&show, &chat, &autostart, &separator, &config, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show, &chat, &settings, &autostart, &separator, &config, &quit,
+        ],
+    )?;
 
     let autostart_item = autostart.clone();
     let mut builder = TrayIconBuilder::with_id("moe-tray")
@@ -1092,6 +1200,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             "tray.show" => toggle_panel(app),
             // Side view with an empty conversation: start one if none is running; history is recoverable via "AI: Search Chat History"
             "tray.chat" => open_side_view(app, serde_json::json!({})),
+            "tray.settings" => open_settings(app),
             "tray.autostart" => {
                 let currently = app.autolaunch().is_enabled().unwrap_or(false);
                 let result = if currently {
@@ -1477,6 +1586,16 @@ fn main() {
             summon_status,
             ui_theme,
             set_theme,
+            ai_active_pair,
+            ai_model_options,
+            ai_set_pair,
+            ai_settings_providers,
+            ai_catalog_providers,
+            ai_set_model_visibility,
+            ai_save_provider_key,
+            ai_remove_provider,
+            conversation_streaming,
+            open_settings_window,
             open_input_monitoring_settings,
             open_accessibility_settings
         ])

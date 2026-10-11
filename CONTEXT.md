@@ -87,9 +87,9 @@ _Avoid_: recents, favorites (favorites are a separate, user-curated section — 
 The user-curated section pinned **above Suggestions** on the root page (ADR-0029): commands
 toggled via the root actions card's **Add to Favorites** (or `⌘⇧F`; remove with the same row).
 Stored platform-level in `favorites.json`, insertion-ordered; a favorited command is not repeated
-in Suggestions or in its source group. The root actions card's **Command** section starts with
-**Open Command** (the same Apply as Enter — runs the focused command), then the favorite toggle,
-then **Configure Extension** (a disabled placeholder).
+in Suggestions or in its source group. The root card leads with **Open Command** (the same Apply
+as Enter — runs the focused command) and the favorite toggle; **Configure Extension** (a disabled
+placeholder) is the extension-settings row below the deletes (ADR-0037 amendment).
 _Avoid_: bookmarks, pinned, starred (the star is the icon, not the term)
 
 **List–detail page template**:
@@ -196,11 +196,14 @@ _Avoid_: shortcut mapping, bindings
 
 **Show All Actions**:
 The layered behavior triggered by ⌘K on every surface (command panel and Side View alike): lists
-what can run from the page as one layer for keyboard selection — the object's own actions
-(**Actions**: the focused item, whatever the page shape; the conversation on a chat page), the
-page command's own rows (**Command**, ADR-0029), and the platform slots live on the page
-(**General**: Browse ⌘P / New ⌘N as declared, Delete ⌃X / DeleteAll ⌃⇧X on records). Assembled
-from registered sources (ADR-0037); one semantics, one key (ADR-0014 amendment).
+what can run from the page as one layer for keyboard selection, in **one canonical order**
+(ADR-0037 amendment) — the page's ⏎ action (Apply / Open Command, or Stop while a stream runs),
+then its ⌥⏎ action, then the object's own actions (the focused item whatever the page shape; the
+conversation on a chat page), then the destructive Delete ⌃X / DeleteAll ⌃⇧X, then the
+extension's settings, then the app's global rows (Open Settings, Open Config File, window). The
+sections (Actions / Command / General; Chat / App / Window) keep their labels, order by their
+topmost row, and hairline-separate adjacent rank groups inside a section. Assembled from
+registered sources (ADR-0037); one semantics, one key (ADR-0014 amendment).
 _Avoid_: command menu
 
 **Browse**:
@@ -248,6 +251,14 @@ How a command's result is delivered back into the user's text context: replace t
 there is one, insert at the cursor otherwise. Only write-back Commands behave this way.
 _Avoid_: paste (pasting is just one way to implement a write back)
 
+**Settings Window**:
+An ordinary window hosting Moe's settings (MOE-0029): sidebar sections, one pane each — the AI
+pane manages the providers in use (per-provider keys, picker visibility, the active pair) over
+the Model Catalog, the General pane the appearance and the config-file entry. Not a panel page
+and not floating: it stays open until closed (Esc / traffic light), and it is reached from the
+tray, the palette, the Side View's gear and every page's actions card.
+_Avoid_: preferences dialog, settings page (the About card is not it either)
+
 ### AI Chat
 
 **Conversation**:
@@ -259,6 +270,16 @@ The embedded models.dev snapshot (refreshed daily, MOE-0025) behind the Provider
 model picker (MOE-0028): per-model limits, modalities, capabilities and pricing; an official
 provider's base URL, key variables and model list come from it.
 _Avoid_: model list, registry (the command Registry is a different thing)
+
+**Model Switcher**:
+A row inside both chat surfaces' actions cards ("Change Model", ⌥M) and the card it opens
+(MOE-0029/MOE-0030 revision): the bare model names of the providers that can run — each listed
+provider carries a resolvable key — ranked with the picker's order, grouped by provider, the
+active one checked; the focused row's facts (context, modalities, capabilities, pricing, dates)
+ride a companion card floating beside the list. Enter or click writes the active pair, which the
+chat titles then carry under the conversation title (MOE-0033). Which models the card and the
+picker list at all is the Settings Window's checkboxes (`hidden_models`).
+_Avoid_: model menu, model dropdown, model chip
 
 **Provider**:
 The AI endpoint behind a Conversation and the AI Commands (ADR-0040): an official id from the
@@ -276,10 +297,13 @@ _Avoid_: API version, driver
 
 **Quick Ask**:
 A conversation hosted in the Command Panel (ADR-0036): applying the Quick Ask row opens the page
-(the search text is never sent as its first question — only the capturing row does that); the Input
-Bar becomes the composer (Enter sends, answers stream), and the conversation continues until a New
-Chat (⌘N) or a step through history (⌃[ / ⌃]) replaces it. A record surface like the Side View:
-Remove Chat (⌃X) deletes it through the same delete slot, and ⌘J materializes it into the Side View.
+(the search text is never sent as its first question — only the capturing row does that); the
+page's own composer row — the bottom bar's glass: add button, one-row capsule input, actions
+button (MOE-0030) — takes the draft (Enter sends, answers stream), while the Input Bar above
+reads the conversation title (read-only) in the command pages' own row design, and the
+conversation continues until a New Chat (⌘N) or a step through history (⌃[ / ]) replaces it. A
+record surface like the Side View: Remove Chat (⌃X) deletes it through the same delete slot, and
+⌘J materializes it into the Side View.
 Declared by `ActionResult::Conversation` and continued by `Extension::panel_continue` (IPC `panel_send`).
 _Avoid_: quick mode
 

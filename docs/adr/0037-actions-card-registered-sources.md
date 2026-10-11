@@ -51,3 +51,33 @@ already fires on every record page — was never listed at all.
 - The command layer gains a General section (Browse/New for the focused command) and the chat page
   a Command section (favorite); the intro copy of neither page changes — the sections explain
   themselves.
+
+## Amendment: one canonical action order, enforced by the plan
+
+The sections answered "who contributed this row" (Actions / Command / General, Chat / App /
+Window) but not "where does this row belong": the same semantic action sat in different slots
+depending on the page — Stop Generation was buried under Set AI Model although it is the page's
+⏎, Remove Chat lived under General on the panel but under Chat in the Side View, and Configure
+Extension (a settings row) could sit above the deletes. The owner asked for one predefined order
+that every actions card on every page respects automatically.
+
+- **Rows declare what they are; the plan decides where they go.** `ActionRow.rank` is the
+  vocabulary (`ui/src/actions.ts`): `primary` (the ⏎ action: Apply / Open Command, or Stop while
+  a stream runs, ADR-0036) → `secondary` (the ⌥⏎ action) → `action` (the object's / page's own
+  rows: New, Browse, Change Model, Open in Side View, re-run…) → `destructive` (Delete ⌃X /
+  DeleteAll ⌃⇧X, or Remove Chat / Remove All Chats) → `settings` (Configure Extension) →
+  `global` (the app's escape hatches: Open Settings, Open Config File, Hide Side View). A row
+  that declares nothing is a plain `action`.
+- **The source sections stay** (the owner's review): `sections(ctx)` sorts each source's rows by
+  rank (stable: the source's own order decides ties) and orders the sections themselves by their
+  **topmost row's slot** — ties keep registration order — so the card reads in one canonical
+  order while keeping its labels.
+- **Inside a section, adjacent rank groups are hairline-separated**: the plan marks the first row
+  of every group after the first (`separator`), and the card draws a thin rule above it — the
+  canonical order is visible without flattening the sections. Separators hide while filtering,
+  like headers.
+- **Rationale for the order**: the first two slots mirror the two key bindings (⏎ / ⌥⏎), so the
+  card's top always matches what the keys do; then everything the card is *about* (the object and
+  its record), closed by the irreversible delete; then everything the *app* is about (extension
+  settings, then global rows) — context-free navigation never sits between the user and the
+  record's own actions.

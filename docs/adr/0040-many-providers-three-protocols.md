@@ -97,3 +97,15 @@ custom providers (`lmstudio` also has a catalog entry; local discovery is out of
   and reviewed like the catalog snapshot).
 - Provider switching mid-conversation is not in v1 (one active pair in config); the picker command
   that consumes the catalog comes later.
+
+## Amendment: `hidden_models` — the settings window's picker visibility (MOE-0029)
+
+The settings window's per-model checkboxes needed a place in the config that could not freeze
+the daily catalog refresh out of the pickers: writing the complement of a unchecked model into
+the hand-writable `models` restriction would pin the list to the catalog of that day. So a
+provider block gains **`hidden_models = […]`** — the models subtracted from the effective list
+*after* any `models` restriction — written by the comment-preserving section editor like every
+other config surgery. An all-visible provider carries no line, and a block that only carried
+`hidden_models` is removed again when the list empties. The active pair is unaffected: hiding
+the model a conversation runs on only removes it from the pickers, never from the surface that
+already uses it.

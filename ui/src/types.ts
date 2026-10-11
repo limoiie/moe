@@ -62,7 +62,8 @@ export type ActionResult =
   | { rerun: { text: string } }
   | { list: { items: Item[]; detailFull?: boolean } }
   | { conversation: { conversationId: string | null } }
-  | { openSideView: { payload: unknown } };
+  | { openSideView: { payload: unknown } }
+  | { openSettings: Record<string, never> };
 
 /** Streaming increment: updates the item in place by item id. */
 export interface CommandEventPayload {

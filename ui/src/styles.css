@@ -220,6 +220,7 @@
   .moe-about-card,
   .moe-avatar-chip,
   .moe-action-bar,
+  .moe-composer-capsule,
   .moe-window-actions,
   .moe-glass-button,
   .moe-bubble {
@@ -319,6 +320,7 @@ html[data-platform="macos"] .moe-window-card {
 .moe-about-card,
 .moe-avatar-chip,
 .moe-action-bar,
+.moe-composer-capsule,
 .moe-window-actions,
 .moe-glass-button,
 .moe-bubble {
@@ -336,6 +338,12 @@ html[data-platform="macos"] .moe-window-card {
     transparent 100%
   );
   mask-image: linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 18px), transparent 100%);
+}
+/* Bottom-only variant (the model detail card's body, MOE-0030 revision 7): the content
+   dissolves before the pinned footer instead of being cut mid-line. */
+.moe-scroll-fade-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent 100%);
 }
 
 /* Avatar chip (ADR-0026): one row tall (matching ROW_HEIGHT in layout.ts, via --moe-row-h).
@@ -683,31 +691,55 @@ body.moe-pointer-inside .moe-titlebar-title {
   background: var(--moe-surface-selected);
 }
 
-/* The Side View composer (ChatGPT-style): one rounded field holding the draft and, on a bottom row
-   inside it, the attachment and send buttons; the border brightens while the field has focus. The
-   radius is the nesting step for its 12px inset (ladder: window 16 → field 12, ADR-0035 amendment). */
-.moe-composer {
-  border: 1px solid var(--moe-line);
-  border-radius: 12px;
-  background: var(--moe-surface-overlay);
-  box-shadow: var(--moe-shadow-chip);
-  transition: border-color 140ms ease;
-}
-.moe-composer:focus-within {
-  border-color: var(--moe-accent-line);
-}
-/* The composer's round action buttons; the send button's fill comes from its own state utilities
-   (accent / warning / disabled), so this class carries layout only. */
-.moe-composer-action {
-  display: inline-flex;
+/* The composer's capsule (MOE-0030 revision): the root page's action-pill glass — one row tall,
+   a squircle capsule floating between the two round glass buttons of the composer row. The
+   border-less glass reads like the about chip and the pill; focus rings the capsule accent. */
+.moe-composer-capsule {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
+  gap: 8px;
+  height: var(--moe-row-h);
+  padding: 0 14px;
   border: 0;
   border-radius: 999px;
-  transition: background-color 120ms ease, color 120ms ease;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  box-shadow: var(--moe-shadow-chip);
+  transition: box-shadow 140ms ease;
+}
+.moe-composer-capsule:focus-within {
+  box-shadow:
+    var(--moe-shadow-chip),
+    0 0 0 1px var(--moe-accent-line);
+}
+/* Settings window rows (MOE-0029): sidebar sections, theme rows, provider key rows. */
+.moe-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--moe-fg);
+  font-size: 13px;
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+.moe-settings-row:hover {
+  background: var(--moe-surface-hover);
+}
+.moe-settings-row[data-active="true"] {
+  background: var(--moe-surface-selected);
+}
+/* The picker-visibility checkboxes: native control in the theme's accent. */
+.moe-check {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--moe-accent-fill);
 }
 .moe-action-bar button {
   display: inline-flex;
