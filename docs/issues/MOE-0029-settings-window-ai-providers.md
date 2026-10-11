@@ -6,6 +6,7 @@
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 8b06425
 
 The owner's ask: configure AI providers and switch models amongst several providers from the Moe
 UI itself. Until now every provider fact lived in config.toml and key files: MOE-0028 brought a

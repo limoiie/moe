@@ -6,6 +6,7 @@
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 8b06425
 - **Blocked by**: MOE-0029 (the switcher's rows and apply path)
 
 The owner's ask: Raycast moved its quick chat to a normal chat layout — the composer at the

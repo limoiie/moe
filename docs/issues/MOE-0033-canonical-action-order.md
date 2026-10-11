@@ -6,6 +6,7 @@
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 8b06425
 
 The owner's ask: the ⌘K actions menu on every page should sort its rows in one predefined order —
 the primary action and the secondary action always on top, then the page's own actions, then

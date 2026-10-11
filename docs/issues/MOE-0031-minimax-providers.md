@@ -6,6 +6,7 @@
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 8b06425
 
 The owner configured MiniMax and asked why no MiniMax CN provider exists in the UI. Three gaps
 stacked up:

@@ -6,6 +6,7 @@
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 8b06425
 
 The owner asked: "why is alibaba activated by default, even though there is no key for it? how can
 I remove it or other ai provider having been added?"
