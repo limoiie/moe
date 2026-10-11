@@ -77,7 +77,7 @@ function reasoningParts(): {
   body: HTMLElement;
 } {
   const details = document.createElement("details");
-  details.className = "moe-thinking not-prose mb-2 text-xs text-fg-subtle";
+  details.className = "moe-thinking not-prose mb-2 text-fg-subtle";
   const summary = document.createElement("summary");
   summary.className =
     "-mx-1.5 flex cursor-pointer select-none items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-surface-float";
@@ -92,7 +92,7 @@ function reasoningParts(): {
     chevron,
   );
   const body = document.createElement("div");
-  body.className = "moe-thinking-body md mt-1.5 text-sm";
+  body.className = "moe-thinking-body md mt-1.5";
   details.append(summary, body);
   return { details, label, body };
 }
@@ -202,7 +202,7 @@ function setToolRowStatus(row: ToolRow, status: ToolCallStatus | undefined) {
  */
 function toolRowEl(call: ToolCall): ToolRow {
   const details = document.createElement("details");
-  details.className = "moe-thinking not-prose text-xs text-fg-subtle";
+  details.className = "moe-thinking not-prose text-fg-subtle";
   details.dataset.toolCallId = call.id;
   const summary = document.createElement("summary");
   summary.className =
@@ -223,7 +223,7 @@ function toolRowEl(call: ToolCall): ToolRow {
     }),
   );
   const body = document.createElement("div");
-  body.className = "moe-thinking-body md mt-1.5 text-sm text-fg-muted";
+  body.className = "moe-thinking-body md mt-1.5 text-fg-muted";
   details.append(summary, body);
   const row: ToolRow = { details, label: labelEl, status, body };
   setToolRowStatus(row, call.status);

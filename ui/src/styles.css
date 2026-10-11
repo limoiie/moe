@@ -907,6 +907,12 @@ body.moe-pointer-inside .moe-titlebar-title {
 .moe-thinking > summary {
   list-style: none;
 }
+/* The non-prose blocks settle at one explicit size — heading and content alike (MOE-0038,
+   superseding MOE-0014's body-sized content); the builders carry no size utilities, so the
+   label, status word, and the excerpt body all inherit this. */
+.moe-thinking {
+  font-size: 13px;
+}
 .moe-thinking > summary::-webkit-details-marker {
   display: none;
 }
