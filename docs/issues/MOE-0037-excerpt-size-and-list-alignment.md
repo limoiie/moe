@@ -1,11 +1,12 @@
 # M9i: one content size for both non-prose blocks, and the tool results align in the excerpt
 
 - **ID**: MOE-0037
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 467c53d
 
 The owner's observation after MOE-0036: "the font size for thinking block and tool calling block
 aren't the same; and the content for tool calling block isn't aligned with the text of heading."
@@ -48,3 +49,8 @@ aren't the same; and the content for tool calling block isn't aligned with the t
 ## Comments
 
 - 2026-10-11 (agent): filed from the owner's report; implementing in the working tree.
+- 2026-10-11 (agent): **done** (467c53d) — the tool body renders `text-sm` (MOE-0014's rule now
+  covers every non-prose block); `.moe-thinking-body.md :is(ul, ol)` zeroes the prose indent and
+  moves markers inside, so search-result lists start flush at the excerpt's content edge.
+  `pnpm -C ui build` green. Eyeball check on next app run: a `Searched «…»` row's numbered hits
+  and a Thinking row's paragraphs sit at the same left edge and the same size.
