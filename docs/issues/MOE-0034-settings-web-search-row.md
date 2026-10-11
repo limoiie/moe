@@ -1,11 +1,12 @@
 # M9f: the settings window grows a Web Search row — SearXNG reaches the UI
 
 - **ID**: MOE-0034
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature, ux
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 4c34fd2
 
 The owner's ask: "since we have settings window now, please add configuration for searxng entry
 there." The SearXNG instance URL lived only in config.toml (`[ai] searxng_url`, MOE-0026) while
@@ -84,3 +85,7 @@ model-side "search instance unreachable".
 - 2026-10-11 (agent): the caveat above is resolved — MOE-0035 generalized the tool loop to the
   Anthropic protocol, so the active minimax-cn pair now advertises `web_search` too. The
   settings-card blurb dropped the "chat-protocol only" wording.
+- 2026-10-11 (agent): **done** (4c34fd2) — delivered with the bundled MOE-0034–0035 commit; the
+  protocol caveat was resolved by MOE-0035 the same day. Remaining eyeball check on next app run:
+  the card's badge/prefill, a Test toast against the live :8888 instance, and the empty-save
+  removal path.

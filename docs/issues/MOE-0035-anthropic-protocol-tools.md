@@ -1,11 +1,12 @@
 # M9g: the tool loop speaks Anthropic — MiniMax models get web search
 
 - **ID**: MOE-0035
-- **State**: in-progress
+- **State**: done
 - **Labels**: feature
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 4c34fd2
 
 The owner's ask: "I want minimax models to use web search tools as well." MOE-0026 built the tool
 loop on the openai-chat wire only (`agent.rs` hardcodes `Protocol::OpenAiChat`; the gate in
@@ -127,3 +128,5 @@ surface fully supports `tools`/`tool_use`/`tool_result` — it is their Claude-C
   --all-targets -- -D warnings` clean, `pnpm -C ui build` green. Awaiting commit; live acceptance
   pending: a MiniMax-M3 Quick Ask with `searxng_url` set should stream a `Searched «…»` row, and
   a follow-up turn must replay the signed thinking without a 400.
+- 2026-10-11 (agent): **done** (4c34fd2) — delivered with the bundled MOE-0034–0035 commit; the
+  live MiniMax acceptance above is the owner's next-run eyeball check.
