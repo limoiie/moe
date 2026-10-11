@@ -1,11 +1,12 @@
 # M9j: the non-prose blocks settle at 13px — heading and content alike
 
 - **ID**: MOE-0038
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: 75b24a9
 
 The owner's ask: "change the font size of the blocks to 13px, including both the heading and
 content" — the Thinking rows and Tool Call rows, on every surface the shared builders serve
@@ -43,3 +44,6 @@ content" — the Thinking rows and Tool Call rows, on every surface the shared b
 ## Comments
 
 - 2026-10-11 (agent): filed from the owner's ask; implementing in the working tree.
+- 2026-10-11 (agent): **done** (75b24a9) — `.moe-thinking { font-size: 13px }`; the four builder
+  class strings dropped `text-xs`/`text-sm`, so label, status word, and both excerpt bodies
+  inherit one size; `.md` em-relative child rules scale with it. `pnpm -C ui build` green.
