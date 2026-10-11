@@ -1,11 +1,12 @@
 # M9h: the Thinking row gets a lightning icon, and expanded non-prose content reads as an excerpt
 
 - **ID**: MOE-0036
-- **State**: in-progress
+- **State**: done
 - **Labels**: ux
 - **Created**: 2026-10-11
 - **Updated**: 2026-10-11
 - **Assignee**: agent
+- **Commit**: dc690e2
 
 The owner's ask: "for the think block, add a lighting icon in the heading; for all non-prose
 block's content, change to excerpt style — a left line aligned with the icon in the heading, and
@@ -47,3 +48,9 @@ the content aligned with the text in the heading."
 ## Comments
 
 - 2026-10-11 (agent): filed from the owner's ask; implementing in the working tree.
+- 2026-10-11 (agent): **done** (dc690e2) — `zap` registered; the Thinking summary leads with it
+  (12 px, `text-fg-faint`, the Tool rows' slot); both body builders dropped `pl-4`; the excerpt
+  rule lives on `.moe-thinking-body` (5 px offset + 2 px `--moe-line-strong` border + 9 px
+  padding = the rule centered under the 12 px icon, text at the label's 16 px). `pnpm -C ui
+  build` green. Eyeball check on next app run: expand a Thinking row and a `Searched «…»` row —
+  the left rule should hang under the icon with the content flush to the label text.
