@@ -7,7 +7,7 @@
 - **Updated**: 2026-10-12
 - **Blocked by**: MOE-0041, MOE-0042
 - **Blocks**: MOE-0046, MOE-0048
-- **Commit**: 7a500d1 (712ca26 fixes a post-close regression)
+- **Commit**: 7a500d1 (712ca26, 5c304e4 fix and refine it post-close)
 
 The tracer bullet. There is no way to narrow a list by a second dimension: `Item` has no tags and
 `ActionResult::List` carries only `items` and `detail_full`. ADR-0043 adopts Raycast's
@@ -82,10 +82,11 @@ one Extension that declares a dimension.
 - [x] 18 UI tests, `tsc --noEmit`, `tsc + vite build`, and 7 Rust suites green. **`just lint` is red
       on the pre-existing `cargo fmt` diff in `crates/moe-extensions/src/ai_client/anthropic.rs`** —
       unchanged by this work, verified present on a clean `HEAD` earlier.
-- [ ] **Nothing has rendered on screen.** The whole of this ticket is user-visible behavior that only
+- [x] **Nothing has rendered on screen.** The whole of this ticket is user-visible behavior that only
       a manual pass confirms: the control appearing on history and not on a full-detail page, the
       card's anchor and its check, Esc ordering, and the platform Empty View when a tag excludes
-      everything. Worth checking before trusting it.
+      everything. Worth checking before trusting it. **Verified on screen 2026-10-12** — a manual pass
+      confirmed all four, and the same pass produced the two changes in the comment below.
 
 ## Comments
 
@@ -166,3 +167,15 @@ one Extension that declares a dimension.
   empty-derives and absent-derives. ADR-0043's third amendment records it. The last acceptance box
   below — "nothing has rendered on screen" — is exactly the one this slipped past; it stays unticked
   until a human presses the keys.
+- 2026-10-12 (agent): **verified on screen, and two follow-ups landed** (5c304e4). The manual pass the
+  fix above was waiting on confirmed the control shows on history and not on a full-detail page, the
+  card anchors under its trigger with its check, Esc closes the card before backing out, and the
+  platform Empty View shows when a tag excludes everything. The last acceptance box is now ticked.
+
+  Two changes came out of that pass, both reverting an earlier decision (ADR-0043's fourth amendment):
+  **the filter now takes Raycast's `⌘P`** — Raycast's docs say the dropdown opens "by using the global
+  shortcut `⌘P` or by clicking on it" — so where a page declares a dimension the chord opens the Filter
+  Card and Browse keeps it everywhere else; and **the control is now a ghost** (no fill or border at
+  rest, a hover wash, a soft accent chip once a value is set). Withdrew divergence #2 in
+  `docs/research/raycast-ui-primitives.md` rather than renumber. Opening the Filter Card also now closes
+  the actions and About cards, matching the peer rule the other two already followed.

@@ -60,8 +60,8 @@ _Avoid_: search box, address bar
 
 **Filter Control**:
 The Input Bar's trailing control on a result page, narrowing the Result List by a second dimension: a
-label plus a chevron, showing the active value when one is set (ADR-0043). It is the trigger — the
-surface it opens is the Filter Card.
+label plus a chevron, ghost at rest and a soft accent chip when a value is set (ADR-0043). It is the
+trigger — the surface it opens is the Filter Card — and ⌘P opens it, Raycast's chord for the same control.
 _Avoid_: dropdown button, filter icon, search bar accessory
 
 **Filter Card**:
@@ -239,7 +239,9 @@ _Avoid_: command menu
 **Browse**:
 A platform general action, ⌘P by default: opens the current Extension's record list (AI = chat
 history). The entry is declared by the Extension (`browse_command`); no declaration means no
-records to browse, and the platform shows a single inline hint (ADR-0014).
+records to browse, and the platform shows a single inline hint (ADR-0014). Where a result page
+declares a filter dimension, ⌘P opens the Filter Card instead and Browse keeps the chord elsewhere
+(ADR-0043 amendment).
 _Avoid_: history, list view (Browse means specifically this keybinding semantics)
 
 **New**:

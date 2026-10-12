@@ -58,8 +58,10 @@ keybindings.** Record every divergence (§4).
 - Its **API** is React components; Moe's is serde contracts plus a vanilla TypeScript view layer
   (ADR-0007). Fidelity at the API layer is foreclosed, and attempting it would reverse that ADR.
 - Its **keybindings** collide with Moe's Keymap, which is platform-owned and identical across
-  Extensions (`CONTEXT.md` → Keymap). Raycast's `⌘P` is the search-bar dropdown; Moe's `⌘P` is
-  Browse (see the ADR-0014 amendment, which corrects that ADR's attribution).
+  Extensions (`CONTEXT.md` → Keymap). The one it shares, it now follows: `⌘P` opens the search-bar
+  dropdown in Raycast, and Moe gives that chord to the Filter Control on any page that declares a
+  dimension, leaving Browse the slot everywhere else (ADR-0043's fourth amendment). Every other Raycast
+  chord remains Moe's own — ADR-0014's amendment corrects that ADR's ⌘P attribution.
 - Its **behavior and layout** are what make it feel like Raycast: fixed page shapes, search bar plus
   accessory, contextual actions, one empty mechanism, loading below the search bar, metadata placed
   by context. All of that is adopted.
@@ -93,7 +95,7 @@ keybindings.** Record every divergence (§4).
 | # | Raycast | Moe | Why |
 |---|---|---|---|
 | 1 | Secondary action is `⌘↵` | `⌥⏎`, meaning Copy | The primary/secondary distinction is a fixed platform convention, not a per-Extension choice |
-| 2 | Search-bar dropdown opens on `⌘P` | No global shortcut; a ⌘K card row, click, or Tab | `⌘P` is Browse on every surface; a general action outranks a page-local control (ADR-0043) |
+| 2 | Search-bar dropdown opens on `⌘P` | *(withdrawn 2026-10-12)* `⌘P` opens the Filter Card on a page that declares a dimension; Browse keeps the chord elsewhere | Raycast fidelity won: the chord is adopted where Raycast has the control, and the general action yields the slot there (ADR-0043's fourth amendment) |
 | 3 | Extensions filter their own lists (`filtering={false}`, `onChange`) | The platform filters over `Item.tags` | Nothing paginates, so the whole set is already loaded (ADR-0043) |
 | 4 | `Color.Raw` and `Color.Dynamic` available | Nine bounded semantic tokens only | ADR-0035: roles, never hues — and contrast must be measured against the worst *composed* translucent backdrop (ADR-0041) |
 | 5 | `Icon` enum | Lucide names | ADR-0012 (ADR-0041) |

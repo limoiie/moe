@@ -169,3 +169,27 @@ and TS tests cover declared-wins, empty-derives and absent-derives.
 The lesson outlives the field: **a required TS field over an omittable Rust field is a type that lies**,
 and `tsc` cannot catch it. Every new contract field must be checked both ways — for the serde attribute
 that decides whether it rides the wire at all.
+
+## Amendment: the Filter Control takes `⌘P`, and reads as a ghost
+
+A manual pass over the shipped control reversed two things the decision above had settled the other way.
+
+**The filter takes Raycast's chord.** The decision above — and divergence #2 — gave the Filter Control
+no keybinding, because `⌘P` is Browse "on every surface" and "a general action outranks a page-local
+control". Raycast's own docs are unambiguous: the dropdown "will be displayed on the right-side of the
+search bar. Invoke it either by using the global shortcut `⌘P` or by clicking on it." The fidelity rule
+follows Raycast on user-visible behavior, so `⌘P` now opens the Filter Card on any page where
+`filterableDimension()` returns one, and **Browse keeps the chord everywhere else** — the command layer,
+full-detail pages, the Side View. It is the same toggle on the same card as the click; the ⌘K row shows
+the chord and the control's tooltip names it. This is the one place the platform keymap yields a slot to
+a page-local control, and it is deliberate: Raycast has no Browse, so where Raycast shows a dropdown Moe
+shows the filter. Divergence #2 is withdrawn rather than renumbered.
+
+Opening it now closes the actions and About cards, matching the peer rule those two already followed —
+the Filter Card had been the one card that did not.
+
+**The control is a ghost.** At rest it carries no fill and no border — muted ink and a chevron — so it
+reads as an accessory of the Input Bar rather than a button competing with the input. A hover reveals the
+neutral wash; a set value turns the ghost into a soft accent chip (`--moe-accent-soft` with a
+`--moe-accent-line` hairline), the ink staying at the main text step per ADR-0041's contrast rule. The
+row-band constraint is untouched — no padding changed — so the measured panel height still cannot move.
