@@ -33,6 +33,10 @@ fmt:
 ui-check:
 	pnpm -C ui typecheck
 
+# Run the UI unit tests (vitest)
+ui-test:
+	pnpm -C ui test
+
 # Build the UI bundle (tsc + vite build, output ui/dist)
 ui-build:
 	pnpm -C ui build
@@ -50,4 +54,4 @@ package:
 	cd crates/moe-app && cargo tauri build
 
 # Everything CI runs
-ci: lint test ui-build
+ci: lint test ui-test ui-build
