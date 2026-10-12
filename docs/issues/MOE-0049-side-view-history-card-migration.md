@@ -1,11 +1,11 @@
 # M9u: the Side View's history card — decide whether `createCard` can host it
 
 - **ID**: MOE-0049
-- **State**: triage
-- **Labels**: needs-triage, refactor, ux
+- **State**: done
+- **Labels**: wontfix, refactor, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
-- **Blocked by**: MOE-0041
+- **Blocked by**: MOE-0041 (done)
 
 The Side View's history card is the last hand-rolled card (`openHistoryCard`, `closeHistoryCard`,
 `conversationRow`, `ui/src/chat.ts`). ADR-0044 decided it migrates onto `createCard`, and
@@ -48,30 +48,48 @@ discipline is that a field earns its place by being needed on at least two surfa
    card and the history list use, with the history card keeping its own key handling. More design
    work, but avoids adding single-surface fields to `CardRow`.
 
-## Recommendation
+## Decision: option 2 — the card stays hand-rolled, and ADR-0044's Cost is amended
 
-Option 1, on the strength of `CardRow.id`. `filteredEmptyText` is a string, not a behaviour, and the
-id has real second consumers queued up. If `CardRow.id` cannot be justified on a second surface once
-the model switcher is looked at properly, option 2 is the honest fallback — and ADR-0044's Cost should
-be amended rather than the field added anyway.
+This ticket made its own recommendation conditional — option 1 *"on the strength of `CardRow.id`"*, and
+option 2 as "the honest fallback" if that id "cannot be justified on a second surface once the model
+switcher is looked at properly — and ADR-0044's Cost should be amended rather than the field added
+anyway". Looking at the model switcher settles it against option 1:
 
-## Delivery
+- **`CardRow.id` has no second consumer.** The switcher's rows are rebuilt per query (`onQuery`) and it
+  marks the active model with `checked`, not by identity; nothing there would read an id.
+- **The migration needs a capability the ticket did not foresee.** ⌃[ / ⌃] move the *highlight inside
+  the card* (`moveHistory` → `conversations[historyIndex]`, `ui/src/chat.ts`), and `Card` can only
+  *report* focus (`focused()`), not set it. Migrating therefore needs `CardRow.id` **plus a focus
+  setter** — two new capabilities for one surface, where ADR-0044's Cost says a field earns its place
+  "by being needed on at least two surfaces".
+- `filteredEmptyText`, the third capability the body above lists, **already landed** — the Filter Card
+  needed it in MOE-0041, so only the two above remain.
 
-Not yet specified — the answer decides it. If option 1: `CardRow.id` + `Card.focusedId()` +
-`CardOptions.filteredEmptyText`, then `ui/src/chat.ts` loses its renderer, its focus tracking and its
-Esc/empty-⌫ handler, and `ui/chat.html`'s history markup joins the shared shape.
+So ADR-0044's discipline holds as written, and the history card stays hand-rolled. What that costs is
+named rather than hidden (ADR-0044's amendment records it): the Side View keeps its own Esc/empty-⌫ and
+its own rows/sections rendering, which is the duplication ADR-0044 was written to end.
+
+**The revisit trigger:** a second consumer for `CardRow.id`, or any card that needs programmatic focus.
+Either makes option 1 correct again, and the migration would then be its own ticket carrying the three
+capabilities and the behavioral criteria below.
 
 ## Acceptance
 
-- [ ] A decision recorded here, and ADR-0044 amended either to record the new capabilities or to
-      record that the history card stays hand-rolled.
-- [ ] If it migrates: ⌃[ / ⌃] still step per the *filtered* list, the two empty messages stay
-      distinct, and the recency groups still render as non-focusable headers.
-- [ ] If it migrates: no hand-rolled Esc / empty-⌫ remains for it.
-- [ ] Either way, `pnpm -C ui typecheck` and `just ui-build` green.
+- [x] A decision recorded here, **and** ADR-0044 amended — to record that the history card stays
+      hand-rolled and why, which is what that ADR's Cost clause prescribed for this outcome.
+- [x] "If it migrates" criteria — not applicable; recorded here so the ticks are not read as having
+      verified them.
+- [x] `pnpm -C ui typecheck` and `just ui-build` green (no code changed).
 
 ## Comments
 
 - 2026-10-12 (agent): split out of MOE-0041 when the migration was attempted. Labelled `needs-triage`
   because the choice is a design call about the shared component's boundary, not an implementation
   detail — and because ADR-0044 already anticipated the pressure this ticket is feeling.
+- 2026-10-12 (agent): **decided — option 2**, on this ticket's own condition rather than against it.
+  The recommendation was conditional on `CardRow.id` earning its place, and the model switcher does not
+  read one (`checked` marks the active model; rows are rebuilt per `onQuery`). Reading the migration
+  properly also turned up a capability the ticket missed: **⌃[/⌃] set the card's highlight**, and
+  `Card` can only report focus — so option 1 would cost two single-surface capabilities, not one. The
+  third it listed, `filteredEmptyText`, already shipped with the Filter Card in MOE-0041. ADR-0044 now
+  carries the amendment its Cost clause asked for, with the revisit trigger named.

@@ -56,6 +56,24 @@ running (`runRow`, `ui/src/card.ts`) and the About card's theme rows must stay o
 - `keepOpen` makes "does the card close?" a per-row property, so a reader can no longer assume that
   selecting a row dismisses the card. Only the About card's theme rows use it today.
 
+## Amendment: the history card stays hand-rolled (MOE-0049)
+
+The Cost above says `CardRow`'s optional fields "will keep growing; the discipline is that a field earns
+its place by being needed on at least two surfaces". MOE-0049 was the ticket where that discipline
+either held or got amended, and **it held**: the history card stays hand-rolled.
+
+What the migration turned out to need was two capabilities, neither of which has a second consumer:
+`CardRow.id`, so the card's focused row can be mapped back to a conversation (the model switcher marks
+its active model with `checked` and rebuilds rows per query — it would not read one), and a **focus
+setter**, because ⌃[ / ⌃] move the card's own highlight and `Card` can only report focus through
+`focused()`. The third the ticket listed, `filteredEmptyText`, already landed with the Filter Card.
+
+So the price is paid and stated: the Side View keeps its own Esc/empty-⌫ handler and its own
+rows/sections rendering, which is the duplication this ADR was written to end, and adding another
+list-like card there would still cost a hand-rolled key path. **The revisit trigger** is a second
+consumer for `CardRow.id` or a card that needs programmatic focus; either makes the migration correct
+again, as its own ticket.
+
 ## Amendment: the stack is a module, and it found a live drift
 
 Built as `ui/src/layers.ts` — `createLayers()` returns `register` / `top()` / `anyOpen()` /
