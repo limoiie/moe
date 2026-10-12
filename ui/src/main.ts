@@ -12,7 +12,7 @@ import { applyTagFilter, filterChangeAllowed, filterValuesFor, settleFilterValue
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { metadataEl, type MetadataDeps } from "./metadata";
-import { rowEl, type Row, type RowDeps } from "./rows";
+import { emptyViewEl, rowEl, sectionHeaderEl, type Row, type RowDeps } from "./rows";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
@@ -30,7 +30,6 @@ import {
   pageShapeOf,
   panelHeightFor,
   ROW_HEIGHT,
-  SECTION_HEADER_HEIGHT,
   type PageShape,
 } from "./layout";
 import {
@@ -169,34 +168,6 @@ function setSearchLoading(on: boolean) {
   loadingBarEl.classList.toggle("hidden", !on);
 }
 
-/**
- * The Empty View (ADR-0043): the platform's placeholder for a list with no rows. Non-focusable by
- * construction — a `<li>` with no click handler and no `data-focused`, so ↑↓ never lands on it and ⏎
- * has nothing to Apply. It replaces the Extension-authored notice row, which *was* a real Item.
- * Suppressed while a query-free load is in flight, so the first paint never flashes "no results".
- */
-function emptyViewEl(empty: EmptyView): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className = "select-none px-2 py-6 text-center";
-  li.setAttribute("role", "presentation");
-  if (empty.icon) {
-    const icon = document.createElement("div");
-    icon.className = "mb-2 flex justify-center text-fg-faint";
-    icon.append(iconEl(empty.icon, { size: 20 }));
-    li.append(icon);
-  }
-  const title = document.createElement("div");
-  title.className = "text-sm text-fg-muted";
-  title.textContent = empty.title;
-  li.append(title);
-  if (empty.description) {
-    const desc = document.createElement("div");
-    desc.className = "mx-auto mt-1 max-w-[44ch] text-xs leading-5 text-fg-subtle";
-    desc.textContent = empty.description;
-    li.append(desc);
-  }
-  return li;
-}
 
 const actionsCard = createCard({
   cardEl: actionsCardEl,
@@ -583,15 +554,6 @@ function currentEntries(): Row[] {
   });
 }
 
-/** Section header (ADR-0020): source is the group; headers are not focusable, do not participate in navigation, and do not respond to hover. Fixed height so the ten-row grid can reserve it (ADR-0026). */
-function sectionHeaderEl(title: string): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className =
-    "moe-section-header select-none px-3 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
-  li.style.height = `${SECTION_HEADER_HEIGHT}px`;
-  li.textContent = title;
-  return li;
-}
 
 
 /**

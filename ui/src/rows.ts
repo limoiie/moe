@@ -1,14 +1,58 @@
-// The result row — the panel's highest-traffic renderer (ADR-0018/0030/0041). It lives here, with its
-// side effects passed in, rather than in `main.ts`: that file queries the DOM at module load, so no test
-// can import it, and before this the row's rendering could only be checked by hand. ADR-0007's amendment
-// states the rule (a renderer worth testing lives in its own module and takes its side effects as
-// arguments); the metadata block was the first to follow it, this is the second.
+// The result list's renderers: the `<li>`s it is made of — a row, a section header, the empty view —
+// plus the accessory elements a row can carry (ADR-0018/0020/0030/0041/0043). They live here, with
+// their side effects passed in, rather than in `main.ts`: that file queries the DOM at module load, so
+// no test can import it, and before this the list's drawing could only be checked by hand. ADR-0007's
+// amendment states the rule (a renderer worth testing lives in its own module and takes its side
+// effects as arguments); the metadata block was the first to follow it, this is the second.
 
 import { accessoryLabel } from "./accessories";
 import { iconEl, inkClass } from "./icons";
 import { kbdEl } from "./kbd";
-import type { Accessory } from "./types";
+import { SECTION_HEADER_HEIGHT } from "./layout";
+import type { Accessory, EmptyView } from "./types";
 
+/** Section header (ADR-0020): source is the group; headers are not focusable, do not participate in
+ *  navigation, and do not respond to hover. Fixed height so the ten-row grid can reserve it (ADR-0026). */
+export function sectionHeaderEl(title: string): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className =
+    "moe-section-header select-none px-3 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
+  li.style.height = `${SECTION_HEADER_HEIGHT}px`;
+  li.textContent = title;
+  return li;
+}
+
+/**
+ * The Empty View (ADR-0043): the platform's placeholder for a list with no rows. Non-focusable by
+ * construction — a `<li>` with no click handler, no `data-focused` and no `.moe-row` class, so ↑↓ never
+ * lands on it, the row hover rule never matches it, and ⏎ has nothing to Apply. It replaced the
+ * Extension-authored notice row, which *was* a real Item.
+ *
+ * Whether to show it at all is the caller's call, not this function's: the platform suppresses it while
+ * a query-free load is in flight, so a first paint cannot flash "no results".
+ */
+export function emptyViewEl(empty: EmptyView): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "select-none px-2 py-6 text-center";
+  li.setAttribute("role", "presentation");
+  if (empty.icon) {
+    const icon = document.createElement("div");
+    icon.className = "mb-2 flex justify-center text-fg-faint";
+    icon.append(iconEl(empty.icon, { size: 20 }));
+    li.append(icon);
+  }
+  const title = document.createElement("div");
+  title.className = "text-sm text-fg-muted";
+  title.textContent = empty.title;
+  li.append(title);
+  if (empty.description) {
+    const desc = document.createElement("div");
+    desc.className = "mx-auto mt-1 max-w-[44ch] text-xs leading-5 text-fg-subtle";
+    desc.textContent = empty.description;
+    li.append(desc);
+  }
+  return li;
+}
 export interface Row {
   title: string;
   subtitle?: string;

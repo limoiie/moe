@@ -7,7 +7,8 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { rowEl, type RowDeps } from "./rows";
+import { SECTION_HEADER_HEIGHT } from "./layout";
+import { emptyViewEl, rowEl, sectionHeaderEl, type RowDeps } from "./rows";
 import type { Accessory } from "./types";
 
 function deps(overrides: Partial<RowDeps> = {}): RowDeps {
@@ -112,5 +113,57 @@ describe("rowEl", () => {
     expect(li.querySelectorAll("svg")).toHaveLength(1); // the fallback icon
     expect(li.querySelector(".moe-kind-badge")).toBeNull();
     expect(li.textContent).toBe("Echo");
+  });
+});
+
+describe("sectionHeaderEl", () => {
+  it("reserves the fixed grid height the ten-row budget counts (ADR-0026)", () => {
+    const li = sectionHeaderEl("Today");
+    expect(li.style.height).toBe(`${SECTION_HEADER_HEIGHT}px`);
+    expect(li.textContent).toBe("Today");
+    expect(li.className).toContain("moe-section-header");
+  });
+
+  it("is a header, not a row: nothing marks it focusable and nothing responds to a press", () => {
+    // The rule navigation depends on: ↑↓ counts rows only, so a header must carry neither the row class
+    // (which styles.css's hover rule matches) nor a focus mark nor a click handler.
+    const onFocus = vi.fn();
+    const li = sectionHeaderEl("Today");
+    expect(li.className).not.toContain("moe-row");
+    expect(li.dataset.focused).toBeUndefined();
+    li.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+});
+
+describe("emptyViewEl", () => {
+  it("renders the declared title, description and icon", () => {
+    const li = emptyViewEl({
+      title: "No matching chat history",
+      description: "Type a question directly into the palette to start a new conversation.",
+      icon: "info",
+    });
+    expect(li.textContent).toContain("No matching chat history");
+    expect(li.textContent).toContain("Type a question directly");
+    expect(li.querySelector("svg")).not.toBeNull();
+  });
+
+  it("omits the description block when there is none", () => {
+    const li = emptyViewEl({ title: "No commands match" });
+    expect(li.querySelectorAll("div")).toHaveLength(1);
+    expect(li.querySelector("svg")).toBeNull();
+  });
+
+  it("is non-focusable by construction (ADR-0043)", () => {
+    // This is the whole point of replacing the notice row: the old empty state was a real Item, so ⏎
+    // could Apply it. Nothing here can be landed on by ↑↓ or activated.
+    const onFocus = vi.fn();
+    const li = emptyViewEl({ title: "No matches for “Agentic”" });
+    expect(li.getAttribute("role")).toBe("presentation");
+    expect(li.className).not.toContain("moe-row");
+    expect(li.dataset.focused).toBeUndefined();
+    expect(li.querySelector("button")).toBeNull();
+    li.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(onFocus).not.toHaveBeenCalled();
   });
 });
