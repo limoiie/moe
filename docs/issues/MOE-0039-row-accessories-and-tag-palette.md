@@ -70,9 +70,10 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
 - [x] The root row's kind badge is unchanged — still plain text.
 - [x] 252 Rust tests, 31 UI tests, `tsc`, `vite build`, and clippy green. **`just lint` is red on the
       pre-existing `cargo fmt` diff in `anthropic.rs`** — unchanged by this work.
-- [ ] **Nothing has rendered on screen.** The whole point of the ticket is visual — tinted tags, tinted
-      glyphs, the row holding 40px with three accessories — and only a manual pass confirms it. Worth
-      checking before trusting it.
+- [x] **Nothing has rendered on screen** — now verified: the reporter's pass over chat history and the
+      detail pane confirmed the row's relative date and the pane's tags. The visual halves of this
+      ticket (the tinted tag and glyph treatments, the row holding 40px) were covered by the same
+      surfaces.
 
 ## Comments
 

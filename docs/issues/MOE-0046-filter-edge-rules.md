@@ -41,8 +41,8 @@ ADR-0043 names all three; this ticket is where they get built and verified.
 - [x] Changing the filter while an item is `pending` re-runs nothing and does not disturb the stream;
       Enter still means Stop. The change is refused outright (`filterChangeAllowed`, checked against
       `allItems`), which also gates the card's open and the control's affordance — so the control goes
-      visibly disabled with a reason in its tooltip. Enter-when-pending was already Stop. **Not
-      verified on screen:** no pass has changed a filter mid-stream yet.
+      visibly disabled with a reason in its tooltip. Enter-when-pending was already Stop. **Verified:**
+      the reporter's pass saw the control dim and refuse to open mid-stream.
 - [x] Filter state survives leaving the command and re-entering it within a session — a session-only
       `Map` keyed by command id.
 - [x] Nothing is written to disk; a fresh process has no remembered filter — the memory is a module

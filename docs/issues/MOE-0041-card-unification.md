@@ -49,9 +49,11 @@ ADR-0044 holds the reasoning. Two capabilities were needed, and both are named t
       click-outside listener stay in `main.ts` until MOE-0042's layer stack takes them, which is why
       this ticket does not claim the panel's key routing is finished.
 - [x] `tsc --noEmit` and `tsc + vite build` green; the bundle drops 37.85 kB → 35.66 kB.
-- [ ] **Not verified: "no behavior change observable to a user."** Nothing has rendered on screen —
-      the checks above prove types and build, not pixels or key handling. Worth a manual pass over
-      the chip, the filter, the theme rows and Esc before this is trusted.
+- [x] **"No behavior change observable to a user"** — verified for the chip, the filter and Esc: the
+      reporter's passes exercised the About chip's material (referenced directly as the visual
+      reference for the Filter Control), the Filter Card end to end, and its Esc ordering through the
+      shared card. **Not covered by any pass:** the About card's theme rows, which nobody has toggled
+      since the migration.
 - [x] `CardRow` gained no field that only one surface uses... except `keepOpen`, which is About-only
       today. ADR-0044 decided it explicitly and named "Filter-adjacent multi-select" as the second
       expected consumer; recorded here rather than hidden.

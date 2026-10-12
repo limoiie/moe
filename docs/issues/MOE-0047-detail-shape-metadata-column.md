@@ -36,8 +36,8 @@ this set that alters an existing layout contract rather than adding to it.
 
 - [x] With metadata present, the `detail` shape renders Markdown beside a right-hand column; with
       metadata absent the pane class, `paintDetail`'s branch and the CSS are all untouched — the
-      additive claim is structural, not a promise. **Verified on screen:** pending the manual pass;
-      the producer below is what finally gives it something to show.
+      additive claim is structural, not a promise. **Verified:** the reporter's pass saw provider and
+      model in the column beside the model card's Markdown.
 - [x] The column width lives in `layout.ts` (`METADATA_COLUMN_WIDTH`), published as
       `--moe-metadata-col-w` at boot exactly like `--moe-row-h`; no class string composes it.
 - [x] Both placements come from one renderer: `metadataEl` is called with the same arguments and only

@@ -45,9 +45,8 @@ Raycast has no filter dimension to match against.
       including the precedence case (a tag that matches a dimension *and* carries an id filters).
       **Not exercised on screen:** no Extension declares an `actionId` yet.
 - [x] Clicking a tag whose text matches a declared dimension narrows the list and updates the Filter
-      Control's label — it calls `setFilterValue`, the same path the Filter Card uses (which a manual
-      pass has confirmed). **Not verified on screen for tags:** the tag list has not rendered yet, so
-      this rests on the path being shared rather than on a click.
+      Control's label — **verified:** history's `Agentic` tag narrows the list and the control reads
+      "Tags: Agentic". The shared `setFilterValue` path is what carries it.
 - [x] A tag with no `actionId` and no matching dimension is display-only and does not look clickable:
       `tagIntent` returns `none` and the renderer emits a `<span>`, never a button — so it cannot look
       interactive by accident.

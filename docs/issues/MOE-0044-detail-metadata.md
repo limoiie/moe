@@ -46,10 +46,11 @@ ADR-0042 holds the reasoning. The load-bearing points:
 
 ## Acceptance
 
-- [ ] In `split`, metadata renders under the Markdown at the pane's bottom; label, link and separator
-      all render, in the Extension's declared order. **Unticked: no Extension produces metadata yet**,
-      so there is nothing on screen to check. See the comment below — the renderer is written and the
-      first consumer is a decision this ticket deliberately did not take.
+- [x] In `split`, metadata renders under the Markdown at the pane's bottom — **verified:** chat
+      history's detail pane shows its `Tags` row below the preview. **What no producer covers:** `link`
+      and `separator` render nowhere yet, and `label` renders only in the `detail` shape (the model
+      card), so those three kinds' rendering rests on the shared renderer rather than on a screen. The
+      *placement* is what the pass confirmed.
 - [x] A metadata-only item (no Markdown) opens a pane rather than rendering nothing — `pageShapeOf`'s
       widened test, pinned in `layout.test.ts`.
 - [x] `detailFull` still decides the `detail` shape — a multi-item result with metadata stays `split`

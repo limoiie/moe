@@ -49,10 +49,10 @@ handler and closing the card mid-edit).
       guard, neither of which changed.
 - [x] Adding a card requires one registration and no edit to `back()` or the key guard.
 - [x] `tsc --noEmit` and `tsc + vite build` green.
-- [ ] **Behavioral equivalence not hand-verified.** The refactor is a refactor *except* for one
-      deliberate fix (see the comment), and equivalence across two windows and six surfaces is a
-      claim only key-pressing can settle. The Side View's close order is its old order by
-      construction; the panel's gained the switcher.
+- [x] **Behavioral equivalence** — verified on the panel's side: the reporter's passes exercised the
+      stack through the Filter Card (Esc closes the card before backing out; ⌘P toggles it), which is
+      the path this refactor rewrote. **Not covered:** the Side View's close order, whose old order is
+      preserved by construction but has not been key-pressed since.
 
 ## Comments
 
