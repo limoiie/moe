@@ -1050,34 +1050,6 @@ impl AiShell {
         })
     }
 
-    /// Chat about the current selection (MOE-0056). The selection is the conversation's subject, so the
-    /// opening message is a neutral question and the captured text rides the first request as context
-    /// (ADR-0019/0021) — the same path the no-match capture row takes, minus the typing. Pressing the
-    /// command is the consent to send, exactly as Enter on that row is.
-    ///
-    /// No selection degrades to the blank page (ADR-0006's Selection fallback): the destination is still
-    /// the right one, and the user can type instead of being told off.
-    fn chat_about_selection(
-        &self,
-        selection: Option<&Selection>,
-        emitter: Option<Arc<dyn Emitter>>,
-    ) -> Result<ActionResult, MoeError> {
-        let Some(selection) = selection.filter(|s| s.text().is_some() || s.has_files()) else {
-            return Ok(ActionResult::Conversation {
-                conversation_id: None,
-            });
-        };
-        let conversation_id = self.panel_ask(
-            "",
-            "What should I know about the selected text?",
-            Some(selection),
-            emitter.unwrap_or_else(|| Arc::new(NoopEmitter)),
-        )?;
-        Ok(ActionResult::Conversation {
-            conversation_id: Some(conversation_id),
-        })
-    }
-
     /// History search: the list re-runs as you type (CommandMeta.live), fuzzy title matching, most recent first.
     fn search_history(&self, query: &str) -> ActionResult {
         match Db::open_default() {
@@ -1177,25 +1149,7 @@ impl Extension for AiShell {
                 extension_title: None,
                 kind: None,
             },
-            // Chat about the current selection (MOE-0056): a Selection-input command, so the platform
-            // captures the text when the panel is summoned (ADR-0006/0021) and the ask carries it as
-            // the conversation's first-message context. Distinct from Quick Ask, which needs a typed
-            // question first — this one starts the conversation.
-            CommandMeta {
-                id: "ai.chat-about-selection".into(),
-                extension_id: "ai".into(),
-                title: "Chat About Selection".into(),
-                subtitle: Some(
-                    "Start a chat about the selected text; the agent's opening reply streams here"
-                        .into(),
-                ),
-                icon: Some("messages-square".into()),
-                input: InputKind::Selection,
-                live: false,
-                keybinding: None,
-                extension_title: None,
-                kind: None,
-            },
+
             CommandMeta {
                 id: "ai.side-chat".into(),
                 extension_id: "ai".into(),
@@ -1234,7 +1188,6 @@ impl Extension for AiShell {
     ) -> Result<ActionResult, MoeError> {
         match command_id {
             "ai.quick-ask" => self.quick_ask(query, selection, None),
-            "ai.chat-about-selection" => self.chat_about_selection(selection, None),
             "ai.search-history" => Ok(self.search_history(query.unwrap_or_default())),
             // Open the Side View directly (the tray's "AI Chat" path): the platform hides the panel
             // and shows the chat window; an empty payload = a blank conversation.
@@ -1275,8 +1228,6 @@ impl Extension for AiShell {
     ) -> Result<ActionResult, MoeError> {
         match command_id {
             "ai.quick-ask" => self.quick_ask(query, selection, Some(emitter)),
-            // The selection chat streams too: its opening reply is produced by the ask that starts it.
-            "ai.chat-about-selection" => self.chat_about_selection(selection, Some(emitter)),
             _ => self.invoke(command_id, query, None),
         }
     }
@@ -2122,32 +2073,6 @@ This is a test case, do you know?"#;
 
     /// Apply on the Quick Ask row (no query): the platform opens the blank panel page — no request is
     /// fired and the search text is not a question (ADR-0036).
-    /// The selection-chat command (MOE-0056): registered as a Selection-input command, routable, and
-    /// with nothing selected it opens the blank page rather than erroring (ADR-0006's fallback).
-    #[test]
-    fn chat_about_selection_is_a_selection_command_and_degrades_gracefully() {
-        let ext = AiShell;
-        let command = ext
-            .commands()
-            .into_iter()
-            .find(|c| c.id == "ai.chat-about-selection")
-            .expect("registered");
-        assert_eq!(command.input, InputKind::Selection);
-        assert!(
-            !command.live,
-            "it opens a conversation; it does not re-run one"
-        );
-
-        // No selection: the blank Quick Ask page. With one, the ask needs a configured provider, so the
-        // capture path itself is not unit-testable here — it is the same `panel_ask` the capture row uses.
-        assert_eq!(
-            ext.invoke("ai.chat-about-selection", None, None).unwrap(),
-            ActionResult::Conversation {
-                conversation_id: None
-            }
-        );
-    }
-
     #[test]
     fn quick_ask_without_a_query_opens_the_blank_page() {
         let result = AiShell.quick_ask(None, None, None).unwrap();
