@@ -7,7 +7,9 @@
 //! by whitespace tokens against a per-row haystack that includes capability words — so
 //! `vision tools` finds the models that have both.
 
-use moe_core::contract::{Action, ActionKind, ActionResult, EmptyView, Item, Metadata, MoeError};
+use moe_core::contract::{
+    Action, ActionKind, ActionResult, EmptyView, Filter, Item, Metadata, MoeError,
+};
 use moe_platform::config::{MoeConfig, Protocol, ProviderConfig};
 use moe_platform::keychain;
 use moe_platform::model_catalog::{self, Catalog, Cost, Model as CatalogModel};
@@ -79,7 +81,11 @@ pub fn choose_model_with(
             .with_icon("search"),
         );
     }
+    // The capability vocabulary reaches the platform as tags and one derived dimension (ADR-0043's
+    // named follow-up). Same words the card shows, and the same client-side narrowing history uses —
+    // no second code path, just a declaration.
     ActionResult::list(rows.iter().map(|row| model_item(row, has_key)).collect())
+        .with_filter(Filter::derived("capability", "Capability"))
 }
 
 /// The picker's item action (routed here by `ai.rs`; `command_id == "ai.choose-model"`).
@@ -330,9 +336,9 @@ fn model_item(row: &Row<'_>, has_key: &dyn Fn(&str) -> bool) -> Item {
     Item {
         id: format!("ai.model.{}.{}", row.provider_id, row.model_id),
         title: row.model_name.to_string(),
-        // No filter dimension on the picker yet: capability words are already in the search haystack
-        // (`ModelDetail.capabilities`), and promoting them to tags is a follow-up.
-        tags: Vec::new(),
+        // The picker's filter dimension (ADR-0043): the catalog's capability words. The card already
+        // shows them (`ModelDetail.capabilities`), so the tag is the same vocabulary reaching the list.
+        tags: row.meta.map(capability_words).unwrap_or_default(),
         accessories: Vec::new(),
         metadata: Vec::new(),
         // The provider rides the group header (ADR-0018 amendment); the row carries the facts.
@@ -1252,6 +1258,41 @@ mod tests {
     }
 
     /// Search: every token must hit the haystack — names, ids, and capability words.
+    /// The picker's capability dimension (ADR-0043's named follow-up): the words that were only a
+    /// search haystack become `Item.tags` behind one derived dimension, so the Filter Control appears
+    /// here with no new filtering code — the platform derives the values from the tags.
+    #[test]
+    fn picker_tags_capabilities_behind_one_derived_dimension() {
+        let ActionResult::List { filter, .. } =
+            choose_model_with("", &config(), &catalog(), &key_ok)
+        else {
+            panic!("expected a list");
+        };
+        let filter = filter.expect("the picker declares its dimension");
+        assert_eq!(filter.id, "capability");
+        assert_eq!(filter.label, "Capability");
+        assert!(
+            filter.values.is_empty(),
+            "derived from the tags, not declared"
+        );
+
+        // The tags are the card's own capability vocabulary, so the list and the card agree.
+        let row = rows_of("deepseek-new");
+        assert_eq!(row.len(), 1);
+        for word in ["tool calls", "reasoning", "vision"] {
+            assert!(
+                row[0].tags.iter().any(|tag| tag == word),
+                "missing {word}: {:?}",
+                row[0].tags
+            );
+        }
+
+        // A model the catalog knows nothing about carries none, so All still reaches it.
+        let custom = rows_of("gateway");
+        assert_eq!(custom.len(), 1);
+        assert!(custom[0].tags.is_empty(), "{:?}", custom[0].tags);
+    }
+
     #[test]
     fn query_matches_names_and_capability_words() {
         let ids: Vec<String> = rows_of("vision")
