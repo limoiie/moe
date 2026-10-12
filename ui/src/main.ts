@@ -11,7 +11,7 @@ import { accessoryLabel, rowAccessories } from "./accessories";
 import { applyTagFilter, filterChangeAllowed, filterValuesFor, settleFilterValue } from "./filter";
 import { generatingEl } from "./generating";
 import { iconEl, inkClass } from "./icons";
-import { tagIntent, type TagIntent } from "./metadata";
+import { metadataEl, type MetadataDeps } from "./metadata";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
@@ -54,8 +54,6 @@ import type {
   Filter,
   Item,
   Message,
-  Metadata,
-  MetadataTag,
   ToolCall,
 } from "./types";
 
@@ -871,122 +869,9 @@ function detailHeaderEl(item: Item): HTMLElement {
   return header;
 }
 
-/** One metadata row's right-hand value: an optional icon and/or text, in a palette color when one is
- * named (ADR-0041). The ink class sits on the inner span so it wins by specificity rather than by
- * rule order against the wrapper's default step. */
-function metadataValueEl(icon?: string, text?: string, color?: string): HTMLElement | undefined {
-  if (!icon && !text) return undefined;
-  const wrap = document.createElement("span");
-  wrap.className = "moe-metadata-value";
-  const inner = document.createElement("span");
-  inner.className = "moe-metadata-inline";
-  const ink = inkClass(color);
-  if (ink) inner.classList.add(ink);
-  if (icon) inner.append(iconEl(icon, { size: 13 }));
-  if (text) {
-    const label = document.createElement("span");
-    label.textContent = text;
-    inner.append(label);
-  }
-  wrap.append(inner);
-  return wrap;
-}
 
-/** One metadata row (ADR-0042): the Extension's title on the left, its value on the right. */
-function metadataRowEl(title: string, value?: HTMLElement): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "moe-metadata-row";
-  const label = document.createElement("span");
-  label.className = "moe-metadata-title";
-  label.textContent = title;
-  row.append(label);
-  if (value) row.append(value);
-  return row;
-}
 
-/**
- * One tag of the pane's tag list (ADR-0042). Interactive tags are real buttons so the cursor and the
- * semantics are honest, but `tabindex="-1"` keeps them out of the tab order: ADR-0042 names them
- * pointer-only, and reaching them from the keyboard is MOE-0045's decision — this is the seam it
- * changes. A display-only tag is a plain span, so it cannot look clickable by accident.
- */
-function metadataTagEl(tag: MetadataTag, intent: TagIntent, item: Item): HTMLElement {
-  const el = document.createElement(intent.kind === "none" ? "span" : "button");
-  el.className = "moe-metadata-tag";
-  if (intent.kind !== "none") {
-    (el as HTMLButtonElement).type = "button";
-    el.tabIndex = -1;
-    el.classList.add("moe-metadata-tag-live");
-    if (intent.kind === "filter") {
-      // The tag→filter loop: the list narrows and the Filter Control's label follows (ADR-0043).
-      el.addEventListener("click", () => setFilterValue(intent.value));
-    } else {
-      const action = item.actions.find((a) => a.id === intent.actionId);
-      el.addEventListener("click", () => {
-        if (action) void runItemAction(item, action);
-      });
-    }
-  }
-  const ink = inkClass(tag.color);
-  if (ink) el.classList.add(ink);
-  if (tag.icon) el.append(iconEl(tag.icon, { size: 12 }));
-  if (tag.text) {
-    const text = document.createElement("span");
-    text.textContent = tag.text;
-    el.append(text);
-  }
-  return el;
-}
 
-/** A titled row of tags. `dimensionValues` is the page's declared dimension (empty when it has none),
- *  which is what makes the same tag interactive on one page and display-only on another. */
-function metadataTagListEl(title: string, tags: MetadataTag[], item: Item): HTMLElement {
-  const dimensionValues = view.get().filterValues;
-  const wrap = document.createElement("span");
-  wrap.className = "moe-metadata-value moe-metadata-tags";
-  for (const tag of tags) {
-    wrap.append(metadataTagEl(tag, tagIntent(tag, item.actions, dimensionValues), item));
-  }
-  return metadataRowEl(title, wrap);
-}
-
-/**
- * The detail pane's metadata block (ADR-0042): Raycast's `List.Item.Detail.Metadata`, at the split
- * pane's bottom under the Markdown. One renderer, so MOE-0047's `detail` shape column reuses it
- * verbatim rather than growing a second copy.
- */
-function metadataEl(metadata: Metadata[], item: Item): HTMLElement {
-  const block = document.createElement("div");
-  block.className = "moe-metadata not-prose";
-  for (const entry of metadata) {
-    if (entry.kind === "separator") {
-      const separator = document.createElement("div");
-      separator.className = "moe-metadata-separator";
-      block.append(separator);
-    } else if (entry.kind === "label") {
-      block.append(
-        metadataRowEl(entry.title, metadataValueEl(entry.icon, entry.text, entry.color)),
-      );
-    } else if (entry.kind === "link") {
-      // A button rather than an `<a>`: the panel is a webview and a raw href would navigate it. Only
-      // http(s) reaches the OS (`open::open_url`), so a bad target fails without spawning anything.
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = "moe-metadata-link";
-      link.textContent = entry.text;
-      link.title = entry.target;
-      link.addEventListener("click", () => {
-        void invoke("open_external", { url: entry.target }).catch(() =>
-          toast("Could not open that link"),
-        );
-      });
-      block.append(metadataRowEl(entry.title, link));
-    } else {
-      block.append(metadataTagListEl(entry.title, entry.items, item));
-    }
-  }
-  return block;
-}
 
 /** What one paint of the detail pane needs. The item is present in both shapes — it carries the
  *  metadata — while `header` is the split shape's header row only. */
@@ -1031,6 +916,19 @@ function paintDetail(paint: DetailPaint) {
   // Markdown, the two halves scrolling on their own — which is why `renderDetail` switches the pane
   // itself to `DETAIL_COLUMNS_CLASS` when a column is coming.
   const metadata = item?.metadata ?? [];
+  // The block's side effects, passed in rather than imported by the renderer (MOE-0052): the block
+  // itself lives in `metadata.ts`, where a jsdom test can reach it.
+  const metadataDeps: MetadataDeps = {
+    dimensionValues: view.get().filterValues,
+    onFilter: setFilterValue,
+    onAction: (target, action) => void runItemAction(target, action),
+    onOpenLink: (target) => {
+      // Only http(s) reaches the OS (`open::open_url`), so a bad target fails without spawning anything.
+      void invoke("open_external", { url: target }).catch(() =>
+        toast("Could not open that link"),
+      );
+    },
+  };
   if (!header && item && metadata.length > 0) {
     body.className = "flex min-h-0 flex-1 gap-4";
     const proseColumn = document.createElement("div");
@@ -1038,12 +936,12 @@ function paintDetail(paint: DetailPaint) {
     proseColumn.append(prose);
     const column = document.createElement("div");
     column.className = "moe-metadata-column";
-    column.append(metadataEl(metadata, item));
+    column.append(metadataEl(metadata, item, metadataDeps));
     body.append(proseColumn, column);
   } else {
     body.className = "";
     body.append(prose);
-    if (metadata.length > 0 && item) body.append(metadataEl(metadata, item));
+    if (metadata.length > 0 && item) body.append(metadataEl(metadata, item, metadataDeps));
   }
   // Inline generating indicator (like ChatGPT's loading dots, rather than writing status into the body):
   // body and indicator are separate; streaming events only replace the body, so the dot animation is never restarted
