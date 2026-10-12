@@ -9,6 +9,7 @@ import { createComposer } from "./composer";
 import { iconEl } from "./icons";
 import { invokeWithTimeout } from "./ipc";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay } from "./keymap";
+import { createLayers } from "./layers";
 import { conversationTitle, createConversationView } from "./messages";
 import { createModelSwitcher, type ActivePair } from "./models";
 import { initPointerIntent } from "./pointer";
@@ -563,6 +564,19 @@ const actionsCard = createCard({
   onClose: () => composer.focus(),
 });
 
+// ---- Overlay layers (ADR-0044) ----
+// Registration order is front-most-LAST. This window's order is its old if-chain's — the switcher,
+// then the history card, then the actions card — with the history card still hand-rolled, because
+// whether it joins `createCard` is MOE-0049's decision; a Layer only needs isOpen/close either way.
+const sideLayers = createLayers();
+sideLayers.register({ name: "actions card", isOpen: actionsCard.isOpen, close: actionsCard.close });
+sideLayers.register({ name: "history card", isOpen: () => historyOpen, close: closeHistoryCard });
+sideLayers.register({
+  name: "model switcher",
+  isOpen: modelSwitcher.isOpen,
+  close: modelSwitcher.close,
+});
+
 function openActionsCard() {
   closeHistoryCard();
   void sideActionPlan
@@ -926,7 +940,7 @@ window.addEventListener("keydown", (e) => {
   }
   // The front-most list owns navigation and Backspace (ADR-0031): while a card is open, its own input
   // routing decides; this guard covers focus sitting elsewhere on the surface.
-  const cardOpen = historyOpen || actionsCard.isOpen() || modelSwitcher.isOpen();
+  const cardOpen = sideLayers.anyOpen();
   // Backspace with empty input = Back (layered back, ADR-0017):
   // leave it alone when non-empty (normal delete); when empty, back out layer by layer, but the root layer does not hide the side view (quit:false).
   if (!cardOpen && e.key === "Backspace" && composer.input.value === "" && !e.isComposing && !e.repeat) {
@@ -941,18 +955,9 @@ window.addEventListener("keydown", (e) => {
  */
 async function back(options: { quit?: boolean } = {}) {
   const { quit = true } = options;
-  if (modelSwitcher.isOpen()) {
-    modelSwitcher.close();
-    return;
-  }
-  if (historyOpen) {
-    closeHistoryCard();
-    return;
-  }
-  if (actionsCard.isOpen()) {
-    closeActionsCard();
-    return;
-  }
+  // Overlay layers, front-most first (ADR-0044): one list instead of a hand-maintained if-chain.
+  // The generating check below stays below them: it is a modal state, not a card.
+  if (sideLayers.closeTop()) return;
   if (generating) {
     await stopGeneration();
     return;

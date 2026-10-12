@@ -12,6 +12,7 @@ import { iconEl } from "./icons";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
+import { createLayers } from "./layers";
 import { logoEl } from "./logo";
 import { createModelSwitcher, type ActivePair } from "./models";
 import {
@@ -1770,6 +1771,20 @@ const aboutCard = createCard({
   onClose: () => draftEl().focus(),
 });
 
+// ---- Overlay layers (ADR-0044) ----
+// Declared after the last of the three cards exists, because registration order IS the stacking
+// order: front-most last. In practice only one is open at a time (each opener closes its peers), but
+// the order is the tie-break if that ever changes — and it is why `closeTop()` now closes the model
+// switcher in the panel, which the old if-chain forgot to do.
+const panelLayers = createLayers();
+panelLayers.register({ name: "actions card", isOpen: actionsCard.isOpen, close: actionsCard.close });
+panelLayers.register({ name: "about card", isOpen: aboutCard.isOpen, close: aboutCard.close });
+panelLayers.register({
+  name: "model switcher",
+  isOpen: modelSwitcher.isOpen,
+  close: modelSwitcher.close,
+});
+
 async function runAboutConfig() {
   // `createCard` closes the card before it runs a row, so no explicit close is needed here
   await openConfigFile();
@@ -2017,16 +2032,10 @@ async function back(options: { quit?: boolean } = {}) {
     openStopConfirm(() => void stopGeneration());
     return;
   }
-  // The actions card is an overlay: close it first, then back out further (Raycast-style)
-  if (actionsCard.isOpen()) {
-    closeActionsCard();
-    return;
-  }
-  // Same for the about card (ADR-0026)
-  if (aboutCard.isOpen()) {
-    closeAboutCard();
-    return;
-  }
+  // Overlay layers (ADR-0044): close the front-most card, then back out further only when none is
+  // open. The modal states above — the confirm dialog, attachment mode, a streaming item's
+  // stop-confirm — keep their own precedence and are deliberately not layers.
+  if (panelLayers.closeTop()) return;
   // Result pages back out in one step (ADR-0038): the full-screen detail is the page itself, the row
   // list behind it is not a stop on the way, and the page cleared the Input Bar when it opened — so
   // the parent is the fresh root (empty query), never the stale search from the way in.
@@ -2234,13 +2243,9 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  // The about card is an overlay owned by the chip (ADR-0026); its input handles its own keys,
-  // but Esc must still close it when the focus sits elsewhere (e.g. right after click-running a row).
-  if (aboutCard.isOpen() && e.key === "Escape") {
-    e.preventDefault();
-    closeAboutCard();
-    return;
-  }
+  // The about card is an overlay owned by the chip (ADR-0026). Its input handles its own keys; Esc
+  // with the focus elsewhere falls through to `back()`, which pops the layer stack (ADR-0044) — so
+  // this no longer needs a card-specific check, and every layer gets the behaviour, not just this one.
   // Generic actions (ADR-0014/0022/0029): Browse ⌘P / Actions ⌘K / New ⌘N /
   // Delete ⌃X / DeleteAll ⌃⇧X / Favorite ⌘⇧F. Semantics are recognized by the shared keymap module; the landing spot is decided by this surface.
   const general = generalActionOf(e);
@@ -2319,7 +2324,7 @@ window.addEventListener("keydown", (e) => {
   // own input stops propagation for the keys it consumes; this guard covers focus sitting elsewhere.
   // Backspace with empty input = Back (layered back, ADR-0017):
   // leave it alone when the input is non-empty (normal delete); when empty, back out layer by layer, but the root layer does not close the panel (quit:false).
-  const cardOpen = actionsCard.isOpen() || aboutCard.isOpen() || modelSwitcher.isOpen();
+  const cardOpen = panelLayers.anyOpen();
   if (!cardOpen && e.key === "Backspace" && draftEl().value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
