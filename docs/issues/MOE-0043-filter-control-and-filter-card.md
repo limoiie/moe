@@ -7,7 +7,7 @@
 - **Updated**: 2026-10-12
 - **Blocked by**: MOE-0041, MOE-0042
 - **Blocks**: MOE-0046, MOE-0048
-- **Commit**: 7a500d1 (712ca26, 5c304e4, e479809 fix and refine it post-close)
+- **Commit**: 7a500d1 (712ca26, 5c304e4, e479809 post-close; 02bddd0 tried and reverted by 9cfa05c)
 
 The tracer bullet. There is no way to narrow a list by a second dimension: `Item` has no tags and
 `ActionResult::List` carries only `items` and `detail_full`. ADR-0043 adopts Raycast's
@@ -192,3 +192,12 @@ one Extension that declares a dimension.
   such case (nothing else of its sits on `⌘P`), so the rule borrowed from it is the general one: one
   owner per chord. The Browse row renders no Kbd on a page that declares a dimension and stays
   clickable. ADR-0043's fifth amendment records both.
+- 2026-10-12 (agent): **tried one row band, reverted** (02bddd0 → 9cfa05c). The chip was briefly a full
+  row band tall — the About chip's exact height — by reserving the band in `.moe-query-column`. It did
+  work, and made the height invariant simpler than the `stretch` version, but the bar went 48px → 68px
+  and the panel 768×510 → 768×530, which read as too tall in use. Reverted whole, ADR amendments
+  included, so the docs still match the code; the trial stays in the history. The chip keeps the glass
+  material and takes the input's height (`align-self: stretch`, the state after e479809).
+
+  If a taller chip is wanted again without the taller bar, the knob is the row's `py` (28px today):
+  trimming it toward 8–16px keeps a 40px chip while pulling the panel back toward 510.
