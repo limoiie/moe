@@ -5,7 +5,7 @@
 //! a CGEventTap listener, combos go through the global-shortcut plugin (ADR-0008).
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use moe_core::contract::Emitter as CommandEmitter;
@@ -185,6 +185,10 @@ struct AppState {
     /// capture's clipboard fallback must not publish its late text over a newer summon's selection
     /// (MOE-0013).
     selection_generation: AtomicU64,
+    /// A clipboard-fallback capture (MOE-0013) is still in flight. Read and written only while
+    /// holding the selection lock, so a `selection_state` read cannot see the text land while the
+    /// flag still says "reading" (MOE-0057).
+    selection_pending: AtomicBool,
     /// The platform implementation of selection read and write-back (ADR-0002).
     text_target: Box<dyn moe_platform::TextTarget>,
     /// Command usage records (platform-level, IIE4AD-346); lock order: frecency → favorites → registry.
@@ -204,6 +208,36 @@ struct SummonStatusPayload {
     double_tap_ms: u64,
     /// Accessibility permission (for selection/write-back; always true off macOS).
     accessibility: bool,
+}
+
+/// The captured selection's *shape*, for the Input Bar's Selection Indicator (MOE-0057). Shape only:
+/// the panel never reads the selected text, which stays between the platform and the Extension
+/// (ADR-0006/0021).
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SelectionStatePayload {
+    /// Characters of selected text captured at summon (0 = none).
+    text_chars: usize,
+    /// Finder-selected files captured alongside the text (0 = none).
+    file_count: usize,
+    /// A clipboard-fallback capture (MOE-0013) is still in flight: not-yet-known must not read as
+    /// nothing-selected, so the indicator says "reading" rather than "no selection".
+    pending: bool,
+}
+
+impl SelectionStatePayload {
+    /// The shape of a stored selection. `pending` is the late-capture flag, which every caller reads
+    /// (and writes) under the selection lock, so the pair cannot tear (MOE-0057).
+    fn of(selection: Option<&Selection>, pending: bool) -> Self {
+        Self {
+            text_chars: selection
+                .and_then(|s| s.text.as_deref())
+                .map(|text| text.chars().count())
+                .unwrap_or(0),
+            file_count: selection.map(|s| s.files.len()).unwrap_or(0),
+            pending,
+        }
+    }
 }
 
 /// Move the panel to the screen under the mouse cursor (including full-screen virtual screens)
@@ -451,7 +485,7 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
         let files = moe_platform::files::finder_selection();
         let frontmost = moe_platform::files::frontmost_bundle_id().unwrap_or_else(|| "-".into());
         let mut pending: Option<Box<dyn moe_platform::PendingCapture>> = None;
-        let generation = {
+        let (generation, payload) = {
             let mut slot = state.selection.lock().expect("selection poisoned");
             match capture {
                 moe_platform::Capture::Done(text) => {
@@ -461,6 +495,7 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
                         files.len(),
                     );
                     *slot = Some(Selection { text, files });
+                    state.selection_pending.store(false, Ordering::SeqCst);
                 }
                 moe_platform::Capture::Pending(tail) => {
                     eprintln!(
@@ -468,13 +503,25 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
                         files.len(),
                     );
                     *slot = Some(Selection { text: None, files });
+                    state.selection_pending.store(true, Ordering::SeqCst);
                     pending = Some(tail);
                 }
             }
             // Under the same lock: a worker that finishes before the store above sees this bump
             // (a newer summon), one that finishes after it can no longer trust its generation.
-            state.selection_generation.fetch_add(1, Ordering::SeqCst) + 1
+            let generation = state.selection_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let payload = SelectionStatePayload::of(
+                slot.as_ref(),
+                state.selection_pending.load(Ordering::SeqCst),
+            );
+            (generation, payload)
         };
+        // The panel hears about every show — it may be up from a previous summon, and the boot read
+        // cannot see this capture — and again from the worker below when a late capture settles
+        // (MOE-0057).
+        let _ = window
+            .app_handle()
+            .emit_to("panel", "selection-changed", payload);
         if let Some(tail) = pending {
             let handle = window.app_handle().clone();
             let spawned = std::thread::Builder::new()
@@ -491,15 +538,38 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
                     let Some(state) = handle.try_state::<AppState>() else {
                         return;
                     };
-                    let mut slot = state.selection.lock().expect("selection poisoned");
-                    if state.selection_generation.load(Ordering::SeqCst) == generation
-                        && let Some(selection) = slot.as_mut()
-                    {
-                        selection.text = text;
+                    let settled = {
+                        let mut slot = state.selection.lock().expect("selection poisoned");
+                        if state.selection_generation.load(Ordering::SeqCst) == generation
+                            && let Some(selection) = slot.as_mut()
+                        {
+                            selection.text = text;
+                            // Settled under the lock: a `selection_state` read can no longer see
+                            // "reading" after the text has landed.
+                            state.selection_pending.store(false, Ordering::SeqCst);
+                            Some(SelectionStatePayload::of(Some(selection), false))
+                        } else {
+                            // A newer summon owns the state now, and its own emit carried the truth;
+                            // this stale worker stays silent.
+                            None
+                        }
+                    };
+                    if let Some(payload) = settled {
+                        let _ = handle.emit_to("panel", "selection-changed", payload);
                     }
                 });
             if spawned.is_err() {
+                // The capture is dropped, so the state must settle rather than leave the indicator
+                // reading forever.
+                let payload = {
+                    let slot = state.selection.lock().expect("selection poisoned");
+                    state.selection_pending.store(false, Ordering::SeqCst);
+                    SelectionStatePayload::of(slot.as_ref(), false)
+                };
                 eprintln!("moe: selection capture thread failed to spawn (late capture dropped)");
+                let _ = window
+                    .app_handle()
+                    .emit_to("panel", "selection-changed", payload);
             }
         }
         *state.last_shown.lock().expect("last_shown poisoned") = Some(std::time::Instant::now());
@@ -701,6 +771,19 @@ fn search_commands(state: State<'_, AppState>, query: String) -> Vec<CommandSect
         selection.as_ref(),
         &*frecency,
         &favorites,
+    )
+}
+
+/// The captured selection's shape, for the Input Bar's Selection Indicator (MOE-0057): read at panel
+/// boot, then kept current by the `selection-changed` event (every show, and again when a late
+/// clipboard-fallback capture settles). Shape only — the panel never reads the selected text.
+#[tauri::command]
+fn selection_state(state: State<'_, AppState>) -> SelectionStatePayload {
+    // One lock, so the text/files and the pending flag cannot tear (both are written under it).
+    let slot = state.selection.lock().expect("selection poisoned");
+    SelectionStatePayload::of(
+        slot.as_ref(),
+        state.selection_pending.load(Ordering::SeqCst),
     )
 }
 
@@ -1357,6 +1440,7 @@ fn main() {
             listener: Mutex::new(listener),
             selection: Mutex::new(None),
             selection_generation: AtomicU64::new(0),
+            selection_pending: AtomicBool::new(false),
             text_target,
             frecency: Mutex::new(moe_platform::store::load_frecency()),
             favorites: Mutex::new(moe_platform::store::load_favorites()),
@@ -1580,6 +1664,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             keymap,
             search_commands,
+            selection_state,
             entry_command,
             resize_panel,
             invoke_command,
@@ -1691,6 +1776,56 @@ mod tests {
         assert!(needs_attention(SummonStatus::Unsupported, &double));
         assert!(!needs_attention(SummonStatus::Unsupported, &combo));
         assert!(!needs_attention(SummonStatus::Ready, &double));
+    }
+
+    /// The Selection Indicator's payload (MOE-0057): the shape of what the summon captured — never
+    /// the text. No selection at all, Finder files alone, and both together are the three shapes the
+    /// chip has to tell apart; `chars`, not bytes, is what the tooltip will say.
+    #[test]
+    fn selection_state_reports_shape_only() {
+        let empty = SelectionStatePayload::of(None, false);
+        assert_eq!(
+            (empty.text_chars, empty.file_count, empty.pending),
+            (0, 0, false)
+        );
+
+        let files = Selection {
+            text: None,
+            files: vec!["/tmp/a.md".into(), "/tmp/b.png".into()],
+        };
+        let state = SelectionStatePayload::of(Some(&files), true);
+        assert_eq!(
+            (state.text_chars, state.file_count, state.pending),
+            (0, 2, true)
+        );
+
+        let both = Selection {
+            text: Some("héllo".into()),
+            files: vec!["/tmp/a.md".into()],
+        };
+        let state = SelectionStatePayload::of(Some(&both), false);
+        assert_eq!(
+            (state.text_chars, state.file_count),
+            (5, 1),
+            "chars, not bytes"
+        );
+    }
+
+    /// The wire names the shared mirror reads (ADR-0006): camelCase, and `pending` present as a real
+    /// boolean — a required TS field over an omittable Rust field is a type that lies.
+    #[test]
+    fn selection_state_serializes_camel_case() {
+        let payload = SelectionStatePayload::of(
+            Some(&Selection {
+                text: Some("hi".into()),
+                files: vec!["/tmp/a.md".into()],
+            }),
+            false,
+        );
+        assert_eq!(
+            serde_json::to_string(&payload).unwrap(),
+            r#"{"textChars":2,"fileCount":1,"pending":false}"#
+        );
     }
 
     #[test]

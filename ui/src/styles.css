@@ -706,6 +706,53 @@ html[data-platform="macos"] .moe-window-card {
   display: none;
 }
 
+/* Selection Indicator (MOE-0057): the Input Bar's second trailing element, shown only while the
+   focused command takes a selection. The Filter Control's sibling in material and in height rule:
+   the same house glass, `align-self: stretch` so its content can never grow the row, and the same
+   chip shadow — so the two trailing chips read as one family and ADR-0043's height invariant (the
+   measured panel height) cannot move. It is status, not a control: no hover, no pointer, no focus;
+   the ink alone carries the answer. */
+.moe-selection-state {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 6px;
+  flex: none;
+  max-width: 15rem;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  color: var(--moe-fg-muted);
+  font-size: var(--moe-text-secondary);
+  line-height: 1;
+  box-shadow: var(--moe-shadow-chip);
+}
+/* A captured selection wears the accent hairline the Filter Control uses for a set value — the same
+   "this is active" language, so a captured selection reads at a glance. */
+.moe-selection-state[data-state="captured"] {
+  color: var(--moe-fg);
+  box-shadow:
+    var(--moe-shadow-chip),
+    0 0 0 1px var(--moe-accent-line);
+}
+/* "No selection" is an answer too: legible, but a step down from the captured state. */
+.moe-selection-state[data-state="none"] {
+  color: var(--moe-fg-subtle);
+}
+.moe-selection-state .moe-selection-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Unlayered, so it beats this rule's own display (same trick as `.moe-filter-control.hidden`) */
+.moe-selection-state.hidden {
+  display: none;
+}
+
 /* The input row's leading slot (one grid column with the item-row icons): the square-m mark on
    the root page, a clickable back arrow on nested pages. The slot keeps the item-icon column
    (16px) while the glyph renders bigger/bolder from its own tokens, so the icon's center and the

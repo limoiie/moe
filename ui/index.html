@@ -37,6 +37,11 @@
              showing the active value when one is set. Hidden unless the result declares one, and sized
              inside the row band so the measured panel height never moves (ADR-0043's height invariant). -->
         <button id="filter-control" class="moe-filter-control hidden" type="button"></button>
+        <!-- Selection Indicator (MOE-0057): whether the summon captured a selection for the focused
+             command — shown only for a command that takes one (InputKind::Selection). It sits to the
+             right of the Filter Control so that control's position never moves, and it is sized
+             inside the row band like the Filter Control, so the measured panel height cannot move. -->
+        <span id="selection-state" class="moe-selection-state hidden"></span>
         <!-- Palette search in flight (ADR-0043): a hairline at the input row's bottom edge. It lives
              *inside* the row and out of flow, so it costs no layout at all — the list must not move
              when a search starts (MOE-0055) — and its visibility timing (delayed, minimum-visible)

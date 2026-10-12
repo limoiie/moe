@@ -52,6 +52,7 @@ import {
   Sun,
   Tag,
   Terminal,
+  TextCursorInput,
   Trash2,
   TriangleAlert,
   Type,
@@ -113,6 +114,7 @@ const ICONS: Record<string, IconNode> = {
   type: Type,
   // Fixed use (the UI's own icons, not set by extensions)
   search: Search,
+  "text-cursor-input": TextCursorInput,
   "arrow-left": ArrowLeft,
   "chevron-right": ChevronRight,
   "chevron-down": ChevronDown,

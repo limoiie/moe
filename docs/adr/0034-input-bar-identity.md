@@ -100,3 +100,41 @@ chat page's title bar: `#query` goes `readOnly` and carries the conversation tit
 still describe every page that has the bar, and the chat page reuses the bar's *geometry* while
 owning none of its input behavior. Any future trailing control in that row (ADR-0043's Filter
 Control) must reckon with the subtitle already occupying the column's second line.
+
+## Amendment: the Selection Indicator, the bar's second trailing chip (MOE-0057)
+
+The Input Bar carries a second trailing chip beside the Filter Control: the **Selection Indicator**,
+shown while the focused command declares `input: "selection"` (`InputKind::Selection`). It answers the
+question a selection command cannot answer for itself until it has already run — *did the summon
+capture anything?* `ai-commands` shows its "First select the text to transform" guidance card only
+after ⏎; the chip says the same thing before it.
+
+**Shape only.** The backend's `selection_state` IPC returns a character count, a file count and a
+pending flag — never the text. The panel only ever needed to know *whether* something was captured,
+and the text stays between the platform and the Extension (ADR-0002/0021): an IPC that shipped the
+selection into the webview would widen the one boundary the selection is deliberately kept behind.
+
+**The chip speaks for the focused command on the command layer.** Not the result page (the command
+has already run; ADR-0038 gives that page its own input) and not the chat page (its bar is a title).
+That is the one place where the answer changes what the user does next, and it is a rule rather than
+an accident of rendering: `selectionIndicator` in `ui/src/selection.ts` owns it, so which commands
+get a chip, what each state says and what the tooltip reports are pinned by tests, not by eye.
+
+**"Not yet known" is a state of its own.** The clipboard fallback (MOE-0013) settles *after* the
+panel is up. With two states the chip would say "No selection" and then flip to "Selection" — the
+flicker MOE-0055 had just removed from the loading hairline — so the third state reads "Reading
+selection…", and the backend emits `selection-changed` twice: once on every show, once when a late
+capture settles (generation-guarded like the write itself, so a stale worker cannot repaint a newer
+summon's state). The panel reads the same shape once at boot, before any show can have emitted.
+
+**The material is the Filter Control's, by construction.** Same house glass, same `align-self:
+stretch` height rule (ADR-0043's height invariant: the chip's own content is 12px and can never be
+the tallest child, so the measured panel height cannot move), and the same accent hairline for "this
+is set" — a captured selection — that ADR-0043's amendment gave an active filter value. The chip is
+status, not a control: no hover, no pointer, no focus. It sits to the *right* of the Filter Control so
+that control's position never moves when the indicator appears or goes away.
+
+This is Moe's own surface, not a Raycast one copied over: the chip wears the bar's established
+language rather than importing a new one. Cost: the row can now hold two chips, which eats input
+width on a selection command that also declares a filter dimension — no such command exists today,
+and the input column is the one that yields (its `min-w-0` already lets it truncate).

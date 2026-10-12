@@ -13,6 +13,7 @@ import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { metadataEl, type MetadataDeps } from "./metadata";
 import { emptyViewEl, rowEl, sectionHeaderEl, type Row, type RowDeps } from "./rows";
+import { NO_SELECTION, selectionIndicator, type SelectionState } from "./selection";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
@@ -125,6 +126,7 @@ const bannerIconEl = document.querySelector<HTMLSpanElement>("#banner-icon")!;
 const confirmCardEl = document.querySelector<HTMLDivElement>("#confirm-card")!;
 const loadingBarEl = document.querySelector<HTMLDivElement>("#loading-bar")!;
 const filterControlEl = document.querySelector<HTMLButtonElement>("#filter-control")!;
+const selectionStateEl = document.querySelector<HTMLSpanElement>("#selection-state")!;
 const filterCardEl = document.querySelector<HTMLDivElement>("#filter-card")!;
 const filterListEl = document.querySelector<HTMLUListElement>("#filter-list")!;
 const filterSearchEl = document.querySelector<HTMLInputElement>("#filter-search")!;
@@ -179,6 +181,12 @@ function setSearchLoading(on: boolean) {
   loadingHairline.set(on);
 }
 
+/**
+ * The captured selection's shape as the backend last reported it (MOE-0057). Read once at boot
+ * (`selection_state`), then kept current by the `selection-changed` event the show path and the
+ * late-capture worker emit — shape only, never the text.
+ */
+let selectionState: SelectionState = NO_SELECTION;
 
 const actionsCard = createCard({
   cardEl: actionsCardEl,
@@ -606,6 +614,42 @@ function renderFilterControl() {
   );
 }
 
+/**
+ * The Selection Indicator (MOE-0057): shown while the focused command takes a selection, saying
+ * whether the summon actually captured one — the answer a selection command's guidance card would
+ * otherwise give only after the fact. Same glass and height rule as the Filter Control; the rules
+ * (which command it speaks for, which state it shows) live in ui/src/selection.ts.
+ */
+function renderSelectionState() {
+  const indicator = selectionIndicator(view.get(), selectionState);
+  selectionStateEl.classList.toggle("hidden", indicator === undefined);
+  if (!indicator) return;
+  selectionStateEl.dataset.state = indicator.state;
+  selectionStateEl.title = indicator.title;
+  const label = document.createElement("span");
+  label.className = "moe-selection-label";
+  label.textContent = indicator.label;
+  selectionStateEl.replaceChildren(
+    iconEl("text-cursor-input", { size: 12, className: "shrink-0" }),
+    label,
+  );
+}
+
+/**
+ * Read the captured selection's shape (MOE-0057): once at boot. From there the backend's
+ * `selection-changed` events keep it current — the show path emits on every summon, and the
+ * clipboard-fallback worker emits again when a late capture settles (MOE-0013).
+ */
+async function refreshSelectionState() {
+  try {
+    selectionState = await invoke<SelectionState>("selection_state");
+  } catch {
+    // A failed read leaves the chip saying "no selection" rather than a stale claim.
+    selectionState = NO_SELECTION;
+  }
+  renderSelectionState();
+}
+
 function render() {
   const v = view.get();
   // One clock reading and one focus sink for every row this render (ADR-0041/MOE-0053): handed to the
@@ -618,6 +662,8 @@ function render() {
   renderInputIcon();
   // The Filter Control follows the page's declared dimension (ADR-0043)
   renderFilterControl();
+  // The Selection Indicator follows the focused command's input kind (MOE-0057)
+  renderSelectionState();
   // Page shape decides window size (ADR-0018): split pages are wider and taller, others use the default size.
   // Only call IPC when the shape changes, so the window isn't touched on every render.
   const shape = pageShapeOf(
@@ -2767,6 +2813,13 @@ void listen<CommandEventPayload>("command-event", (event) => {
   itemFrames.push(payload.item.id, { commandId: payload.commandId, item: payload.item });
 });
 void listen("summon-authorized", () => hideBanner());
+// The captured selection, as the backend reports it (MOE-0057): the show path emits the fresh shape
+// on every summon, and the clipboard-fallback worker (MOE-0013) emits again when a late capture
+// settles — the chip follows without the list re-rendering.
+void listen<SelectionState>("selection-changed", (event) => {
+  selectionState = event.payload;
+  renderSelectionState();
+});
 // Global ⌘' (ADR-0036 amendment): toggle the Quick Ask page. The payload reports whether the panel
 // was already visible when the hotkey fired — visible on the page means dismiss it.
 void listen<{ visible?: boolean }>("quick-ask-toggle", (event) => {
@@ -2791,6 +2844,7 @@ document.documentElement.style.setProperty(
 renderInputIcon();
 await refresh("");
 await refreshBanner();
+await refreshSelectionState();
 render();
 // Size the panel to exactly VISIBLE_ROWS rows (ADR-0026): measured from the real input bar,
 // so the bottom bar lines up with the last row band regardless of font metrics.
