@@ -30,6 +30,13 @@ export interface CardRow {
   /** Draw a hairline above this row: the first row of a rank group inside an actions section
    *  (ADR-0037 amendment). Ignored while filtering (rows flatten, headers hide). */
   separator?: boolean;
+  /**
+   * Run without closing the card (ADR-0044). Row-level by intent: it is the row that knows — the
+   * About card's theme rows stay open so a second theme can be tried immediately (ADR-0035
+   * amendment), while "Open Config File" closes. The Filter Card does not need it; single-select
+   * closes on choose.
+   */
+  keepOpen?: boolean;
   run: () => void;
 }
 
@@ -74,6 +81,12 @@ export interface Card {
   focused(): CardRow | undefined;
   /** Run the focused row (closes the card first): the action pill's click path. */
   runFocused(): void;
+  /**
+   * Re-render in place, optionally with fresh sections, keeping the filter text and the focused row
+   * (ADR-0044): the caller's data changed without the card being reopened — the About card's theme
+   * check follows the new preference. A no-op while closed.
+   */
+  refresh(sections?: CardSection[]): void;
 }
 
 export function createCard(options: CardOptions): Card {
@@ -225,8 +238,17 @@ export function createCard(options: CardOptions): Card {
 
   function runRow(row: CardRow) {
     if (row.disabled) return;
-    close();
+    if (!row.keepOpen) close();
     row.run();
+  }
+
+  /**
+   * Re-render without reopening (ADR-0044): a `keepOpen` row changed the data the card is showing,
+   * so the rows are rebuilt while the filter text and the focused row stay where the user left them.
+   */
+  function refreshCard(next?: CardSection[]) {
+    if (next) sections = next;
+    if (open) render();
   }
 
   function focusedRow(): CardRow | undefined {
@@ -301,5 +323,6 @@ export function createCard(options: CardOptions): Card {
     isOpen: () => open,
     focused: focusedRow,
     runFocused,
+    refresh: refreshCard,
   };
 }

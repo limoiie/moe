@@ -5,7 +5,7 @@ import { marked } from "marked";
 import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
 import { createActionPlan, type ActionRow, type PageContext } from "./actions";
-import { createCard } from "./card";
+import { createCard, type CardSection } from "./card";
 import { createComposer } from "./composer";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
@@ -519,15 +519,6 @@ function sectionHeaderEl(title: string): HTMLLIElement {
   li.className =
     "moe-section-header select-none px-3 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
   li.style.height = `${SECTION_HEADER_HEIGHT}px`;
-  li.textContent = title;
-  return li;
-}
-
-/** Section header inside the About card: the shared card's header type at the About card's row inset (ADR-0026: the two cards duplicate by intent). */
-function cardSectionHeaderEl(title: string): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className =
-    "select-none px-2.5 pt-2 pb-0.5 text-[11px] font-medium uppercase tracking-wider text-fg-subtle";
   li.textContent = title;
   return li;
 }
@@ -1708,30 +1699,13 @@ async function materialize() {
   }
 }
 
-// ---- About card (ADR-0026): the avatar chip's menu, same UX as the actions card (filter, ↑↓/⏎, input at the bottom) ----
+// ---- About card (ADR-0026): the avatar chip's menu.
+// One component since ADR-0044: this is `createCard` — the same card the actions card and the Side
+// View's use — so the filter, ↑↓/⏎, Esc / empty-⌫, click-outside and the key discipline are not
+// re-implemented here. Only the rows and the anchor are this module's, and neither needs a renderer.
 
 /** Feedback lands in the repository's issue tracker. */
 const FEEDBACK_URL = "https://github.com/limoiie/moe/issues";
-
-interface AboutRow {
-  id: string;
-  title: string;
-  icon: string;
-  /** Kbd display string (e.g. "⌘,"); rows without a platform binding show none. */
-  keys?: string;
-  /** The row's state is on (the theme rows): a trailing check marks it. */
-  active?: boolean;
-  run: () => void;
-}
-
-/** One group inside the About card (ADR-0026 amendment): the app's meta actions under a header. */
-interface AboutSection {
-  title: string;
-  rows: AboutRow[];
-}
-
-let aboutFocus = 0;
-let aboutCardOpen = false;
 
 /** Appearance rows (ADR-0035 amendment): System follows the OS; the choice persists to config.toml. */
 const THEME_ROWS: { value: ThemePreference; title: string; icon: string }[] = [
@@ -1741,20 +1715,18 @@ const THEME_ROWS: { value: ThemePreference; title: string; icon: string }[] = [
 ];
 
 /** The About menu: the app's own meta actions (ADR-0026), grouped into App / Theme / Support sections (ADR-0026/0035 amendments). */
-function aboutSections(): AboutSection[] {
+function aboutSections(): CardSection[] {
   return [
     {
       title: "App",
       rows: [
         {
-          id: "about.config",
           title: "Open Config File",
           icon: "settings-2",
           keys: GENERAL_KEY_LABELS.openConfig,
           run: () => void runAboutConfig(),
         },
         {
-          id: "about.key",
           title: "Save AI Key",
           icon: "key-round",
           run: () => void runAboutKey(),
@@ -1764,10 +1736,11 @@ function aboutSections(): AboutSection[] {
     {
       title: "Theme",
       rows: THEME_ROWS.map((option) => ({
-        id: `about.theme.${option.value}`,
         title: option.title,
         icon: option.icon,
-        active: themePreference() === option.value,
+        checked: themePreference() === option.value,
+        // The card stays open so a second theme can be tried immediately (ADR-0035 amendment)
+        keepOpen: true,
         run: () => void runAboutTheme(option.value),
       })),
     },
@@ -1775,7 +1748,6 @@ function aboutSections(): AboutSection[] {
       title: "Support",
       rows: [
         {
-          id: "about.feedback",
           title: "Send Feedback",
           icon: "megaphone",
           run: () => void runAboutFeedback(),
@@ -1785,8 +1757,21 @@ function aboutSections(): AboutSection[] {
   ];
 }
 
+/**
+ * The About card, on the shared component (ADR-0044). Its input sits at the bottom edge and the card
+ * itself at the bottom-left, both owned by the markup (ADR-0028 amendment); the rows, sections,
+ * filtering, ↑↓/⏎, Esc / empty-⌫ and click-outside all come from `createCard`.
+ */
+const aboutCard = createCard({
+  cardEl: aboutCardEl,
+  listEl: aboutListEl,
+  inputEl: aboutSearchEl,
+  emptyText: "No matching actions",
+  onClose: () => draftEl().focus(),
+});
+
 async function runAboutConfig() {
-  closeAboutCard();
+  // `createCard` closes the card before it runs a row, so no explicit close is needed here
   await openConfigFile();
 }
 
@@ -1858,7 +1843,6 @@ async function toggleSideChat() {
 
 /** Save AI Key runs the same command as the list: its guidance card lands in the results layer. */
 async function runAboutKey() {
-  closeAboutCard();
   try {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: "moe.set-ai-key",
@@ -1872,7 +1856,6 @@ async function runAboutKey() {
 }
 
 async function runAboutFeedback() {
-  closeAboutCard();
   try {
     await invoke("open_external", { url: FEEDBACK_URL });
     toast("Opened the feedback page");
@@ -1883,8 +1866,8 @@ async function runAboutFeedback() {
 
 /**
  * Switch the appearance (ADR-0035 amendment): Rust persists it to config.toml and broadcasts
- * (both windows re-theme); the card stays open — a theme is worth trying twice — and its check
- * follows the new preference.
+ * (both windows re-theme). The row is `keepOpen`, so the card stays up — a theme is worth trying
+ * twice — and the refresh keeps the filter text and the focused row where the user left them.
  */
 async function runAboutTheme(theme: ThemePreference) {
   const label = THEME_ROWS.find((option) => option.value === theme)?.title ?? theme;
@@ -1894,142 +1877,26 @@ async function runAboutTheme(theme: ThemePreference) {
   } catch (err) {
     toast(`Failed to set theme: ${String(err)}`, "alert");
   }
-  if (aboutCardOpen) renderAboutCard();
+  aboutCard.refresh(aboutSections());
 }
 
-/** Filter rows by title (case-insensitive); a section whose rows all filtered out disappears. */
-function filteredAboutSections(): AboutSection[] {
-  const needle = aboutSearchEl.value.trim().toLowerCase();
-  if (!needle) return aboutSections();
-  return aboutSections()
-    .map((section) => ({
-      title: section.title,
-      rows: section.rows.filter((row) => row.title.toLowerCase().includes(needle)),
-    }))
-    .filter((section) => section.rows.length > 0);
-}
-
-/** The card's rows in navigation order: the flat concatenation of its sections (focus indexes this list). */
-function filteredAboutRows(): AboutRow[] {
-  return filteredAboutSections().flatMap((section) => section.rows);
-}
-
-function aboutRowEl(row: AboutRow, focused: boolean): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className =
-    "moe-row flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-sm transition-colors duration-100 " +
-    (focused
-      ? "bg-surface-selected text-fg"
-      : "text-fg");
-  if (focused) li.dataset.focused = "true";
-  li.append(iconEl(row.icon, { size: 15, className: focused ? "text-fg" : "text-fg-subtle" }));
-  const title = document.createElement("span");
-  title.className = "min-w-0 flex-1 truncate";
-  title.textContent = row.title;
-  li.append(title);
-  if (row.keys) {
-    const keys = kbdEl(row.keys, { firstOnly: true });
-    keys.classList.add("shrink-0");
-    li.append(keys);
-  }
-  // The state rows (themes): a trailing check marks the active one — shape, not color alone
-  if (row.active) {
-    li.append(iconEl("check", { size: 14, className: "shrink-0 text-accent" }));
-  }
-  li.addEventListener("click", () => row.run());
-  return li;
-}
-
-function renderAboutCard() {
-  const sections = filteredAboutSections();
-  const rows = sections.flatMap((section) => section.rows);
-  aboutFocus = rows.length === 0 ? 0 : Math.min(aboutFocus, rows.length - 1);
-  if (rows.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "px-2 py-3 text-xs text-fg-subtle";
-    empty.textContent = "No matching actions";
-    aboutListEl.replaceChildren(empty);
-    return;
-  }
-  // Raycast-style: while filtering, matches render as one flat list without headers; headers return with the cleared input.
-  const showHeaders = aboutSearchEl.value.trim() === "";
-  const lis: HTMLLIElement[] = [];
-  let flat = 0;
-  let focusedLi: HTMLLIElement | null = null;
-  for (const section of sections) {
-    if (showHeaders) lis.push(cardSectionHeaderEl(section.title));
-    for (const row of section.rows) {
-      const li = aboutRowEl(row, flat === aboutFocus);
-      if (flat === aboutFocus) focusedLi = li;
-      lis.push(li);
-      flat += 1;
-    }
-  }
-  aboutListEl.replaceChildren(...lis);
-  focusedLi?.scrollIntoView({ block: "nearest" });
-}
-
-function moveAboutFocus(delta: number) {
-  const rows = filteredAboutRows();
-  if (rows.length === 0) return;
-  aboutFocus = (aboutFocus + delta + rows.length) % rows.length;
-  renderAboutCard();
-}
-
+/** Open the About card: `createCard` resets its filter, focuses its input and renders the rows. */
 function openAboutCard() {
   closeActionsCard();
-  aboutCardOpen = true;
-  aboutSearchEl.value = "";
-  aboutFocus = 0;
-  aboutCardEl.classList.remove("hidden");
-  renderAboutCard();
-  aboutSearchEl.focus();
+  aboutCard.open(aboutSections());
 }
 
 function closeAboutCard() {
-  if (!aboutCardOpen) return;
-  aboutCardOpen = false;
-  aboutCardEl.classList.add("hidden");
-  draftEl().focus();
+  aboutCard.close();
 }
 
 function toggleAboutCard() {
-  if (aboutCardOpen) closeAboutCard();
+  if (aboutCard.isOpen()) closeAboutCard();
   else openAboutCard();
 }
 
 chipEl.addEventListener("mousedown", (e) => e.preventDefault());
 chipEl.addEventListener("click", () => toggleAboutCard());
-aboutSearchEl.addEventListener("input", () => {
-  aboutFocus = 0;
-  renderAboutCard();
-});
-// The about card owns its keys while its input is focused (same UX as the actions card)
-aboutSearchEl.addEventListener("keydown", (e) => {
-  const up =
-    e.key === "ArrowUp" ||
-    (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "p");
-  const down =
-    e.key === "ArrowDown" ||
-    (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === "n");
-  if (up || down) {
-    e.preventDefault();
-    e.stopPropagation();
-    moveAboutFocus(down ? 1 : -1);
-  } else if (e.key === "Enter" && !e.isComposing) {
-    e.preventDefault();
-    e.stopPropagation();
-    filteredAboutRows()[aboutFocus]?.run();
-  } else if (e.key === "Escape" || e.key === "Backspace") {
-    // The front-most card owns these keys: the window-level "empty Backspace = Back" must
-    // never see them (otherwise deleting a filter char would close the card)
-    e.stopPropagation();
-    if (e.key === "Escape" || (aboutSearchEl.value === "" && !e.repeat)) {
-      e.preventDefault();
-      closeAboutCard();
-    }
-  }
-});
 
 /** Live commands: re-run the list with the new query as input changes (e.g. "AI: Search Chat History"). */
 async function rerunLive(query: string) {
@@ -2156,7 +2023,7 @@ async function back(options: { quit?: boolean } = {}) {
     return;
   }
   // Same for the about card (ADR-0026)
-  if (aboutCardOpen) {
+  if (aboutCard.isOpen()) {
     closeAboutCard();
     return;
   }
@@ -2369,7 +2236,7 @@ window.addEventListener("keydown", (e) => {
   }
   // The about card is an overlay owned by the chip (ADR-0026); its input handles its own keys,
   // but Esc must still close it when the focus sits elsewhere (e.g. right after click-running a row).
-  if (aboutCardOpen && e.key === "Escape") {
+  if (aboutCard.isOpen() && e.key === "Escape") {
     e.preventDefault();
     closeAboutCard();
     return;
@@ -2452,7 +2319,7 @@ window.addEventListener("keydown", (e) => {
   // own input stops propagation for the keys it consumes; this guard covers focus sitting elsewhere.
   // Backspace with empty input = Back (layered back, ADR-0017):
   // leave it alone when the input is non-empty (normal delete); when empty, back out layer by layer, but the root layer does not close the panel (quit:false).
-  const cardOpen = actionsCard.isOpen() || aboutCardOpen || modelSwitcher.isOpen();
+  const cardOpen = actionsCard.isOpen() || aboutCard.isOpen() || modelSwitcher.isOpen();
   if (!cardOpen && e.key === "Backspace" && draftEl().value === "" && !e.isComposing && !e.repeat) {
     e.preventDefault();
     void back({ quit: false });
@@ -2531,7 +2398,7 @@ document.addEventListener("mousedown", (e) => {
     closeActionsCard();
   }
   // The about card closes when clicking outside it or the chip it belongs to (ADR-0026)
-  if (aboutCardOpen && !aboutCardEl.contains(target) && !chipEl.contains(target)) {
+  if (aboutCard.isOpen() && !aboutCardEl.contains(target) && !chipEl.contains(target)) {
     closeAboutCard();
   }
 });
