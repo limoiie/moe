@@ -13,7 +13,13 @@ import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { metadataEl, type MetadataDeps } from "./metadata";
 import { emptyViewEl, rowEl, sectionHeaderEl, type Row, type RowDeps } from "./rows";
-import { NO_SELECTION, selectionIndicator, type SelectionState } from "./selection";
+import {
+  chatTarget,
+  NO_SELECTION,
+  selectionIndicator,
+  type SelectionDetail,
+  type SelectionState,
+} from "./selection";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
@@ -109,6 +115,9 @@ const q = document.querySelector<HTMLInputElement>("#query")!;
 const queryRowEl = document.querySelector<HTMLDivElement>("#query-row")!;
 const querySubtitleEl = document.querySelector<HTMLSpanElement>("#query-subtitle")!;
 const chatComposerHostEl = document.querySelector<HTMLElement>("#chat-composer")!;
+const chatTargetRowEl = document.querySelector<HTMLDivElement>("#chat-target-row")!;
+const chatTargetEl = document.querySelector<HTMLSpanElement>("#chat-target")!;
+const chatTargetPeekEl = document.querySelector<HTMLDivElement>("#chat-target-peek")!;
 const bottomBarEl = document.querySelector<HTMLDivElement>("#bottom-bar")!;
 const rootEl = document.querySelector<HTMLDivElement>("#root")!;
 const listEl = document.querySelector<HTMLUListElement>("#list")!;
@@ -187,6 +196,14 @@ function setSearchLoading(on: boolean) {
  * late-capture worker emit — shape only, never the text.
  */
 let selectionState: SelectionState = NO_SELECTION;
+
+/**
+ * The captured selection itself, for the composer's peek (MOE-0059). Fetched on demand — the chips
+ * render from the shape alone, so the text crosses into the panel only when the user hovers to look
+ * — and keyed by the state object it was fetched for, so a fresh summon invalidates it by identity.
+ */
+let selectionDetail: SelectionDetail | null = null;
+let selectionDetailFor: SelectionState | null = null;
 
 const actionsCard = createCard({
   cardEl: actionsCardEl,
@@ -296,6 +313,128 @@ const chatComposer = createComposer({
   onActions: () => toggleActionsCard(),
 });
 chatComposerHostEl.append(chatComposer.root);
+
+/**
+ * The composer's target chip (MOE-0059): the selection the next message will carry, shown only while
+ * the page is a blank conversation with no send in flight — once the first message leaves, the
+ * selection is already inside it (ADR-0019/0021) and the chip has nothing left to promise. The rules
+ * (which page, which states, what each says) live in ui/src/selection.ts.
+ */
+function renderSelectionTarget() {
+  const v = view.get();
+  const indicator = chatTarget(
+    { mode: v.mode, armed: chatConversationId === null && !chatSending },
+    selectionState,
+  );
+  chatTargetRowEl.classList.toggle("hidden", indicator === undefined);
+  if (!indicator) {
+    hideTargetPeek();
+    return;
+  }
+  targetIndicator = indicator;
+  chatTargetEl.dataset.state = indicator.state;
+  const label = document.createElement("span");
+  label.className = "moe-chat-target-label";
+  label.textContent = indicator.label;
+  const parts = [iconEl(indicator.icon, { size: 12, className: "shrink-0" }), label];
+  if (indicator.detail) {
+    const detail = document.createElement("span");
+    detail.className = "moe-chat-target-detail";
+    detail.textContent = indicator.detail;
+    parts.push(detail);
+  }
+  chatTargetEl.replaceChildren(...parts);
+}
+
+/** The chip's current words: the peek card's caption is the indicator's own explanation. */
+let targetIndicator: ReturnType<typeof chatTarget> = undefined;
+/** The card is up (or its text is being fetched): the pointer is on the chip or the card. */
+let targetPeekOpen = false;
+let targetPeekCloseTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Read the captured selection itself (MOE-0059), once per reported state. On demand only: the chip
+ * renders from the shape, so the text crosses into the panel exactly when the user asks to look.
+ */
+async function ensureSelectionDetail() {
+  const requested = selectionState;
+  if (selectionDetailFor === requested) return;
+  selectionDetailFor = requested;
+  try {
+    selectionDetail = await invoke<SelectionDetail | null>("selection_detail");
+  } catch {
+    selectionDetail = null;
+    selectionDetailFor = null; // a failed read is not cached; the next hover tries again
+  }
+  if (targetPeekOpen && selectionState === requested) paintTargetPeek();
+}
+
+/**
+ * The peek card: the captured selection in the house card language — a caption saying what the chip
+ * means (the chip carries no native tooltip; it would fight this card), then the text and the Finder
+ * paths, in a column that scrolls rather than growing.
+ */
+function paintTargetPeek() {
+  const detail = selectionDetail;
+  if (!detail) return;
+  const caption = document.createElement("div");
+  caption.className = "moe-peek-caption";
+  caption.textContent = targetIndicator?.title ?? "";
+  const children: HTMLElement[] = [caption];
+  const text = detail.text && detail.text.trim() !== "" ? detail.text : null;
+  if (text !== null || detail.files.length > 0) {
+    const body = document.createElement("div");
+    body.className = "moe-peek-scroll";
+    if (text !== null) {
+      const pre = document.createElement("pre");
+      pre.className = "moe-peek-text";
+      pre.textContent = text; // user content, never markup
+      body.append(pre);
+    }
+    if (detail.files.length > 0) {
+      const list = document.createElement("ul");
+      list.className = "moe-peek-files";
+      for (const path of detail.files) {
+        const item = document.createElement("li");
+        item.textContent = path;
+        item.title = path;
+        list.append(item);
+      }
+      body.append(list);
+    }
+    children.push(body);
+  }
+  chatTargetPeekEl.replaceChildren(...children);
+  chatTargetPeekEl.classList.remove("hidden");
+}
+
+/** Show the peek (and fetch the text behind it if this state's detail is not in hand yet). */
+function showTargetPeek() {
+  clearTimeout(targetPeekCloseTimer);
+  targetPeekOpen = true;
+  if (selectionDetailFor !== selectionState) {
+    void ensureSelectionDetail();
+    return;
+  }
+  if (chatTargetPeekEl.classList.contains("hidden")) paintTargetPeek();
+}
+
+function hideTargetPeek() {
+  clearTimeout(targetPeekCloseTimer);
+  targetPeekOpen = false;
+  chatTargetPeekEl.classList.add("hidden");
+}
+
+/** Leaving either the chip or the card is not final: the pointer crosses a gap to reach the card. */
+function scheduleHideTargetPeek() {
+  clearTimeout(targetPeekCloseTimer);
+  targetPeekCloseTimer = setTimeout(hideTargetPeek, 160);
+}
+
+chatTargetEl.addEventListener("mouseenter", showTargetPeek);
+chatTargetEl.addEventListener("mouseleave", scheduleHideTargetPeek);
+chatTargetPeekEl.addEventListener("mouseenter", () => clearTimeout(targetPeekCloseTimer));
+chatTargetPeekEl.addEventListener("mouseleave", scheduleHideTargetPeek);
 
 const modelSwitcher = createModelSwitcher({
   host: rootEl,
@@ -630,7 +769,7 @@ function renderSelectionState() {
   label.className = "moe-selection-label";
   label.textContent = indicator.label;
   selectionStateEl.replaceChildren(
-    iconEl("text-cursor-input", { size: 12, className: "shrink-0" }),
+    iconEl(indicator.icon, { size: 12, className: "shrink-0" }),
     label,
   );
 }
@@ -664,6 +803,8 @@ function render() {
   renderFilterControl();
   // The Selection Indicator follows the focused command's input kind (MOE-0057)
   renderSelectionState();
+  // The composer's target chip follows the page and its conversation (MOE-0059)
+  renderSelectionTarget();
   // Page shape decides window size (ADR-0018): split pages are wider and taller, others use the default size.
   // Only call IPC when the shape changes, so the window isn't touched on every render.
   const shape = pageShapeOf(
@@ -1158,6 +1299,9 @@ async function sendChatMessage() {
   if (!message) return;
   const parts = ensureChatParts();
   chatSending = true;
+  // The target is consumed the moment the first message leaves: the chip goes with it, and comes back
+  // only if the send is rolled back below (the selection never made it into a message).
+  renderSelectionTarget();
   try {
     if (chatGenerating) {
       // Enter-as-stop (ADR-0036) — unless nothing is actually generating: the backend returns 0 for
@@ -1206,6 +1350,7 @@ async function sendChatMessage() {
     }
   } finally {
     chatSending = false;
+    renderSelectionTarget();
   }
 }
 
@@ -2819,6 +2964,9 @@ void listen("summon-authorized", () => hideBanner());
 void listen<SelectionState>("selection-changed", (event) => {
   selectionState = event.payload;
   renderSelectionState();
+  renderSelectionTarget();
+  // An open peek holds the previous state's text; refetching replaces it in place.
+  if (targetPeekOpen) void ensureSelectionDetail();
 });
 // Global ⌘' (ADR-0036 amendment): toggle the Quick Ask page. The payload reports whether the panel
 // was already visible when the hotkey fired — visible on the page means dismiss it.

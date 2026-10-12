@@ -3,7 +3,12 @@
 // reading, or dropping the Finder files that came along with the text.
 
 import { describe, expect, it } from "vitest";
-import { NO_SELECTION, selectionIndicator, type SelectionState } from "./selection";
+import {
+  chatTarget,
+  NO_SELECTION,
+  selectionIndicator,
+  type SelectionState,
+} from "./selection";
 import type { CommandMeta } from "./types";
 
 /** The smallest CommandMeta that satisfies the type; only `input` matters to these rules. */
@@ -86,5 +91,64 @@ describe("selectionIndicator", () => {
     const indicator = selectionIndicator(layer("selection"), NO_SELECTION);
     expect(indicator?.state).toBe("none");
     expect(indicator?.label).toBe("No selection");
+  });
+
+  it("wears the paperclip when only Finder files were captured", () => {
+    expect(selectionIndicator(layer("selection"), state({ fileCount: 2 }))?.icon).toBe("paperclip");
+    expect(selectionIndicator(layer("selection"), state({ textChars: 2 }))?.icon).toBe(
+      "text-cursor-input",
+    );
+  });
+});
+
+describe("chatTarget", () => {
+  const chat = (armed: boolean) => ({ mode: "chat" as const, armed });
+
+  it("shows nothing off the Quick Ask page", () => {
+    expect(chatTarget({ mode: "commands", armed: true }, state({ textChars: 12 }))).toBeUndefined();
+    expect(chatTarget({ mode: "items", armed: true }, state({ textChars: 12 }))).toBeUndefined();
+  });
+
+  it("shows nothing once the conversation has started, or while the first send is in flight", () => {
+    // The selection belongs to the conversation's first message only (ADR-0019/0021): once that
+    // message exists — or is on its way — the chip has nothing left to promise.
+    expect(chatTarget(chat(false), state({ textChars: 12 }))).toBeUndefined();
+  });
+
+  it("shows nothing when nothing was captured", () => {
+    // Unlike the Input Bar's indicator there is no "No selection" state: no target is not news.
+    expect(chatTarget(chat(true), NO_SELECTION)).toBeUndefined();
+  });
+
+  it("reads as pending while the clipboard fallback is still reading", () => {
+    const indicator = chatTarget(chat(true), state({ pending: true }));
+    expect(indicator?.state).toBe("pending");
+    expect(indicator?.label).toBe("Reading selection…");
+  });
+
+  it("names the text target and its size", () => {
+    const indicator = chatTarget(chat(true), state({ textChars: 1234 }));
+    expect(indicator?.state).toBe("captured");
+    expect(indicator?.label).toBe("Selection");
+    expect(indicator?.detail).toBe(`${(1234).toLocaleString()} characters`);
+    expect(indicator?.icon).toBe("text-cursor-input");
+  });
+
+  it("counts the Finder files alongside the text", () => {
+    const indicator = chatTarget(chat(true), state({ textChars: 12, fileCount: 2 }));
+    expect(indicator?.label).toBe("Selection");
+    expect(indicator?.detail).toBe("12 characters · 2 files");
+  });
+
+  it("singularizes a one-character target", () => {
+    expect(chatTarget(chat(true), state({ textChars: 1 }))?.detail).toBe("1 character");
+  });
+
+  it("names a files-only target as the files it is", () => {
+    const one = chatTarget(chat(true), state({ fileCount: 1 }));
+    expect(one?.label).toBe("1 file");
+    expect(one?.icon).toBe("paperclip");
+    expect(one?.detail).toBeUndefined();
+    expect(chatTarget(chat(true), state({ fileCount: 3 }))?.label).toBe("3 files");
   });
 });

@@ -76,7 +76,16 @@
 
       <!-- Chat page composer (MOE-0030): the shared pill (attach · draft · send) at the bottom of
            the Quick Ask page, mounted by composer.ts; hidden on every other page. -->
-      <footer id="chat-composer" class="hidden shrink-0 px-2 pt-1"></footer>
+      <footer id="chat-composer" class="hidden shrink-0 px-2 pt-1">
+        <!-- The page's target (MOE-0059): the captured selection the next message will carry, shown
+             only while the conversation is still blank — once the first message goes out, the
+             selection is already inside it (ADR-0019/0021). Hovering the chip peeks the captured
+             text in the card below it. -->
+        <div id="chat-target-row" class="relative mb-1 hidden">
+          <span id="chat-target" class="moe-chat-target"></span>
+          <div id="chat-target-peek" class="moe-peek-card hidden"></div>
+        </div>
+      </footer>
 
       <!-- Bottom bar (ADR-0026): exactly one row tall, overlaying the list's last visible row band.
            Left: the avatar chip — Moe's avatar on the command layer, the Extension's icon + name

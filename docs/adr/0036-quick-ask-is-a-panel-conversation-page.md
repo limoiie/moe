@@ -187,3 +187,35 @@ the conversation would run on. The pair now rides the title on both surfaces:
   the table (the view layer never invents keys). The key lands the same action as the row — the
   model switcher — on the chat surfaces only (the panel's chat page; the Side View); the physical
   `KeyM` is matched because ⌥M types "µ" on macOS layouts.
+
+## Amendment: the page shows its target, and the command that started one goes (MOE-0056, MOE-0058, MOE-0059)
+
+A conversation's first message carries the captured selection as context, and the page never said so:
+entering Quick Ask with text selected looked exactly like entering it with nothing selected. The
+decision above already fixes *when* that context applies ("the conversation's first message only"), so
+the page now says *what* it is about to carry, in the one place where the question is live — above the
+composer, and only while the conversation is still blank.
+
+**The target chip.** A chip in the house glass (the Input Bar chips' material, ADR-0043/0034) sits
+above the composer row, left-aligned with the add button, showing `Selection` and its size ("1,234
+characters", or the file count when only Finder files were captured). It is armed only on a blank
+conversation with no send in flight: the first send consumes the target, a failed send returns it (the
+selection never made it into a message), and a started or reopened conversation never shows it. No
+target is not news, so there is no "No selection" state here — the Input Bar's chip carries that
+answer, because a command may *depend* on a selection while a chat never does.
+
+**The peek.** Hovering the chip opens a card above it — the actions/About card language, a reading
+column that scrolls rather than growing — with the full selected text (pre-wrapped, never re-parsed)
+and the captured Finder paths. This is the one place the selection's *text* crosses into the webview,
+and it is fetched on demand (`selection_detail`, once per reported state) rather than at boot: the
+chips render from `selection_state`'s shape alone, so the text moves only when the user asks to look
+at it. The chip carries no native tooltip — it would fight the card — so the card's caption carries
+the explanation instead.
+
+**The command that started a selection chat is gone.** `ai.chat-about-selection` (MOE-0056) made a
+selection-targeted conversation reachable, but it was a *command* for something the page itself can
+always do: `ai.quick-ask` already carries the captured selection into the first message, and ⌘' opens
+that page. With the target now visible there, the command was a second, narrower door to the same
+room — and it made the selection look like something you must pick a command to use. Removing it also
+removes its icon (`messages-square`) from the Lucide map, whose only caller it was (ADR-0012's rule:
+an icon leaves with its caller).

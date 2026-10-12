@@ -240,6 +240,7 @@
   .moe-window-card,
   .moe-actions-card,
   .moe-about-card,
+  .moe-peek-card,
   .moe-avatar-chip,
   .moe-action-bar,
   .moe-composer-capsule,
@@ -331,7 +332,8 @@ html[data-platform="macos"] .moe-window-card {
 /* Actions card (⌘K / ⌘⇧P), About card and Filter card: floating cards above the results (shadow stays within the 8px padding, unclipped by the window) */
 .moe-actions-card,
 .moe-about-card,
-.moe-filter-card {
+.moe-filter-card,
+.moe-peek-card {
   backdrop-filter: blur(48px) saturate(200%);
   -webkit-backdrop-filter: blur(48px) saturate(200%);
   background-image: var(--moe-glass-bg);
@@ -342,6 +344,7 @@ html[data-platform="macos"] .moe-window-card {
 .moe-actions-card,
 .moe-about-card,
 .moe-filter-card,
+.moe-peek-card,
 .moe-avatar-chip,
 .moe-action-bar,
 .moe-composer-capsule,
@@ -1012,6 +1015,109 @@ body.moe-pointer-inside .moe-titlebar-title {
   box-shadow:
     var(--moe-shadow-chip),
     0 0 0 1px var(--moe-accent-line);
+}
+
+/* The Quick Ask page's target chip (MOE-0059): the captured selection the next message will carry.
+   The Input Bar chips' material again — house glass, chip shadow, a squircle pill — at the composer's
+   own scale: it sits above the row, not in it, so it keeps the chips' height and nothing here can
+   move the measured panel. It is the one chip that is hoverable (the peek is behind it), so a hover
+   reveals the neutral wash the other controls use. */
+.moe-chat-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  color: var(--moe-fg);
+  font-size: var(--moe-text-secondary);
+  line-height: 1;
+  box-shadow:
+    var(--moe-shadow-chip),
+    0 0 0 1px var(--moe-accent-line);
+  transition: background-color 120ms ease;
+}
+[data-pointer="live"] .moe-chat-target:hover {
+  background: var(--moe-surface-hover);
+}
+.moe-chat-target[data-state="pending"] {
+  color: var(--moe-fg-muted);
+  box-shadow: var(--moe-shadow-chip);
+}
+.moe-chat-target .moe-chat-target-label,
+.moe-chat-target .moe-chat-target-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moe-chat-target .moe-chat-target-detail {
+  flex: none;
+  color: var(--moe-fg-subtle);
+}
+/* Unlayered, so it beats this rule's own display (same trick as `.moe-filter-control.hidden`) */
+.moe-peek-card.hidden {
+  display: none;
+}
+
+/* The peek card (MOE-0059): the captured selection behind the target chip, in the house card
+   language. It anchors to the row it belongs to and opens upward, over the message log's tail —
+   a reading column that scrolls rather than growing, so a long selection can never push the
+   composer around. */
+.moe-peek-card {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  display: flex;
+  width: 30rem;
+  max-width: calc(100vw - 2rem);
+  max-height: 18rem;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--moe-surface-overlay);
+}
+.moe-peek-caption {
+  flex: none;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--moe-line);
+  color: var(--moe-fg-subtle);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.moe-peek-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 14px 12px;
+}
+.moe-peek-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--moe-fg-muted);
+  font-size: var(--moe-text-secondary);
+  line-height: 1.5;
+}
+.moe-peek-files {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.moe-peek-files li {
+  overflow: hidden;
+  color: var(--moe-fg-subtle);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* Settings window rows (MOE-0029): sidebar sections, theme rows, provider key rows. */
 .moe-settings-row {

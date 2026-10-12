@@ -787,6 +787,14 @@ fn selection_state(state: State<'_, AppState>) -> SelectionStatePayload {
     )
 }
 
+/// The captured selection itself (text + Finder files), for the Quick Ask composer's peek (MOE-0059).
+/// Fetched only when the user asks to see it, so the text crosses into the webview on demand rather
+/// than at boot — `selection_state`'s shape-only rule stays the default (ADR-0034 amendment).
+#[tauri::command]
+fn selection_detail(state: State<'_, AppState>) -> Option<Selection> {
+    state.selection.lock().expect("selection poisoned").clone()
+}
+
 /// Entry lookup for the generic actions Browse (⌘P) / New (⌘N) (ADR-0014):
 /// resolve the entry command declared by the current command's Extension; None = the extension has no such records.
 #[tauri::command]
@@ -1665,6 +1673,7 @@ fn main() {
             keymap,
             search_commands,
             selection_state,
+            selection_detail,
             entry_command,
             resize_panel,
             invoke_command,
@@ -1825,6 +1834,23 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&payload).unwrap(),
             r#"{"textChars":2,"fileCount":1,"pending":false}"#
+        );
+    }
+
+    /// The peek's payload (MOE-0059) is the contract's own `Selection`: text plus absolute paths, and
+    /// the same camelCase names the TS mirror declares. Pinned here because the panel reads it by
+    /// hand-built object shape, not through a struct of its own.
+    #[test]
+    fn selection_detail_serializes_the_contract_shape() {
+        let json = serde_json::to_string(&Selection {
+            text: Some("hi".into()),
+            files: vec!["/tmp/a.md".into()],
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"text":"hi","files":["/tmp/a.md"]}"#);
+        assert_eq!(
+            serde_json::to_string(&Selection::default()).unwrap(),
+            r#"{"text":null,"files":[]}"#
         );
     }
 
