@@ -113,3 +113,7 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
 
   Still unticked: the *fixed* version has not been on screen — the pass above is what found these
   three, and the date rendering in both themes is the part no test covers.
+- 2026-10-12 (agent): **the body's second premise is now closed** (MOE-0051). This ticket opened by
+  noting that the picker's only real tag vocabulary rode a wire type that never reached the panel; the
+  capability words are now `Item.tags` behind one derived dimension, so that vocabulary reaches the
+  list and the picker narrows by it.
