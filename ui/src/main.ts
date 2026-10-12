@@ -7,7 +7,7 @@ import { appendMention, humanBytes, validatePath } from "./attachment";
 import { createActionPlan, type ActionRow, type PageContext } from "./actions";
 import { createCard, type CardSection } from "./card";
 import { createComposer } from "./composer";
-import { applyTagFilter, deriveFilterValues, settleFilterValue } from "./filter";
+import { applyTagFilter, filterValuesFor, settleFilterValue } from "./filter";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { invokeWithTimeout } from "./ipc";
@@ -1430,11 +1430,7 @@ function applyResult(
     view.update((v) => {
       // The dimension's values come from the returned set *before* the tag filter narrows anything,
       // so the picker cannot lose values as the list narrows (ADR-0043).
-      const filterValues = !filter
-        ? []
-        : filter.values.length > 0
-          ? filter.values
-          : deriveFilterValues(allItems);
+      const filterValues = filterValuesFor(filter, allItems);
       // A remembered value the new set no longer carries falls back to All (see filter.ts).
       const filterValue = settleFilterValue(v.filterValue, filterValues);
       return {

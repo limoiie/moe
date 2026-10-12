@@ -5,7 +5,7 @@
 // ones that drift silently: which items a value shows, which values a list offers, and what happens
 // to a remembered value that the new result set no longer carries.
 
-import type { Item } from "./types";
+import type { Filter, Item } from "./types";
 
 /** Narrow a result set to the active value. Exact match: the values come from the items' own tags. */
 export function applyTagFilter(items: Item[], value: string | undefined): Item[] {
@@ -25,6 +25,17 @@ export function deriveFilterValues(items: Item[]): string[] {
     }
   }
   return seen;
+}
+
+/**
+ * The values a list offers: the dimension's declared values when it names any, otherwise the ones
+ * derived from the items (ADR-0043). The Rust side omits `values` on the wire when it is empty, so
+ * absent must read as empty here too — a required field over an omittable one is a type that lies.
+ */
+export function filterValuesFor(filter: Filter | undefined, items: Item[]): string[] {
+  if (!filter) return [];
+  const declared = filter.values ?? [];
+  return declared.length > 0 ? declared : deriveFilterValues(items);
 }
 
 /**

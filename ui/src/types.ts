@@ -62,10 +62,11 @@ export interface Filter {
   /** Semantic icon name (ADR-0012); also the Filter Card's leading glyph. */
   icon?: string;
   /**
-   * Explicit values in display order. Empty = derived from the returned items' `tags`, which is why a
-   * declared list cannot drift from the tags actually present.
+   * Explicit values in display order. Empty (or absent: the Rust side omits an empty vector) =
+   * derived from the returned items' `tags`, which is why a declared list cannot drift from the tags
+   * actually present.
    */
-  values: string[];
+  values?: string[];
 }
 
 export interface CommandMeta {

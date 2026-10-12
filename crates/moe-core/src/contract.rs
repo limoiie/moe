@@ -576,6 +576,22 @@ mod tests {
         assert_eq!(json["group"], "Today");
     }
 
+    /// `Filter.values` is omitted while empty so a derived dimension keeps the payload minimal, and the
+    /// UI must read absent as empty. A required TS field over this omittable one once threw at runtime
+    /// (`undefined.length`), so the omission is pinned here.
+    #[test]
+    fn filter_values_serializes_only_when_set() {
+        let derived = serde_json::to_value(Filter::derived("tags", "Tags")).unwrap();
+        assert!(derived.get("values").is_none(), "empty values are omitted");
+
+        let declared = Filter {
+            values: vec!["Agentic".into()],
+            ..Filter::derived("tags", "Tags")
+        };
+        let json = serde_json::to_value(&declared).unwrap();
+        assert_eq!(json["values"][0], "Agentic");
+    }
+
     /// View layout is declared by the Extension (ADR-0013): the UI uses `list.detailFull` to decide
     /// between full-screen detail and "list on the left + detail on the right", instead of guessing from item count.
     #[test]

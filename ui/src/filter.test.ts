@@ -3,8 +3,8 @@
 // narrowed by a value that has vanished.
 
 import { describe, expect, it } from "vitest";
-import { applyTagFilter, deriveFilterValues, settleFilterValue } from "./filter";
-import type { Item } from "./types";
+import { applyTagFilter, deriveFilterValues, filterValuesFor, settleFilterValue } from "./filter";
+import type { Filter, Item } from "./types";
 
 /** The smallest Item that satisfies the type; only `tags` matters to these rules. */
 function item(id: string, tags?: string[]): Item {
@@ -61,6 +61,32 @@ describe("deriveFilterValues", () => {
   it("ignores untagged items without breaking the order", () => {
     const items = [item("a"), item("b", ["X"]), item("c"), item("d", ["Y"])];
     expect(deriveFilterValues(items)).toEqual(["X", "Y"]);
+  });
+});
+
+describe("filterValuesFor", () => {
+  const filter = (values?: string[]): Filter => ({ id: "tags", label: "Tags", values });
+
+  it("offers nothing when the list declares no dimension", () => {
+    expect(filterValuesFor(undefined, [item("a", ["Agentic"])])).toEqual([]);
+  });
+
+  it("prefers declared values over the items", () => {
+    expect(filterValuesFor(filter(["Standard", "Agentic"]), [item("a", ["Agentic"])])).toEqual([
+      "Standard",
+      "Agentic",
+    ]);
+  });
+
+  it("derives from the items when values are empty", () => {
+    expect(filterValuesFor(filter([]), [item("a", ["Agentic"]), item("b", ["Standard"])])).toEqual(
+      ["Agentic", "Standard"],
+    );
+  });
+
+  it("derives when values are absent — the Rust side omits an empty vector", () => {
+    // The regression: `filter.values.length` on an omitted field threw at runtime.
+    expect(filterValuesFor(filter(undefined), [item("a", ["Agentic"])])).toEqual(["Agentic"]);
   });
 });
 
