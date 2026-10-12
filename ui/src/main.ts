@@ -20,9 +20,11 @@ import { logoEl } from "./logo";
 import { createModelSwitcher, type ActivePair } from "./models";
 import {
   CONVERSATION_PANE_CLASS,
+  DETAIL_COLUMNS_CLASS,
   DETAIL_PANE_CLASS,
   LIST_FULL_CLASS,
   LIST_NARROW_CLASS,
+  METADATA_COLUMN_WIDTH,
   PANEL_WIDTH,
   pageShapeOf,
   panelHeightFor,
@@ -978,13 +980,19 @@ function metadataEl(metadata: Metadata[], item: Item): HTMLElement {
   return block;
 }
 
-function paintDetail(
-  markdown: string,
-  itemId: string | null,
-  pending: boolean,
-  headerItem?: Item,
-  reasoning?: string,
-) {
+/** What one paint of the detail pane needs. The item is present in both shapes — it carries the
+ *  metadata — while `header` is the split shape's header row only. */
+interface DetailPaint {
+  markdown: string;
+  itemId: string | null;
+  pending: boolean;
+  item?: Item;
+  header?: boolean;
+  reasoning?: string;
+}
+
+function paintDetail(paint: DetailPaint) {
+  const { markdown, itemId, pending, item, header, reasoning } = paint;
   const nearBottom =
     detailEl.scrollHeight - detailEl.scrollTop - detailEl.clientHeight < 40;
   // The card re-renders per stream frame: carry the user's expand toggle and the thinking timer
@@ -997,7 +1005,7 @@ function paintDetail(
   const parts = ensureDetailParts();
   const body = parts.body;
   body.replaceChildren();
-  if (headerItem) body.append(detailHeaderEl(headerItem));
+  if (header && item) body.append(detailHeaderEl(item));
   // The model's thinking (reasoning blocks, MOE-0008) renders as the muted ChatGPT-style row above
   // the answer; the body only ever holds the answer text
   if (reasoning?.trim()) {
@@ -1010,11 +1018,25 @@ function paintDetail(
   const prose = document.createElement("div");
   prose.className = "md";
   prose.innerHTML = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
-  body.append(prose);
-  // Metadata sits at the split pane's bottom (ADR-0042) — exactly when a header is present. The
-  // `detail` shape puts it in a right-hand column instead, which is MOE-0047.
-  const metadata = headerItem?.metadata;
-  if (metadata && metadata.length > 0 && headerItem) body.append(metadataEl(metadata, headerItem));
+  // ADR-0042's two placements from one renderer (MOE-0047): the `split` shape puts the block under the
+  // Markdown at the pane's bottom; the `detail` shape puts it in a right-hand column beside the
+  // Markdown, the two halves scrolling on their own — which is why `renderDetail` switches the pane
+  // itself to `DETAIL_COLUMNS_CLASS` when a column is coming.
+  const metadata = item?.metadata ?? [];
+  if (!header && item && metadata.length > 0) {
+    body.className = "flex min-h-0 flex-1 gap-4";
+    const proseColumn = document.createElement("div");
+    proseColumn.className = "min-h-0 min-w-0 flex-1 overflow-y-auto";
+    proseColumn.append(prose);
+    const column = document.createElement("div");
+    column.className = "moe-metadata-column";
+    column.append(metadataEl(metadata, item));
+    body.append(proseColumn, column);
+  } else {
+    body.className = "";
+    body.append(prose);
+    if (metadata.length > 0 && item) body.append(metadataEl(metadata, item));
+  }
   // Inline generating indicator (like ChatGPT's loading dots, rather than writing status into the body):
   // body and indicator are separate; streaming events only replace the body, so the dot animation is never restarted
   parts.indicator.classList.toggle("hidden", !pending);
@@ -1057,7 +1079,7 @@ function clearDetail() {
 function showMessage(markdown: string) {
   detailMode = "message";
   detailEl.className = DETAIL_MESSAGE_CLASS;
-  paintDetail(markdown, null, false);
+  paintDetail({ markdown, itemId: null, pending: false });
   listEl.classList.add("hidden");
 }
 
@@ -1077,15 +1099,19 @@ function renderDetail() {
   }
   detailMode = "preview";
   const full = shape === "detail";
-  detailEl.className = DETAIL_MESSAGE_CLASS;
+  // The `detail` shape switches to the two-column pane only when there is a column to fill; with no
+  // metadata it is byte-identical to before (ADR-0042's additive claim).
+  detailEl.className =
+    full && (item.metadata?.length ?? 0) > 0 ? DETAIL_COLUMNS_CLASS : DETAIL_MESSAGE_CLASS;
   const reasoning = (item.payload as { reasoning?: string } | null)?.reasoning;
-  paintDetail(
-    item.detail ?? "",
-    item.id,
-    item.pending === true,
-    full ? undefined : item,
+  paintDetail({
+    markdown: item.detail ?? "",
+    itemId: item.id,
+    pending: item.pending === true,
+    item,
+    header: !full,
     reasoning,
-  );
+  });
   if (full) {
     listEl.classList.add("hidden");
   } else {
@@ -2936,6 +2962,11 @@ window.addEventListener("focus", () => {
 await initActionBar();
 // One source for the row height (ADR-0026): the bottom bar, chip and pill follow ROW_HEIGHT.
 document.documentElement.style.setProperty("--moe-row-h", `${ROW_HEIGHT}px`);
+// The detail shape's metadata column follows layout.ts too, not a class string (ADR-0042).
+document.documentElement.style.setProperty(
+  "--moe-metadata-col-w",
+  `${METADATA_COLUMN_WIDTH}px`,
+);
 renderInputIcon();
 await refresh("");
 await refreshBanner();

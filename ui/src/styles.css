@@ -550,6 +550,20 @@ html[data-platform="macos"] .moe-window-card {
   border-top: 1px solid var(--moe-line);
   font-size: var(--moe-text-secondary);
 }
+/* The two placements differ in more than position: the split pane's block is a footer under the prose
+   and draws a rule above itself, while the detail shape's column starts at the prose's top edge and
+   needs no rule — the column's own edge is the separation. */
+.moe-metadata-column {
+  flex: none;
+  width: var(--moe-metadata-col-w, 240px);
+  min-height: 0;
+  overflow-y: auto;
+}
+.moe-metadata-column .moe-metadata {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
 .moe-metadata-row {
   display: flex;
   align-items: center;

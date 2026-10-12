@@ -82,6 +82,22 @@ export const DETAIL_PANE_CLASS =
   "md min-h-0 flex-1 overflow-y-auto px-4 pb-12 pt-3 text-sm text-fg";
 
 /**
+ * The `detail` shape with metadata (ADR-0042's second placement, MOE-0047): Markdown beside a
+ * right-hand column, each scrolling on its own. The pane stops scrolling itself — `overflow-hidden` —
+ * because the Markdown region inside takes over, and that is what keeps the column from scrolling
+ * with the prose.
+ */
+export const DETAIL_COLUMNS_CLASS =
+  "md flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-12 pt-3 text-sm text-fg";
+
+/**
+ * The metadata column's width (px) in the `detail` shape: a shape constant, not a renderer's class
+ * string (ADR-0018's rule — the platform decides layout, an Extension never lays itself out). Set on
+ * `:root` as `--moe-metadata-col-w` at boot, like `--moe-row-h`.
+ */
+export const METADATA_COLUMN_WIDTH = 240;
+
+/**
  * The Quick Ask page's conversation pane (ADR-0036): a flex column — the message log inside is the
  * scroll container (`createConversationView`'s `scrollToEnd` scrolls the log, like the Side View's
  * `#messages`), so this class carries no overflow and no prose styles (each answer bubble carries
