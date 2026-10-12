@@ -149,3 +149,23 @@ queries the DOM at module load and a test cannot import it at all. Twelve tests 
 a way the list could lie: showing rows the value does not match, offering a value nothing carries, or
 staying narrowed by a value that has vanished. `createCard` also gained `filteredEmptyText`, since the
 Filter Card's filtered-empty copy is not the actions card's.
+
+## Amendment: an omitted `values` list reads as empty
+
+`Filter.values` is omitted on the wire when empty — `skip_serializing_if = "Vec::is_empty"`, the same
+shape as `Item.tags` — but the shared mirror first declared it required (`values: string[]`), and
+`applyResult` read `filter.values.length` on every list result. A derived dimension (the only kind
+implemented) leaves the vector empty, so it arrived **absent**, the read threw
+`undefined is not an object (evaluating 'filter.values.length')`, and the whole result page failed to
+render — the one path this feature exists to serve.
+
+The omission is deliberate and stays: a derived dimension carries no explicit list, so the mirror must
+say so, and `values?: string[]` now matches the wire. The "declared values if any, else derived" rule
+moved out of `applyResult` into `filterValuesFor` in `ui/src/filter.ts`, so absent and empty are handled
+in one place that a test can reach — `main.ts` queries the DOM at module load and cannot be imported.
+Both sides are pinned: a Rust test asserts the vector is omitted while empty and serialized when set,
+and TS tests cover declared-wins, empty-derives and absent-derives.
+
+The lesson outlives the field: **a required TS field over an omittable Rust field is a type that lies**,
+and `tsc` cannot catch it. Every new contract field must be checked both ways — for the serde attribute
+that decides whether it rides the wire at all.

@@ -7,7 +7,7 @@
 - **Updated**: 2026-10-12
 - **Blocked by**: MOE-0041, MOE-0042
 - **Blocks**: MOE-0046, MOE-0048
-- **Commit**: 7a500d1
+- **Commit**: 7a500d1 (712ca26 fixes a post-close regression)
 
 The tracer bullet. There is no way to narrow a list by a second dimension: `Item` has no tags and
 `ActionResult::List` carries only `items` and `detail_full`. ADR-0043 adopts Raycast's
@@ -153,3 +153,16 @@ one Extension that declares a dimension.
   separately demoable ("type a query and the tag list does not shrink"). Splitting also removed the
   reason to hold a second dimension hostage: MOE-0048's TagList needs a declared dimension, so it now
   blocks on this ticket directly.
+- 2026-10-12 (agent): **regression fixed after close** (712ca26). The manual pass the ticked boxes
+  above could not do caught it: entering any list result, including ⌘P → Tags, threw
+  `undefined is not an object (evaluating 'filter.values.length')` and rendered nothing. `Filter.values`
+  is omitted on the wire when empty (`skip_serializing_if = "Vec::is_empty"`, matching `Item.tags`),
+  but the mirror declared it required and `applyResult` read it directly — so the only dimension built
+  so far, a derived one, always tripped it.
+
+  `values` is now optional in the mirror; the declared-else-derived rule moved into `filterValuesFor`
+  (`ui/src/filter.ts`), which reads absent and empty the same way; and both sides are pinned — a Rust
+  test asserts the omission and the serialized case, and TS tests cover declared-wins,
+  empty-derives and absent-derives. ADR-0043's third amendment records it. The last acceptance box
+  below — "nothing has rendered on screen" — is exactly the one this slipped past; it stays unticked
+  until a human presses the keys.
