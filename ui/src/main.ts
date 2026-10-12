@@ -7,9 +7,10 @@ import { appendMention, humanBytes, validatePath } from "./attachment";
 import { createActionPlan, type ActionRow, type PageContext } from "./actions";
 import { createCard, type CardSection } from "./card";
 import { createComposer } from "./composer";
+import { accessoryLabel, rowAccessories } from "./accessories";
 import { applyTagFilter, filterValuesFor, settleFilterValue } from "./filter";
 import { generatingEl } from "./generating";
-import { iconEl } from "./icons";
+import { iconEl, inkClass } from "./icons";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
@@ -39,6 +40,7 @@ import { store } from "./store";
 import { streamCoalescer } from "./stream";
 import { initTheme, themePreference, type ThemePreference } from "./theme";
 import type {
+  Accessory,
   Action,
   ActionResult,
   CommandEventPayload,
@@ -570,12 +572,16 @@ interface Row {
   iconMuted?: boolean;
   /** Trailing type badge on command rows (ADR-0030): "Command" unless the extension declares otherwise. */
   badge?: string;
+  /** Trailing accessories on result rows (ADR-0041): tags, text, relative dates, tinted icons. */
+  accessories?: Accessory[];
   /** Root page rows (ADR-0031): the declared shortcut reveals only while the row is focused or hovered. */
   revealKeys?: boolean;
 }
 
 function currentEntries(): Row[] {
   const v = view.get();
+  // The shape gates accessories (ADR-0041): none render while the detail pane shows (`split`).
+  const shape = pageShapeOf(v.items[v.focus], v.detailFull === true, v.items.length);
   return v.items.map((i) => {
     const icon = i.icon ?? v.sourceIcon;
     return {
@@ -584,6 +590,7 @@ function currentEntries(): Row[] {
       key: secondaryOf(i)?.keybinding ?? undefined,
       icon,
       iconMuted: !icon,
+      accessories: rowAccessories(i, shape),
     };
   });
 }
@@ -596,6 +603,27 @@ function sectionHeaderEl(title: string): HTMLLIElement {
   li.style.height = `${SECTION_HEADER_HEIGHT}px`;
   li.textContent = title;
   return li;
+}
+
+/** One accessory element (ADR-0041): a tinted pill, plain text, a relative date, or a tinted glyph.
+ *  `kind` picks the shape; an unknown color name leaves the element in the secondary step. */
+function accessoryEl(a: Accessory, nowUnix: number): HTMLElement | SVGElement {
+  if (a.kind === "icon") {
+    const wrap = document.createElement("span");
+    wrap.className = "moe-accessory";
+    const ink = inkClass(a.color);
+    if (ink) wrap.classList.add(ink);
+    wrap.append(iconEl(a.value, { size: 14 }));
+    if (a.tooltip) wrap.title = a.tooltip;
+    return wrap;
+  }
+  const el = document.createElement("span");
+  el.className = `moe-accessory ${a.kind === "tag" ? "moe-accessory-tag" : `moe-accessory-${a.kind}`}`;
+  const ink = inkClass(a.color);
+  if (ink) el.classList.add(ink);
+  el.textContent = accessoryLabel(a, nowUnix);
+  if (a.tooltip) el.title = a.tooltip;
+  return el;
 }
 
 /** A single row: hover is an interactive hint (never steals focus) and only applies after real
@@ -628,6 +656,12 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
     left.append(sub);
   }
   li.append(left);
+  if (e.accessories) {
+    // Trailing accessories (ADR-0041). `rowAccessories` already capped them and hid them in `split`;
+    // a date accessory renders from its timestamp here, not from a backend-formatted string.
+    const now = Math.floor(Date.now() / 1000);
+    for (const a of e.accessories) li.append(accessoryEl(a, now));
+  }
   if (e.key) {
     // Key blocks (shadcn Kbd style): the shared kbdEl component, one block per key (ADR-0015/0030)
     const keys = kbdEl(e.key, { firstOnly: true });

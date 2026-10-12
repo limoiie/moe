@@ -137,6 +137,30 @@ export interface IconOptions {
   className?: string;
   /** Stroke width in the 24-unit viewBox (default 1.75); scales with `size`. */
   strokeWidth?: number;
+  /** Semantic color name (ADR-0041). Mapped to an ink class; unknown names add none (currentColor). */
+  color?: string;
+}
+
+/**
+ * Semantic color name → ink class (ADR-0041's bounded palette). This is the mapping `iconEl` needed
+ * to tint an accessory glyph, and the same names the result-row tags use. An unknown name adds no
+ * class, so the glyph keeps `currentColor` — the same fallback discipline as an unknown icon name.
+ */
+const INK_CLASSES: Record<string, string> = {
+  blue: "moe-ink-blue",
+  green: "moe-ink-green",
+  magenta: "moe-ink-magenta",
+  orange: "moe-ink-orange",
+  purple: "moe-ink-purple",
+  red: "moe-ink-red",
+  yellow: "moe-ink-yellow",
+  primary: "moe-ink-primary",
+  secondary: "moe-ink-secondary",
+};
+
+/** The ink class for a semantic color name, or undefined when the name is unset/unknown. */
+export function inkClass(name: string | null | undefined): string | undefined {
+  return name ? INK_CLASSES[name] : undefined;
 }
 
 /** Whether the icon name is known (used when the UI must tell "extension-provided icon" from "fallback shape"). */
@@ -158,5 +182,7 @@ export function iconEl(name: string | null | undefined, options: IconOptions = {
   for (const cls of (options.className ?? "").split(/\s+/).filter(Boolean)) {
     svg.classList.add(cls);
   }
+  const ink = inkClass(options.color);
+  if (ink) svg.classList.add(ink);
   return svg;
 }

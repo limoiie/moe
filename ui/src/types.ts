@@ -4,6 +4,19 @@
 
 export type ActionKind = "primary" | "secondary";
 
+/**
+ * One trailing accessory on a result row (ADR-0041), mirroring `moe-core`'s internally-tagged
+ * `Accessory`: `kind` picks the renderer. `color` is a semantic name from the bounded palette
+ * (blue/green/magenta/orange/purple/red/yellow/primary/secondary); unknown names fall back, so it
+ * stays a plain string rather than a union — the Rust side does not validate it into an enum, and a
+ * union over an unvalidated wire value is a type that lies. `date.value` is unix seconds.
+ */
+export type Accessory =
+  | { kind: "tag"; value: string; color?: string; tooltip?: string }
+  | { kind: "text"; value: string; color?: string; tooltip?: string }
+  | { kind: "date"; value: number; color?: string; tooltip?: string }
+  | { kind: "icon"; value: string; color?: string; tooltip?: string };
+
 export interface Action {
   id: string;
   title: string;
@@ -44,6 +57,11 @@ export interface Item {
    * result; omitted when the item carries none.
    */
   tags?: string[];
+  /**
+   * Trailing accessories (ADR-0041): at most three render, none while the detail pane shows (`split`),
+   * and the title truncates before any is dropped. Omitted when the item carries none.
+   */
+  accessories?: Accessory[];
   /** Detail content (Markdown); the split page renders it in the right pane (ADR-0018). */
   detail?: string | null;
   /** Still producing (streaming placeholder): Esc prioritizes stopping the generation. */

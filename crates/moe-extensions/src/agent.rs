@@ -572,6 +572,7 @@ mod tests {
                 subtitle: None,
                 group: None,
                 tags: Vec::new(),
+                accessories: Vec::new(),
                 icon: None,
                 actions: vec![],
                 payload: serde_json::json!({

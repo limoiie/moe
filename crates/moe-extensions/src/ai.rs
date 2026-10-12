@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
-    Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, EmptyView, Extension,
-    Filter, InputKind, Item, MoeError, NoopEmitter, Selection,
+    Accessory, Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, EmptyView,
+    Extension, Filter, InputKind, Item, MoeError, NoopEmitter, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_core::keymap::{SystemKey, display_of};
@@ -56,6 +56,7 @@ fn answer_item(
         subtitle: None,
         group: None,
         tags: Vec::new(),
+        accessories: Vec::new(),
         icon: Some("sparkles".into()),
         actions: vec![
             Action {
@@ -114,10 +115,13 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
     Item {
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
-        subtitle: Some(relative_time(conversation.updated_unix, now_unix)),
+        // The age rides a `date` accessory (ADR-0041): the wire carries the timestamp, the platform
+        // renders it — the pre-baked English string was exactly what the accessory replaced.
+        subtitle: None,
         // Recency buckets shared with the Side View's history card (ADR-0018 amendment).
         group: Some(recency::group_label(conversation.updated_unix, now_unix).to_string()),
         icon: Some("message-square".into()),
+        accessories: vec![Accessory::date(conversation.updated_unix as i64)],
         actions: vec![Action {
             id: "materialize".into(),
             title: "Open in Side View".into(),
@@ -170,17 +174,6 @@ fn title_for(display: &str, attachments: &[AttachmentRef]) -> String {
     match attachments.first() {
         Some(first) => format!("Attachment: {}", first.name),
         None => "New Chat".into(),
-    }
-}
-
-/// Relative time for list subtitles.
-fn relative_time(updated_unix: u64, now_unix: u64) -> String {
-    let secs = now_unix.saturating_sub(updated_unix);
-    match secs {
-        0..=59 => "just now".into(),
-        60..=3599 => format!("{}m ago", secs / 60),
-        3600..=86399 => format!("{}h ago", secs / 3600),
-        _ => format!("{}d ago", secs / 86400),
     }
 }
 
@@ -1697,17 +1690,6 @@ This is a test case, do you know?"#;
         assert!(excerpt.ends_with('…'));
     }
 
-    #[test]
-    fn relative_time_buckets() {
-        assert_eq!(relative_time(100, 100), "just now");
-        assert_eq!(relative_time(100, 159), "just now");
-        assert_eq!(relative_time(100, 160), "1m ago");
-        assert_eq!(relative_time(100, 100 + 3599), "59m ago");
-        assert_eq!(relative_time(100, 100 + 3600), "1h ago");
-        assert_eq!(relative_time(100, 100 + 86400), "1d ago");
-        assert_eq!(relative_time(100, 100 + 3 * 86400), "3d ago");
-    }
-
     /// Applying a history item (materialize) must hand the conversation id to the platform to open the side view.
     #[test]
     fn history_item_materializes_with_conversation_id() {
@@ -1722,7 +1704,9 @@ This is a test case, do you know?"#;
             160,
             Some("summary of the last answer".into()),
         );
-        assert_eq!(item.subtitle.as_deref(), Some("1m ago"));
+        // The age is a `date` accessory now, not a pre-baked subtitle (ADR-0041): the platform renders it.
+        assert_eq!(item.subtitle, None);
+        assert_eq!(item.accessories, vec![Accessory::date(100)]);
         assert_eq!(item.detail.as_deref(), Some("summary of the last answer"));
         let action = &item.actions[0];
         assert_eq!(action.kind, ActionKind::Primary);

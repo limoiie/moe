@@ -106,6 +106,18 @@
 
   --moe-success: #046c50;
 
+  /* Row-accessory tag palette (ADR-0041): Raycast's bounded names, theme-paired. Text steps only — a
+     tag is tinted text on a same-color wash, never a filled chip — and every step must clear 4.5:1
+     against the composed translucent surface (ADR-0035). PrimaryText/SecondaryText are not tokens:
+     they are the existing --moe-fg / --moe-fg-muted steps. */
+  --moe-tag-blue: #1d4ed8;
+  --moe-tag-green: #15803d;
+  --moe-tag-magenta: #a21caf;
+  --moe-tag-orange: #c2410c;
+  --moe-tag-purple: #6d28d9;
+  --moe-tag-red: #b91c1c;
+  --moe-tag-yellow: #a16207;
+
   --moe-focus: rgb(3 105 161 / 0.55);
 
   --moe-key-bg: #ffffff;
@@ -178,6 +190,16 @@
   --moe-danger-line: rgb(248 113 113 / 0.3);
 
   --moe-success: #34d399;
+
+  /* Row-accessory tag palette, dark side (ADR-0041): the same seven names, lightened so each text
+     step clears 4.5:1 on the dark surface. */
+  --moe-tag-blue: #7dd3fc;
+  --moe-tag-green: #86efac;
+  --moe-tag-magenta: #f0abfc;
+  --moe-tag-orange: #fdba74;
+  --moe-tag-purple: #c4b5fd;
+  --moe-tag-red: #fca5a5;
+  --moe-tag-yellow: #fde047;
 
   --moe-focus: rgb(56 189 248 / 0.6);
 
@@ -464,6 +486,56 @@ html[data-platform="macos"] .moe-window-card {
 }
 /* Hover brightens the label (the rows' standing hover rule; focus never changes it) */
 [data-pointer="live"] .group:hover .moe-kind-badge {
+  color: var(--moe-fg-muted);
+}
+
+/* Result-row accessories (ADR-0041), the row's trailing end. A tag is tinted text on a same-color
+   wash with no border — ADR-0030's amendment: a descriptor is not a control. Text and dates sit in
+   the secondary step unless a color names another; icons are 14px, one step under the 16px leading
+   icon. Bounded and truncated so a long accessory cannot push the row past its 40px grid. */
+.moe-accessory {
+  flex: none;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--moe-text-secondary);
+  line-height: 1;
+  color: var(--moe-fg-muted);
+}
+.moe-accessory-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* The palette's ink (ADR-0041). Declared after the accessory rules so a named color wins the cascade
+   against their secondary-step default; also the tint that `iconEl` applies to an accessory glyph. */
+.moe-ink-blue {
+  color: var(--moe-tag-blue);
+}
+.moe-ink-green {
+  color: var(--moe-tag-green);
+}
+.moe-ink-magenta {
+  color: var(--moe-tag-magenta);
+}
+.moe-ink-orange {
+  color: var(--moe-tag-orange);
+}
+.moe-ink-purple {
+  color: var(--moe-tag-purple);
+}
+.moe-ink-red {
+  color: var(--moe-tag-red);
+}
+.moe-ink-yellow {
+  color: var(--moe-tag-yellow);
+}
+.moe-ink-primary {
+  color: var(--moe-fg);
+}
+.moe-ink-secondary {
   color: var(--moe-fg-muted);
 }
 

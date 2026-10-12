@@ -22,6 +22,7 @@ fn info_item(text: &str) -> Item {
         subtitle: None,
         group: None,
         tags: Vec::new(),
+        accessories: Vec::new(),
         actions: vec![],
         payload: serde_json::Value::Null,
         detail: None,

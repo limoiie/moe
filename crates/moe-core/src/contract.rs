@@ -126,6 +126,10 @@ pub struct Item {
     /// Meaningless without a matching `Filter` on the result.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Trailing accessories (ADR-0041): tags, text, dates, icons. At most three render, the title
+    /// truncates before any is dropped, and none render while the detail pane is showing (`split`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accessories: Vec<Accessory>,
     /// Optional group label for list pages (e.g. recency buckets in a history list): the platform
     /// renders a non-focusable header before the first item of each group and keeps navigation,
     /// actions and delete counting the items only (ADR-0018 amendment). None = one unlabeled group.
@@ -144,6 +148,73 @@ pub struct Item {
     /// Still being produced (streaming placeholder): the platform's keybinding layer prioritizes requesting stop generation on Esc (IIE4AD-365).
     #[serde(default, skip_serializing_if = "is_false")]
     pub pending: bool,
+}
+
+/// One trailing accessory on a result row (ADR-0041): Raycast's `List.Item.Accessory`, narrowed to
+/// Moe's vocabulary. The platform owns the palette (a bounded set of semantic color names, never a
+/// hue) and the date rendering (the wire carries a timestamp, not a formatted string), so an
+/// Extension cannot ship a value the theme cannot check.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    rename_all = "camelCase",
+    tag = "kind",
+    rename_all_fields = "camelCase"
+)]
+pub enum Accessory {
+    /// A value in a same-color tinted pill — the tag palette's home.
+    Tag {
+        value: String,
+        /// Semantic color name (blue, green, magenta, orange, purple, red, yellow, primary,
+        /// secondary); unknown names fall back to the secondary text step. None = secondary.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tooltip: Option<String>,
+    },
+    /// Plain trailing text, in the secondary step unless a color names another.
+    Text {
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tooltip: Option<String>,
+    },
+    /// A unix timestamp the platform renders relatively ("now", "1d").
+    Date {
+        value: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tooltip: Option<String>,
+    },
+    /// A Lucide icon name (ADR-0012), optionally tinted.
+    Icon {
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tooltip: Option<String>,
+    },
+}
+
+impl Accessory {
+    /// A relative-date accessory (ADR-0041): the common case, and the one `ai.rs` migrates onto.
+    pub fn date(unix: i64) -> Self {
+        Self::Date {
+            value: unix,
+            color: None,
+            tooltip: None,
+        }
+    }
+
+    /// A tag accessory in the given semantic color (None = the secondary text step).
+    pub fn tag(value: impl Into<String>, color: Option<String>) -> Self {
+        Self::Tag {
+            value: value.into(),
+            color,
+            tooltip: None,
+        }
+    }
 }
 
 /// Result after Apply or any action runs. The output type is not a closed enum — Items in a
@@ -503,6 +574,7 @@ mod tests {
                 pending: false,
                 icon: None,
                 tags: Vec::new(),
+                accessories: Vec::new(),
             },
         };
         let json = serde_json::to_value(&event).unwrap();
@@ -561,6 +633,7 @@ mod tests {
             detail: Some("Answer body".into()),
             pending: false,
             tags: Vec::new(),
+            accessories: Vec::new(),
         }
     }
 
@@ -590,6 +663,34 @@ mod tests {
         };
         let json = serde_json::to_value(&declared).unwrap();
         assert_eq!(json["values"][0], "Agentic");
+    }
+
+    /// An accessory rides the wire internally tagged by `kind`, camelCase, omitting its optionals
+    /// (ADR-0041). The UI switches on `kind`; an unset color/tooltip must arrive absent, not null,
+    /// because the mirror declares them optional.
+    #[test]
+    fn accessory_serializes_tagged_and_omits_optionals() {
+        let result = ActionResult::list(vec![Item {
+            accessories: vec![
+                Accessory::tag("Agentic", Some("magenta".into())),
+                Accessory::date(100),
+            ],
+            ..answer()
+        }]);
+        let json = serde_json::to_value(&result).unwrap();
+        let accessories = &json["list"]["items"][0]["accessories"];
+        assert_eq!(accessories[0]["kind"], "tag");
+        assert_eq!(accessories[0]["value"], "Agentic");
+        assert_eq!(accessories[0]["color"], "magenta");
+        assert!(
+            accessories[0].get("tooltip").is_none(),
+            "unset tooltip is omitted"
+        );
+        assert_eq!(accessories[1]["kind"], "date");
+        assert_eq!(accessories[1]["value"], 100);
+        // Empty accessories stay off the wire entirely, like tags and group.
+        let plain = serde_json::to_value(answer()).unwrap();
+        assert!(plain.get("accessories").is_none());
     }
 
     /// View layout is declared by the Extension (ADR-0013): the UI uses `list.detailFull` to decide
