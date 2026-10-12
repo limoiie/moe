@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
     Accessory, Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, EmptyView,
-    Extension, Filter, InputKind, Item, MoeError, NoopEmitter, Selection,
+    Extension, Filter, InputKind, Item, Metadata, MetadataTag, MoeError, NoopEmitter, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_core::keymap::{SystemKey, display_of};
@@ -113,6 +113,22 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
     } else {
         Vec::new()
     };
+    // The pane's tag list (ADR-0042, landed by MOE-0048): the same value as `tags`, as a clickable
+    // tag. The page derives its dimension from `Item.tags` (ADR-0043), so this tag matches a declared
+    // value and clicking it narrows the list — see a tag, click it, the list narrows.
+    let metadata = if conversation.agentic {
+        vec![Metadata::TagList {
+            title: "Tags".into(),
+            items: vec![MetadataTag {
+                text: Some("Agentic".into()),
+                icon: None,
+                color: Some("purple".into()),
+                action_id: None,
+            }],
+        }]
+    } else {
+        Vec::new()
+    };
     Item {
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
@@ -123,7 +139,7 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
         group: Some(recency::group_label(conversation.updated_unix, now_unix).to_string()),
         icon: Some("message-square".into()),
         accessories: vec![Accessory::date(conversation.updated_unix as i64)],
-        metadata: Vec::new(),
+        metadata,
         actions: vec![Action {
             id: "materialize".into(),
             title: "Open in Side View".into(),
@@ -2162,6 +2178,24 @@ This is a test case, do you know?"#;
         assert!(
             plain.tags.is_empty(),
             "a plain conversation carries no tag, so it stays reachable through All"
+        );
+        // The pane's tag list carries the same value (MOE-0048), which is exactly what makes the tag
+        // clickable: its text matches a value of the dimension the page derives from `tags`.
+        assert_eq!(
+            agentic.metadata,
+            vec![Metadata::TagList {
+                title: "Tags".into(),
+                items: vec![MetadataTag {
+                    text: Some("Agentic".into()),
+                    icon: None,
+                    color: Some("purple".into()),
+                    action_id: None,
+                }],
+            }]
+        );
+        assert!(
+            plain.metadata.is_empty(),
+            "a plain conversation shows no tag list"
         );
     }
 

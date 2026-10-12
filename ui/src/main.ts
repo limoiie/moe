@@ -11,6 +11,7 @@ import { accessoryLabel, rowAccessories } from "./accessories";
 import { applyTagFilter, filterValuesFor, settleFilterValue } from "./filter";
 import { generatingEl } from "./generating";
 import { iconEl, inkClass } from "./icons";
+import { tagIntent, type TagIntent } from "./metadata";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
@@ -52,6 +53,7 @@ import type {
   Item,
   Message,
   Metadata,
+  MetadataTag,
   ToolCall,
 } from "./types";
 
@@ -893,11 +895,57 @@ function metadataRowEl(title: string, value?: HTMLElement): HTMLElement {
 }
 
 /**
- * The detail pane's metadata block (ADR-0042): Raycast's `List.Item.Detail.Metadata`, at the split
- * pane's bottom under the Markdown. `tagList` is carried whole by the contract but renders nothing
- * until MOE-0048, which also gives its tags their click behavior.
+ * One tag of the pane's tag list (ADR-0042). Interactive tags are real buttons so the cursor and the
+ * semantics are honest, but `tabindex="-1"` keeps them out of the tab order: ADR-0042 names them
+ * pointer-only, and reaching them from the keyboard is MOE-0045's decision — this is the seam it
+ * changes. A display-only tag is a plain span, so it cannot look clickable by accident.
  */
-function metadataEl(metadata: Metadata[]): HTMLElement {
+function metadataTagEl(tag: MetadataTag, intent: TagIntent, item: Item): HTMLElement {
+  const el = document.createElement(intent.kind === "none" ? "span" : "button");
+  el.className = "moe-metadata-tag";
+  if (intent.kind !== "none") {
+    (el as HTMLButtonElement).type = "button";
+    el.tabIndex = -1;
+    el.classList.add("moe-metadata-tag-live");
+    if (intent.kind === "filter") {
+      // The tag→filter loop: the list narrows and the Filter Control's label follows (ADR-0043).
+      el.addEventListener("click", () => setFilterValue(intent.value));
+    } else {
+      const action = item.actions.find((a) => a.id === intent.actionId);
+      el.addEventListener("click", () => {
+        if (action) void runItemAction(item, action);
+      });
+    }
+  }
+  const ink = inkClass(tag.color);
+  if (ink) el.classList.add(ink);
+  if (tag.icon) el.append(iconEl(tag.icon, { size: 12 }));
+  if (tag.text) {
+    const text = document.createElement("span");
+    text.textContent = tag.text;
+    el.append(text);
+  }
+  return el;
+}
+
+/** A titled row of tags. `dimensionValues` is the page's declared dimension (empty when it has none),
+ *  which is what makes the same tag interactive on one page and display-only on another. */
+function metadataTagListEl(title: string, tags: MetadataTag[], item: Item): HTMLElement {
+  const dimensionValues = view.get().filterValues;
+  const wrap = document.createElement("span");
+  wrap.className = "moe-metadata-value moe-metadata-tags";
+  for (const tag of tags) {
+    wrap.append(metadataTagEl(tag, tagIntent(tag, item.actions, dimensionValues), item));
+  }
+  return metadataRowEl(title, wrap);
+}
+
+/**
+ * The detail pane's metadata block (ADR-0042): Raycast's `List.Item.Detail.Metadata`, at the split
+ * pane's bottom under the Markdown. One renderer, so MOE-0047's `detail` shape column reuses it
+ * verbatim rather than growing a second copy.
+ */
+function metadataEl(metadata: Metadata[], item: Item): HTMLElement {
   const block = document.createElement("div");
   block.className = "moe-metadata not-prose";
   for (const entry of metadata) {
@@ -923,8 +971,9 @@ function metadataEl(metadata: Metadata[]): HTMLElement {
         );
       });
       block.append(metadataRowEl(entry.title, link));
+    } else {
+      block.append(metadataTagListEl(entry.title, entry.items, item));
     }
-    // `tagList`: MOE-0048.
   }
   return block;
 }
@@ -965,7 +1014,7 @@ function paintDetail(
   // Metadata sits at the split pane's bottom (ADR-0042) — exactly when a header is present. The
   // `detail` shape puts it in a right-hand column instead, which is MOE-0047.
   const metadata = headerItem?.metadata;
-  if (metadata && metadata.length > 0) body.append(metadataEl(metadata));
+  if (metadata && metadata.length > 0 && headerItem) body.append(metadataEl(metadata, headerItem));
   // Inline generating indicator (like ChatGPT's loading dots, rather than writing status into the body):
   // body and indicator are separate; streaming events only replace the body, so the dot animation is never restarted
   parts.indicator.classList.toggle("hidden", !pending);

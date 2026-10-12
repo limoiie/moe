@@ -503,8 +503,10 @@ html[data-platform="macos"] .moe-window-card {
   line-height: 1;
   color: var(--moe-fg-muted);
 }
-.moe-accessory-tag {
+.moe-accessory-tag,
+.moe-metadata-tag {
   padding: 1px 6px;
+  border: 0;
   border-radius: 999px;
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
@@ -585,6 +587,30 @@ html[data-platform="macos"] .moe-window-card {
   height: 1px;
   margin: 0.5rem 0;
   background: var(--moe-line);
+}
+/* A tag list is the one row whose value can be a set: it wraps rather than truncating, and a tag
+   reuses the row accessory's recipe above (one palette, one tint). An interactive tag is a control,
+   so it takes a pointer cursor and a hover wash; a display-only tag keeps the identical look and
+   never signals clickability, which is the point. */
+.moe-metadata-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+.moe-metadata-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font: inherit;
+  line-height: 1.35;
+}
+.moe-metadata-tag-live {
+  cursor: pointer;
+}
+[data-pointer="live"] .moe-metadata-tag-live:hover {
+  background: color-mix(in srgb, currentColor 24%, transparent);
 }
 
 /* Row hover is a pointer affordance, gated on real pointer movement (ADR-0031 amendment): while
