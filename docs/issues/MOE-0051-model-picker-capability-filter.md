@@ -58,3 +58,6 @@ the tag→filter loop have all existed on exactly one surface (chat history) sin
 - 2026-10-12 (agent): **not verified on screen.** The picker now shows a Capability chip in its input
   row and ⌘P opens its filter there. Worth a pass, since this is the surface where the filter's
   declared-vs-derived distinction stops being theoretical.
+- 2026-10-12 (agent): **verified by the reporter.** The picker shows its Capability chip, ⌘P opens it,
+  and the values are the capability words. The premise — that the platform's rules needed no
+  surface-specific code to appear on a second surface — held.
