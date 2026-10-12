@@ -55,3 +55,31 @@ running (`runRow`, `ui/src/card.ts`) and the About card's theme rows must stay o
   discipline is that a field earns its place by being needed on at least two surfaces.
 - `keepOpen` makes "does the card close?" a per-row property, so a reader can no longer assume that
   selecting a row dismisses the card. Only the About card's theme rows use it today.
+
+## Amendment: the stack is a module, and it found a live drift
+
+Built as `ui/src/layers.ts` — `createLayers()` returns `register` / `top()` / `anyOpen()` /
+`closeTop()`, with nothing DOM-aware in it. **Registration order is front-most-LAST**, which is also
+the order the anchors stack, so the list reads the way the screen looks. The panel registers its
+actions card, about card and model switcher; the Side View registers the same three, its order being
+its old if-chain's so that window behaves identically.
+
+The predicted failure mode had already happened, and only the refactor made it visible: **the Side
+View's `back()` closed the model switcher and the panel's did not.** In the panel, Esc with the
+switcher open and the focus elsewhere (right after click-running a row) backed out of the page
+instead of closing the switcher — while the key guard still refused to let empty Backspace through,
+because that guard *did* list the switcher. Two of the three sites disagreed about the same overlay.
+The stack closes it because it is registered, which is the argument for this ADR demonstrated on the
+day it landed.
+
+Two boundaries recorded, because they are what keeps the change honest:
+
+- **The modal states are not layers.** The stop-confirm dialog, attachment mode and a streaming
+  item's stop-confirm sit above the cards and keep their own precedence, exactly as the Decision
+  said. They never coexist with a card, and their keys are handled before the stack is consulted.
+- **Click-outside was deliberately left alone.** The three sites this ADR named are key-routing
+  sites; click-outside is not one. Each card is dismissed by a different owning element — the action
+  pill for the actions card, the chip for About, the history button for history — so a uniform stack
+  op would need an ownership predicate. Adding a card therefore still costs one registration *plus* a
+  click-outside line if it needs pointer dismissal; the acceptance criterion is written to say
+  "`back()` and the key guard" rather than overreaching.
