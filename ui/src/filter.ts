@@ -7,6 +7,17 @@
 
 import type { Filter, Item } from "./types";
 
+/**
+ * Whether a filter change may take effect right now: not while a result streams (MOE-0046). This is
+ * ADR-0038's "while a result streams, the page owns the input" guard, applied to the filter —
+ * narrowing the list mid-stream would move the page off the item the frames are still arriving for,
+ * which is the filter's version of orphaning a generation. ADR-0043 names the rule; this names the
+ * predicate so the Filter Control, the Filter Card and the click path cannot disagree about it.
+ */
+export function filterChangeAllowed(items: Item[]): boolean {
+  return !items.some((item) => item.pending === true);
+}
+
 /** Narrow a result set to the active value. Exact match: the values come from the items' own tags. */
 export function applyTagFilter(items: Item[], value: string | undefined): Item[] {
   if (!value) return items;

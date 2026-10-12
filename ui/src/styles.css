@@ -685,6 +685,16 @@ html[data-platform="macos"] .moe-window-card {
     var(--moe-shadow-chip),
     0 0 0 1px var(--moe-accent-line);
 }
+/* Frozen while the page streams (MOE-0046): the control stays legible — the page still declares the
+   dimension — but it must not look like it would act, and its hover must not promise otherwise. */
+.moe-filter-control:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+[data-pointer="live"] .moe-filter-control:disabled:hover {
+  background: var(--moe-surface-float);
+  color: var(--moe-fg-muted);
+}
 .moe-filter-control .moe-filter-label {
   min-width: 0;
   overflow: hidden;

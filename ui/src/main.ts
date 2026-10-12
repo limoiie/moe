@@ -8,7 +8,7 @@ import { createActionPlan, type ActionRow, type PageContext } from "./actions";
 import { createCard, type CardSection } from "./card";
 import { createComposer } from "./composer";
 import { accessoryLabel, rowAccessories } from "./accessories";
-import { applyTagFilter, filterValuesFor, settleFilterValue } from "./filter";
+import { applyTagFilter, filterChangeAllowed, filterValuesFor, settleFilterValue } from "./filter";
 import { generatingEl } from "./generating";
 import { iconEl, inkClass } from "./icons";
 import { tagIntent, type TagIntent } from "./metadata";
@@ -230,6 +230,9 @@ function openFilterCard() {
   const v = view.get();
   const filter = filterableDimension();
   if (!filter) return;
+  // Frozen while a result streams (MOE-0046): a picker whose rows cannot take effect would be a
+  // control that silently does nothing, so it does not open.
+  if (!filterChangeAllowed(v.allItems)) return;
   // The cards are peers: opening one closes the others (like openActionsCard / openAboutCard)
   closeActionsCard();
   closeAboutCard();
@@ -711,7 +714,12 @@ function renderFilterControl() {
   if (!declared) return;
   const v = view.get();
   filterControlEl.dataset.active = v.filterValue !== undefined ? "true" : "false";
-  filterControlEl.title = `Filter by ${declared.label} (${GENERAL_KEY_LABELS.browse})`;
+  // While the page streams, the control says so rather than silently swallowing a change (MOE-0046).
+  const frozen = !filterChangeAllowed(v.allItems);
+  filterControlEl.disabled = frozen;
+  filterControlEl.title = frozen
+    ? `Filter by ${declared.label} — unavailable while generating`
+    : `Filter by ${declared.label} (${GENERAL_KEY_LABELS.browse})`;
   const label = document.createElement("span");
   label.className = "moe-filter-label";
   label.textContent = v.filterValue ? `${declared.label}: ${v.filterValue}` : declared.label;
@@ -1563,6 +1571,15 @@ function secondaryOf(item: Item) {
  * the previous index pointed into a different list.
  */
 function setFilterValue(value: string | undefined) {
+  const current = view.get();
+  // Frozen while a result streams (MOE-0046): the change would narrow the list out from under the
+  // frames still arriving for the focused item — the filter's version of orphaning a generation.
+  // Checked against `allItems`: the stream runs whether or not the active filter happens to show it.
+  if (!filterChangeAllowed(current.allItems)) return;
+  if (current.sourceCommandId) {
+    if (value === undefined) filterMemory.delete(current.sourceCommandId);
+    else filterMemory.set(current.sourceCommandId, value);
+  }
   view.update((v) => ({
     ...v,
     filterValue: value,
@@ -1570,6 +1587,15 @@ function setFilterValue(value: string | undefined) {
     focus: 0,
   }));
 }
+
+/**
+ * Remembered filter values, session-scoped and keyed by command (ADR-0043 / MOE-0046). The command id
+ * is `{extension}.{command}` by convention, so it carries both halves of the key. Deliberately not a
+ * preference and not persisted: Raycast's `storeValue` is a cache ("restored next time the dropdown is
+ * rendered"), so a fresh process remembers nothing. A fresh entry through ⌘P / ⌘N clears the key
+ * (`openEntry`); any other re-entry within the session keeps it.
+ */
+const filterMemory = new Map<string, string>();
 
 function applyResult(
   res: ActionResult,
@@ -1616,8 +1642,16 @@ function applyResult(
       // The dimension's values come from the returned set *before* the tag filter narrows anything,
       // so the picker cannot lose values as the list narrows (ADR-0043).
       const filterValues = filterValuesFor(filter, allItems);
-      // A remembered value the new set no longer carries falls back to All (see filter.ts).
-      const filterValue = settleFilterValue(v.filterValue, filterValues);
+      // The remembered value is keyed by command and lives for the session only (MOE-0046): a re-entry
+      // keeps the filter, a fresh process remembers nothing. A value the new set no longer carries
+      // falls back to All **and is forgotten**, not merely ignored — the derived list is the authority
+      // (see filter.ts).
+      const remembered = commandId ? filterMemory.get(commandId) : undefined;
+      const filterValue = settleFilterValue(remembered, filterValues);
+      if (commandId) {
+        if (filterValue === undefined) filterMemory.delete(commandId);
+        else filterMemory.set(commandId, filterValue);
+      }
       return {
         ...v,
         mode: "items",
@@ -1664,6 +1698,9 @@ async function openEntry(kind: "browse" | "new") {
     toast(kind === "browse" ? "This extension has no record list" : "This extension has no New entry");
     return;
   }
+  // A fresh entry through ⌘P / ⌘N resets the filter (MOE-0046): the generic entry points start clean,
+  // while any other re-entry within the session keeps the remembered value.
+  filterMemory.delete(command.id);
   try {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: command.id,

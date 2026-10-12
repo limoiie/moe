@@ -1,9 +1,9 @@
 // The tag filter's rules (ADR-0043). Small and unglamorous, but each one is a way the list can lie to
-// the user: showing rows the value does not match, offering a value nothing carries, or staying
-// narrowed by a value that has vanished.
+// the user: showing rows the value does not match, offering a value nothing carries, staying narrowed
+// by a value that has vanished, or moving off an item while its answer is still arriving (MOE-0046).
 
 import { describe, expect, it } from "vitest";
-import { applyTagFilter, deriveFilterValues, filterValuesFor, settleFilterValue } from "./filter";
+import { applyTagFilter, deriveFilterValues, filterChangeAllowed, filterValuesFor, settleFilterValue } from "./filter";
 import type { Filter, Item } from "./types";
 
 /** The smallest Item that satisfies the type; only `tags` matters to these rules. */
@@ -87,6 +87,23 @@ describe("filterValuesFor", () => {
   it("derives when values are absent — the Rust side omits an empty vector", () => {
     // The regression: `filter.values.length` on an omitted field threw at runtime.
     expect(filterValuesFor(filter(undefined), [item("a", ["Agentic"])])).toEqual(["Agentic"]);
+  });
+});
+
+describe("filterChangeAllowed", () => {
+  it("allows a change when nothing is streaming", () => {
+    expect(filterChangeAllowed([item("a", ["Agentic"])])).toBe(true);
+    expect(filterChangeAllowed([])).toBe(true);
+  });
+
+  it("refuses while any item is still being produced", () => {
+    // ADR-0038's guard, extended to the filter by MOE-0046: narrowing the list mid-stream would move
+    // the page off the item the frames are still arriving for.
+    expect(filterChangeAllowed([item("a"), { ...item("b"), pending: true }])).toBe(false);
+  });
+
+  it("does not refuse for a settled item", () => {
+    expect(filterChangeAllowed([{ ...item("a"), pending: false }])).toBe(true);
   });
 });
 
