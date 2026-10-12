@@ -514,6 +514,25 @@ html[data-platform="macos"] .moe-window-card {
   padding: 0 12px;
 }
 
+/* Palette search in flight (ADR-0043): a hairline under the Input Bar, Raycast's placement ("a
+   loading bar below the search bar"). It is 1px of accent at partial opacity rather than a
+   spinner, because it reports latency, not work — and it never covers the list, so stale rows stay
+   readable while a new set is on the way. */
+.moe-loading-bar {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--moe-accent) 20%,
+    var(--moe-accent) 80%,
+    transparent
+  );
+  opacity: 0.7;
+}
+.moe-loading-bar.hidden {
+  display: none;
+}
+
 /* Section header band (ADR-0020/0026): fixed height (set from SECTION_HEADER_HEIGHT in
    layout.ts), label sits on the baseline near the rows below. */
 .moe-section-header {

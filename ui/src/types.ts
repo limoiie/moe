@@ -11,6 +11,22 @@ export interface Action {
   keybinding?: string | null;
 }
 
+/**
+ * The platform's placeholder for a list with no rows (ADR-0043, ADR-0040's ticket): declared by the
+ * Extension so the copy matches what the list is about, rendered non-focusable here.
+ * Suppressed while a load is in flight on an empty query - Raycast's rule, which keeps a first
+ * paint from flashing "no results".
+ */
+export interface EmptyView {
+  title: string;
+  /** One line saying why the list is empty. Prose, not Markdown. */
+  description?: string;
+  /** Semantic icon name (ADR-0012). */
+  icon?: string;
+  // No `actions`, though Raycast's EmptyView has one: Moe's only dispatch path is `run_item_action`,
+  // which needs an Item. ADR-0043's amendment records the narrowing.
+}
+
 export interface Item {
   id: string;
   title: string;
@@ -60,7 +76,7 @@ export type ActionResult =
   | string
   | { writeBack: { text: string } }
   | { rerun: { text: string } }
-  | { list: { items: Item[]; detailFull?: boolean } }
+  | { list: { items: Item[]; detailFull?: boolean; empty?: EmptyView } }
   | { conversation: { conversationId: string | null } }
   | { openSideView: { payload: unknown } }
   | { openSettings: Record<string, never> };

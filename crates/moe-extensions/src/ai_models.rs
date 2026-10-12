@@ -7,7 +7,7 @@
 //! by whitespace tokens against a per-row haystack that includes capability words — so
 //! `vision tools` finds the models that have both.
 
-use moe_core::contract::{Action, ActionKind, ActionResult, Item, MoeError};
+use moe_core::contract::{Action, ActionKind, ActionResult, EmptyView, Item, MoeError};
 use moe_platform::config::{MoeConfig, Protocol, ProviderConfig};
 use moe_platform::keychain;
 use moe_platform::model_catalog::{self, Catalog, Cost, Model as CatalogModel};
@@ -66,7 +66,18 @@ pub fn choose_model_with(
     rank_rows(&mut rows);
     rows.truncate(ROW_LIMIT);
     if rows.is_empty() {
-        return ActionResult::list(vec![no_match_item(query)]);
+        return ActionResult::list_with_empty(
+            Vec::new(),
+            EmptyView::new(
+                "No model matches",
+                format!(
+                    "No catalogued model matches \"{query}\". Try fewer words (a model name, a \
+                     provider name, or a capability such as vision), or add a custom provider in \
+                     config.toml."
+                ),
+            )
+            .with_icon("search"),
+        );
     }
     ActionResult::list(rows.iter().map(|row| model_item(row, has_key)).collect())
 }
@@ -1107,24 +1118,8 @@ fn card_item(markdown: &str) -> Item {
     }
 }
 
-/// Nothing matched: keep the user in the flow (fewer words, or a custom provider in config.toml).
-fn no_match_item(query: &str) -> Item {
-    Item {
-        id: "ai.model-none".into(),
-        title: "No model matches".into(),
-        subtitle: None,
-        group: None,
-        icon: Some("search".into()),
-        actions: vec![],
-        payload: serde_json::Value::Null,
-        detail: Some(format!(
-            "No catalogued model matches \"{query}\". Try fewer words (a model name, a provider \
-             name, or a capability such as `vision`), or add a custom provider in config.toml."
-        )),
-        pending: false,
-    }
-}
-
+/// Nothing matched: an Empty View, not a notice row (ADR-0043) — the notice was focusable, so ⏎
+/// could Apply "No model matches".
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1260,11 +1255,17 @@ mod tests {
             .map(|item| item.id.clone())
             .collect();
         assert_eq!(ids, vec!["ai.model.deepseek.deepseek-new"]);
-        // No hit: the notice keeps the flow
-        let items = rows_of("nope");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, "ai.model-none");
-        assert!(items[0].detail.as_deref().unwrap().contains("nope"));
+        // No hit: an empty list that declares an Empty View (ADR-0043) — the notice row is gone, so
+        // nothing is focusable to Apply.
+        let empty = match choose_model_with("nope", &config(), &catalog(), &key_ok) {
+            ActionResult::List { items, empty, .. } => {
+                assert!(items.is_empty(), "the zero-row case is an empty list");
+                empty.expect("a no-hit picker declares its Empty View")
+            }
+            other => panic!("expected a list, got {other:?}"),
+        };
+        assert_eq!(empty.title, "No model matches");
+        assert!(empty.description.as_deref().unwrap().contains("nope"));
     }
 
     /// The cap keeps the live IPC payload small.
@@ -1378,7 +1379,9 @@ mod tests {
             [("deepseek".to_string(), "deepseek-new".to_string())]
         );
         match result {
-            ActionResult::List { items, detail_full } => {
+            ActionResult::List {
+                items, detail_full, ..
+            } => {
                 assert!(detail_full, "the confirmation is a full-screen card");
                 let card = items[0].detail.as_deref().unwrap();
                 assert!(card.contains("## AI model set"), "{card}");

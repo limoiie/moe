@@ -142,8 +142,9 @@ mod tests {
     #[test]
     fn list_items_follow_unified_action_semantics() {
         let ext = Echo;
-        let ActionResult::List { items, detail_full } =
-            ext.invoke("echo.items", None, None).unwrap()
+        let ActionResult::List {
+            items, detail_full, ..
+        } = ext.invoke("echo.items", None, None).unwrap()
         else {
             panic!("expected list");
         };

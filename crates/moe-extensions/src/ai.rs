@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
-    Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, Extension, InputKind,
-    Item, MoeError, NoopEmitter, Selection,
+    Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, EmptyView, Extension,
+    InputKind, Item, MoeError, NoopEmitter, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_core::keymap::{SystemKey, display_of};
@@ -134,19 +134,12 @@ fn preview_excerpt(text: &str) -> String {
     out
 }
 
-/// Notice item without actions (empty history, read failure, etc.).
-fn notice_item(title: &str, detail: &str) -> Item {
-    Item {
-        id: "ai.notice".into(),
-        title: title.into(),
-        subtitle: None,
-        group: None,
-        icon: Some("info".into()),
-        actions: vec![],
-        payload: serde_json::Value::Null,
-        detail: Some(detail.into()),
-        pending: false,
-    }
+/// A history read failure: an Empty View, not a notice row (ADR-0043).
+fn history_error(err: &str) -> ActionResult {
+    ActionResult::list_with_empty(
+        Vec::new(),
+        EmptyView::new("Failed to read history", err).with_icon("info"),
+    )
 }
 
 /// Conversation title: first line of the question, truncated when too long.
@@ -1041,7 +1034,7 @@ impl AiShell {
     fn search_history(&self, query: &str) -> ActionResult {
         match Db::open_default() {
             Ok(db) => Self::search_history_in(&db, query),
-            Err(err) => ActionResult::list(vec![notice_item("Failed to read history", &err)]),
+            Err(err) => history_error(&err),
         }
     }
 
@@ -1052,26 +1045,32 @@ impl AiShell {
     /// which is what gives the UI its "left list + right preview".
     fn search_history_in(db: &Db, query: &str) -> ActionResult {
         let now = unix_now();
-        let items = match db.conversations("ai", Some(query), HISTORY_LIMIT) {
-            Ok(list) if list.is_empty() => vec![notice_item(
-                "No matching chat history",
-                "Type a question directly into the palette to start a new conversation.",
-            )],
-            Ok(list) => list
-                .into_iter()
-                .map(|conversation| {
-                    // Preview = summary of the last answer (goes into the focused preview card, IIE4AD-370)
-                    let preview = db
-                        .last_assistant_message(&conversation.id)
-                        .ok()
-                        .flatten()
-                        .map(|text| preview_excerpt(&text));
-                    history_item(conversation, now, preview)
-                })
-                .collect(),
-            Err(err) => vec![notice_item("Failed to read history", &err)],
-        };
-        ActionResult::list(items)
+        match db.conversations("ai", Some(query), HISTORY_LIMIT) {
+            // Zero rows: an Empty View, not a notice item (ADR-0043). The old notice was a real Item,
+            // which made it focusable — ⏎ could Apply "No matching chat history".
+            Ok(list) if list.is_empty() => ActionResult::list_with_empty(
+                Vec::new(),
+                EmptyView::new(
+                    "No matching chat history",
+                    "Type a question directly into the palette to start a new conversation.",
+                )
+                .with_icon("info"),
+            ),
+            Ok(list) => ActionResult::list(
+                list.into_iter()
+                    .map(|conversation| {
+                        // Preview = summary of the last answer (goes into the focused preview card, IIE4AD-370)
+                        let preview = db
+                            .last_assistant_message(&conversation.id)
+                            .ok()
+                            .flatten()
+                            .map(|text| preview_excerpt(&text));
+                        history_item(conversation, now, preview)
+                    })
+                    .collect(),
+            ),
+            Err(err) => history_error(&err),
+        }
     }
 
     /// Delete injected version (ADR-0022): locates via the payload's conversationId; tests do not touch the real data directory.
@@ -2101,7 +2100,9 @@ This is a test case, do you know?"#;
         )
         .expect("append");
 
-        let ActionResult::List { items, detail_full } = AiShell::search_history_in(&db, "closure")
+        let ActionResult::List {
+            items, detail_full, ..
+        } = AiShell::search_history_in(&db, "closure")
         else {
             panic!("expected list");
         };
@@ -2120,14 +2121,16 @@ This is a test case, do you know?"#;
             "right preview = summary of the last answer"
         );
 
-        // No hit: still a list (a notice goes into the right preview, the list stays)
-        let ActionResult::List { items, detail_full } =
+        // No hit: an empty list that declares an Empty View (ADR-0043). The notice row is gone, so
+        // there is nothing focusable left to Apply.
+        let ActionResult::List { items, empty, .. } =
             AiShell::search_history_in(&db, "does not exist")
         else {
             panic!("expected list");
         };
-        assert!(!detail_full);
-        assert_eq!(items[0].title, "No matching chat history");
+        assert!(items.is_empty(), "the zero-row case is an empty list");
+        let empty = empty.expect("a no-hit result declares its Empty View");
+        assert_eq!(empty.title, "No matching chat history");
 
         drop(db);
         let _ = std::fs::remove_file(&path);
@@ -2164,7 +2167,9 @@ This is a test case, do you know?"#;
             .invoke("ai.choose-model", Some("deepseek"), None)
             .expect("ai.choose-model is routable");
         let items = match result {
-            ActionResult::List { items, detail_full } => {
+            ActionResult::List {
+                items, detail_full, ..
+            } => {
                 assert!(!detail_full, "the picker is a list + detail page");
                 items
             }

@@ -39,6 +39,45 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// The platform's placeholder for a **list with no rows** (ADR-0043): declared by the Extension so the
+/// copy matches what the list is about, rendered non-focusable by the platform. It replaces the
+/// Extension-authored notice item — a focusable "no results" row is a row the user can Apply.
+///
+/// This is a *list* concept (Raycast's `List.EmptyView`). A surface that needs rich guidance —
+/// multi-paragraph Markdown, fenced code — is a detail card (`ActionResult::detail`), not an empty
+/// list, and keeps its card.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyView {
+    pub title: String,
+    /// One line saying why the list is empty (Raycast's `EmptyView.description`). Prose, not Markdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Semantic icon name (ADR-0012); unknown names fall back to a default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    // Deliberately no `actions` field, though Raycast's `EmptyView` has one: Moe's only action
+    // dispatch path is `run_item_action`, which needs an `Item`, and an empty list has none. A field
+    // with no way to run it would be dead API. ADR-0043's amendment records the narrowing, and both
+    // migrated call sites declare zero actions, so nothing is lost today.
+}
+
+impl EmptyView {
+    /// Title + description — the shape every current call site needs.
+    pub fn new(title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            description: Some(description.into()),
+            icon: None,
+        }
+    }
+
+    pub fn with_icon(mut self, icon: &str) -> Self {
+        self.icon = Some(icon.to_string());
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Item {
@@ -87,6 +126,10 @@ pub enum ActionResult {
         /// Multiple results (e.g. history search) keep "list on the left + detail on the right", declared by the Extension instead of guessed by the UI (ADR-0013).
         #[serde(default, skip_serializing_if = "is_false")]
         detail_full: bool,
+        /// Declared for the zero-row case (ADR-0043): the platform shows it instead of a blank panel,
+        /// and never while a load is in flight on an empty query (Raycast's suppression rule).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        empty: Option<EmptyView>,
     },
     /// A conversation page hosted in the Command Panel (Quick Ask, ADR-0036): the platform renders
     /// the message stream and the Input Bar becomes the composer (Enter sends, ⌘N starts a new chat,
@@ -111,6 +154,17 @@ impl ActionResult {
         Self::List {
             items,
             detail_full: false,
+            empty: None,
+        }
+    }
+
+    /// List view that declares what to show when it has no rows (ADR-0043). Prefer this over a
+    /// one-item list whose single item is a notice: that item is focusable, so ⏎ can Apply it.
+    pub fn list_with_empty(items: Vec<Item>, empty: EmptyView) -> Self {
+        Self::List {
+            items,
+            detail_full: false,
+            empty: Some(empty),
         }
     }
 
@@ -119,6 +173,7 @@ impl ActionResult {
         Self::List {
             items,
             detail_full: true,
+            empty: None,
         }
     }
 }

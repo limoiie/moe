@@ -43,6 +43,7 @@ import type {
   CommandMeta,
   CommandSection,
   Conversation,
+  EmptyView,
   Item,
   Message,
   ToolCall,
@@ -77,6 +78,8 @@ interface View {
   sourceLive?: boolean;
   /** View shape declared by the result: true = the single result is the content, detail fills the panel (ADR-0013). */
   detailFull?: boolean;
+  /** The result's declared zero-row placeholder (ADR-0043): shown instead of a blank panel. */
+  empty?: EmptyView;
 }
 
 const q = document.querySelector<HTMLInputElement>("#query")!;
@@ -98,6 +101,7 @@ const aboutListEl = document.querySelector<HTMLUListElement>("#about-list")!;
 const inputIconEl = document.querySelector<HTMLSpanElement>("#input-icon")!;
 const bannerIconEl = document.querySelector<HTMLSpanElement>("#banner-icon")!;
 const confirmCardEl = document.querySelector<HTMLDivElement>("#confirm-card")!;
+const loadingBarEl = document.querySelector<HTMLDivElement>("#loading-bar")!;
 const confirmTextEl = document.querySelector<HTMLDivElement>("#confirm-text")!;
 const confirmOkEl = document.querySelector<HTMLButtonElement>("#confirm-ok")!;
 const confirmCancelEl = document.querySelector<HTMLButtonElement>("#confirm-cancel")!;
@@ -123,6 +127,49 @@ let detailMode: DetailMode = "none";
  * It is the same card the Side View opens as More Actions (ADR-0028); the panel anchors it bottom-right
  * with the input at the bottom, and the pill follows its highlighted row.
  */
+/**
+ * Palette search in flight (ADR-0043): a hairline under the Input Bar, and stale rows stay visible —
+ * the list is never blanked mid-typing. `.moe-generating`'s dots are deliberately not reused: search
+ * latency and token streaming are different states, and conflating them makes a debounce look like a
+ * generation.
+ */
+let searchLoading = false;
+
+function setSearchLoading(on: boolean) {
+  if (searchLoading === on) return;
+  searchLoading = on;
+  loadingBarEl.classList.toggle("hidden", !on);
+}
+
+/**
+ * The Empty View (ADR-0043): the platform's placeholder for a list with no rows. Non-focusable by
+ * construction — a `<li>` with no click handler and no `data-focused`, so ↑↓ never lands on it and ⏎
+ * has nothing to Apply. It replaces the Extension-authored notice row, which *was* a real Item.
+ * Suppressed while a query-free load is in flight, so the first paint never flashes "no results".
+ */
+function emptyViewEl(empty: EmptyView): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "select-none px-2 py-6 text-center";
+  li.setAttribute("role", "presentation");
+  if (empty.icon) {
+    const icon = document.createElement("div");
+    icon.className = "mb-2 flex justify-center text-fg-faint";
+    icon.append(iconEl(empty.icon, { size: 20 }));
+    li.append(icon);
+  }
+  const title = document.createElement("div");
+  title.className = "text-sm text-fg-muted";
+  title.textContent = empty.title;
+  li.append(title);
+  if (empty.description) {
+    const desc = document.createElement("div");
+    desc.className = "mx-auto mt-1 max-w-[44ch] text-xs leading-5 text-fg-subtle";
+    desc.textContent = empty.description;
+    li.append(desc);
+  }
+  return li;
+}
+
 const actionsCard = createCard({
   cardEl: actionsCardEl,
   listEl: actionListEl,
@@ -577,6 +624,11 @@ function render() {
         lis.push(li);
       }
     }
+    // Zero rows on the command layer (ADR-0043): the platform supplies the copy, because no
+    // Extension owns the palette itself. The old behaviour was a blank panel.
+    if (flat === 0 && !(searchLoading && q.value.trim() === "")) {
+      lis.push(emptyViewEl({ title: "No commands match", description: "Try fewer words." }));
+    }
     listEl.replaceChildren(...lis);
   } else if (v.mode === "items") {
     // Grouped list page (ADR-0018 amendment): `Item.group` labels render as non-focusable headers
@@ -592,6 +644,14 @@ function render() {
       if (i === v.focus) focusedLi = li;
       lis.push(li);
     });
+    // Zero rows (ADR-0043): the Extension's declared Empty View, or a platform default when it
+    // declared none — never a blank panel. Suppressed while a query-free load is in flight, so the
+    // first paint cannot flash "no results" (Raycast's rule).
+    if (v.items.length === 0) {
+      if (!(searchLoading && q.value.trim() === "")) {
+        lis.push(emptyViewEl(v.empty ?? { title: "No results" }));
+      }
+    }
     listEl.replaceChildren(...lis);
   } else {
     // Quick Ask page (ADR-0036): the detail pane is the conversation, the list is away
@@ -1251,6 +1311,7 @@ function applyResult(
       sourceIcon: icon,
       sourceTitle: title,
       detailFull: res.list.detailFull === true,
+      empty: res.list.empty,
     }));
     // The avatar chip follows the extension now entered (ADR-0026)
     void refreshExtensionMeta(commandId);
@@ -1974,6 +2035,7 @@ aboutSearchEl.addEventListener("keydown", (e) => {
 async function rerunLive(query: string) {
   const v = view.get();
   if (!v.sourceCommandId) return;
+  setSearchLoading(true);
   try {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: v.sourceCommandId,
@@ -1983,6 +2045,8 @@ async function rerunLive(query: string) {
     applyResult(res, v.sourceCommandId, true, v.sourceIcon, v.sourceTitle);
   } catch (err) {
     showMessage(`Failed to run: ${String(err)}`);
+  } finally {
+    setSearchLoading(false);
   }
 }
 
@@ -2114,23 +2178,28 @@ async function back(options: { quit?: boolean } = {}) {
 
 async function refresh(query: string) {
   clearDetail();
-  const sections = await invoke<CommandSection[]>("search_commands", { query });
-  // The Suggestions section's real place in the flat list (ADR-0025): it sits under Favorites
-  // when those exist, so the delete slot and the actions card need its range, not just a count.
-  const suggestionsIndex = sections.findIndex((s) => s.title === "Suggestions");
-  view.update((v) => ({
-    ...v,
-    mode: "commands",
-    sections,
-    // Focus/navigation is based on the flat list; sections only render headers.
-    commands: sections.flatMap((s) => s.items),
-    suggestionsStart:
-      suggestionsIndex === -1
-        ? -1
-        : sections.slice(0, suggestionsIndex).reduce((flat, s) => flat + s.items.length, 0),
-    suggestionsCount: suggestionsIndex === -1 ? 0 : sections[suggestionsIndex].items.length,
-    focus: 0,
-  }));
+  setSearchLoading(true);
+  try {
+    const sections = await invoke<CommandSection[]>("search_commands", { query });
+    // The Suggestions section's real place in the flat list (ADR-0025): it sits under Favorites
+    // when those exist, so the delete slot and the actions card need its range, not just a count.
+    const suggestionsIndex = sections.findIndex((s) => s.title === "Suggestions");
+    view.update((v) => ({
+      ...v,
+      mode: "commands",
+      sections,
+      // Focus/navigation is based on the flat list; sections only render headers.
+      commands: sections.flatMap((s) => s.items),
+      suggestionsStart:
+        suggestionsIndex === -1
+          ? -1
+          : sections.slice(0, suggestionsIndex).reduce((flat, s) => flat + s.items.length, 0),
+      suggestionsCount: suggestionsIndex === -1 ? 0 : sections[suggestionsIndex].items.length,
+      focus: 0,
+    }));
+  } finally {
+    setSearchLoading(false);
+  }
 }
 
 /** Stop in-progress generation (platform-wide: not per extension/conversation, IIE4AD-365). */
