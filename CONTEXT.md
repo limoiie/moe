@@ -58,10 +58,34 @@ bar's position, but its semantics is input, not path display). Its position and 
 identical across all Extension shapes.
 _Avoid_: search box, address bar
 
+**Filter Control**:
+The Input Bar's trailing control on a result page, narrowing the Result List by a second dimension: a
+label plus a chevron, showing the active value when one is set (ADR-0043). It is the trigger — the
+surface it opens is the Filter Card.
+_Avoid_: dropdown button, filter icon, search bar accessory
+
+**Filter Card**:
+The Card opened by the Filter Control, anchored beneath it; its rows are the dimension's values plus
+a platform-supplied reset, and choosing one closes it (ADR-0043).
+_Avoid_: filter menu, tag picker
+
 **Result List**:
 The candidate list below the Input Bar that updates live with the input; the one currently
 selected is the Focused Item.
 _Avoid_: dropdown
+
+**Row Accessory**:
+A trailing value on a result row — a tinted tag, plain text, a relative date, or an icon, each
+optionally with a tooltip (ADR-0041). Colors come from the platform's bounded palette, never from an
+Extension, and accessories hide in the split shape, where the same information belongs in the Detail
+Metadata.
+_Avoid_: badge, chip, label
+
+**Empty View**:
+The platform's non-focusable placeholder for a Result List with no rows: title, description, optional
+icon and actions (ADR-0043). Suppressed while loading with an empty query; it replaced the
+Extension-authored notice item.
+_Avoid_: empty state, no-results row, notice item
 
 **Section (source grouping)**:
 The command palette's root page groups results by **source**: one section per Extension, headed
@@ -154,6 +178,12 @@ detail fills the panel; the opposite of the list + detail shape. Declared by the
 (`detailFull`), never guessed from item count (ADR-0013).
 _Avoid_: full-screen card, zoom mode
 
+**Detail Metadata**:
+The structured block accompanying a result's Markdown detail — labels, links, tag lists, separators —
+rendered at the bottom of the detail pane in the split shape and in a right-hand column in the
+detail shape (ADR-0042).
+_Avoid_: sidebar, properties panel, info panel
+
 **Apply**:
 The primary action on the Focused Item (Enter): runs the default semantics of what the item
 represents.
@@ -232,10 +262,17 @@ the **avatar chip** on the left and the **action pill** (primary action + action
 _Avoid_: hints bar (the old name)
 
 **Avatar Chip**:
-The bottom-left chip (ADR-0026): Moe's app avatar on the command layer, the current extension's
-icon + name once inside a command. It doubles as the **toast host** (toasts expand it in place)
-and opens the **About card** on click.
+The bottom-left chip (ADR-0026): a button whose resting face is its own icon, expanding to the
+current extension's icon + name once inside a command. It doubles as the **toast host** (toasts
+expand it in place) and opens the **About Card** on click.
 _Avoid_: extension badge, logo
+
+**Card**:
+The floating overlay family: one component and one behavior set — rows in non-focusable sections, a
+filter input, ↑↓ select, ⏎ run, Esc / empty ⌫ dismiss, click-outside closes — instantiated at
+several anchors, because a card sits next to the control that opens it (ADR-0028, ADR-0044).
+Instances: the actions card, the About Card, the history card, the model switcher, the Filter Card.
+_Avoid_: menu, popover, dialog, dropdown
 
 **About Card**:
 The card opened from the avatar chip or ⌘⇧K (ADR-0027): the app's meta actions (Open Config File /
