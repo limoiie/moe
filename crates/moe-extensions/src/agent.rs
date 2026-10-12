@@ -571,6 +571,7 @@ mod tests {
                 title: "AI Answer".into(),
                 subtitle: None,
                 group: None,
+                tags: Vec::new(),
                 icon: None,
                 actions: vec![],
                 payload: serde_json::json!({

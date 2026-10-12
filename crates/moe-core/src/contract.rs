@@ -78,6 +78,42 @@ impl EmptyView {
     }
 }
 
+/// One filter dimension a list supports (ADR-0043): the platform renders the Filter Control in the
+/// Input Bar and the Filter Card's rows, and narrows the list itself. An Extension states which axis
+/// matters and what the values are; the trigger, the card and the focus rules stay platform-owned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Filter {
+    /// Stable id within the Extension: the platform keys the remembered value by it.
+    pub id: String,
+    /// The dimension's name, shown at rest in the Input Bar ("Tags") and in the reset row ("All Tags").
+    pub label: String,
+    /// Semantic icon name (ADR-0012); also the Filter Card's leading glyph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Explicit values in display order. Empty = the platform derives them from the returned items'
+    /// `tags`, so a declared list cannot drift from the tags actually present.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+}
+
+impl Filter {
+    /// A dimension whose values are derived from the items (the common case).
+    pub fn derived(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            values: Vec::new(),
+        }
+    }
+
+    pub fn with_icon(mut self, icon: &str) -> Self {
+        self.icon = Some(icon.to_string());
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Item {
@@ -85,6 +121,11 @@ pub struct Item {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
+    /// Values of this list's filter dimension (ADR-0043). Read by the UI — which is why they are a
+    /// field and not a convention inside `payload`, a channel documented as opaque to the UI.
+    /// Meaningless without a matching `Filter` on the result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Optional group label for list pages (e.g. recency buckets in a history list): the platform
     /// renders a non-focusable header before the first item of each group and keeps navigation,
     /// actions and delete counting the items only (ADR-0018 amendment). None = one unlabeled group.
@@ -130,6 +171,10 @@ pub enum ActionResult {
         /// and never while a load is in flight on an empty query (Raycast's suppression rule).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         empty: Option<EmptyView>,
+        /// The list's filter dimension, when it has one (ADR-0043). The values come from each item's
+        /// `tags` unless the declaration names them explicitly.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<Filter>,
     },
     /// A conversation page hosted in the Command Panel (Quick Ask, ADR-0036): the platform renders
     /// the message stream and the Input Bar becomes the composer (Enter sends, ⌘N starts a new chat,
@@ -155,6 +200,7 @@ impl ActionResult {
             items,
             detail_full: false,
             empty: None,
+            filter: None,
         }
     }
 
@@ -165,7 +211,18 @@ impl ActionResult {
             items,
             detail_full: false,
             empty: Some(empty),
+            filter: None,
         }
+    }
+
+    /// Declare this list's filter dimension (ADR-0043). Chainable:
+    /// `ActionResult::list(items).with_filter(Filter::derived("tag", "Tags"))`. A no-op on a
+    /// non-list result, so an Extension can apply it unconditionally.
+    pub fn with_filter(mut self, filter: Filter) -> Self {
+        if let Self::List { filter: slot, .. } = &mut self {
+            *slot = Some(filter);
+        }
+        self
     }
 
     /// Detail view: a single result that is itself the content (AI answers, system notifications); the detail fills the panel.
@@ -174,6 +231,7 @@ impl ActionResult {
             items,
             detail_full: true,
             empty: None,
+            filter: None,
         }
     }
 }
@@ -444,6 +502,7 @@ mod tests {
                 detail: None,
                 pending: false,
                 icon: None,
+                tags: Vec::new(),
             },
         };
         let json = serde_json::to_value(&event).unwrap();
@@ -501,6 +560,7 @@ mod tests {
             payload: serde_json::Value::Null,
             detail: Some("Answer body".into()),
             pending: false,
+            tags: Vec::new(),
         }
     }
 

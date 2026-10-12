@@ -88,6 +88,7 @@ impl Extension for Echo {
                         title: (*word).to_string(),
                         subtitle: Some("Sample word".into()),
                         group: None,
+                        tags: Vec::new(),
                         icon: Some("quote".into()),
                         actions: vec![
                             action(

@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
     Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, EmptyView, Extension,
-    InputKind, Item, MoeError, NoopEmitter, Selection,
+    Filter, InputKind, Item, MoeError, NoopEmitter, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_core::keymap::{SystemKey, display_of};
@@ -55,6 +55,7 @@ fn answer_item(
         title: "AI Answer".into(),
         subtitle: None,
         group: None,
+        tags: Vec::new(),
         icon: Some("sparkles".into()),
         actions: vec![
             Action {
@@ -103,6 +104,13 @@ fn conversation_payload(
 /// History/continuation list item: Apply opens that conversation in the side view; `preview` is a summary of the last answer (IIE4AD-370).
 fn history_item(conversation: Conversation, now_unix: u64, preview: Option<String>) -> Item {
     let payload = conversation_payload(Some(&conversation.id), "", None);
+    // This list's filter dimension (ADR-0043): agentic is the one property of a conversation a title
+    // does not show, which is what makes it worth narrowing by.
+    let tags = if conversation.agentic {
+        vec!["Agentic".to_string()]
+    } else {
+        Vec::new()
+    };
     Item {
         id: format!("ai.conversation.{}", conversation.id),
         title: conversation.title,
@@ -119,6 +127,7 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
         payload,
         detail: preview,
         pending: false,
+        tags,
     }
 }
 
@@ -1056,6 +1065,8 @@ impl AiShell {
                 )
                 .with_icon("info"),
             ),
+            // The list's filter dimension (ADR-0043): the values are derived from the items' `tags`,
+            // so the picker can never offer a value no conversation carries.
             Ok(list) => ActionResult::list(
                 list.into_iter()
                     .map(|conversation| {
@@ -1068,7 +1079,8 @@ impl AiShell {
                         history_item(conversation, now, preview)
                     })
                     .collect(),
-            ),
+            )
+            .with_filter(Filter::derived("tag", "Tags").with_icon("tag")),
             Err(err) => history_error(&err),
         }
     }
@@ -2101,7 +2113,10 @@ This is a test case, do you know?"#;
         .expect("append");
 
         let ActionResult::List {
-            items, detail_full, ..
+            items,
+            detail_full,
+            filter,
+            ..
         } = AiShell::search_history_in(&db, "closure")
         else {
             panic!("expected list");
@@ -2121,6 +2136,13 @@ This is a test case, do you know?"#;
             "right preview = summary of the last answer"
         );
 
+        // The filter dimension rides the result (ADR-0043), its values derived from the items' tags
+        // rather than declared — so the picker cannot offer a value no conversation carries.
+        let filter = filter.expect("history declares its filter dimension");
+        assert_eq!(filter.id, "tag");
+        assert_eq!(filter.label, "Tags");
+        assert!(filter.values.is_empty(), "derived, not declared");
+
         // No hit: an empty list that declares an Empty View (ADR-0043). The notice row is gone, so
         // there is nothing focusable left to Apply.
         let ActionResult::List { items, empty, .. } =
@@ -2134,6 +2156,27 @@ This is a test case, do you know?"#;
 
         drop(db);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The tag a conversation carries is what the dimension narrows by (ADR-0043): `agentic` is the
+    /// one property of a conversation a title does not show.
+    #[test]
+    fn history_tags_agentic_conversations() {
+        let now = 1_700_000_000u64;
+        let conversation = |id: &str, agentic: bool| Conversation {
+            id: id.into(),
+            namespace: "ai".into(),
+            title: id.into(),
+            updated_unix: now,
+            agentic,
+        };
+        let agentic = history_item(conversation("a", true), now, None);
+        let plain = history_item(conversation("b", false), now, None);
+        assert_eq!(agentic.tags, vec!["Agentic".to_string()]);
+        assert!(
+            plain.tags.is_empty(),
+            "a plain conversation carries no tag, so it stays reachable through All"
+        );
     }
 
     /// Generic entry guard (ADR-0014): ids exposed by ⌘P/⌘N must be routable,

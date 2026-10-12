@@ -21,6 +21,7 @@ fn info_item(text: &str) -> Item {
         title: text.into(),
         subtitle: None,
         group: None,
+        tags: Vec::new(),
         actions: vec![],
         payload: serde_json::Value::Null,
         detail: None,

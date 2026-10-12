@@ -137,6 +137,7 @@ fn transform_item(title: &str, text: &str, reasoning: &str, pending: bool) -> It
         title: "AI Command Result".into(),
         subtitle: None,
         group: None,
+        tags: Vec::new(),
         icon: Some("sparkles".into()),
         actions: vec![
             Action {
@@ -171,6 +172,7 @@ fn notice_item(detail: &str) -> Item {
         title: "AI Command".into(),
         subtitle: None,
         group: None,
+        tags: Vec::new(),
         icon: Some("sparkles".into()),
         actions: vec![],
         payload: serde_json::Value::Null,

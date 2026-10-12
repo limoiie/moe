@@ -317,6 +317,9 @@ fn model_item(row: &Row<'_>, has_key: &dyn Fn(&str) -> bool) -> Item {
     Item {
         id: format!("ai.model.{}.{}", row.provider_id, row.model_id),
         title: row.model_name.to_string(),
+        // No filter dimension on the picker yet: capability words are already in the search haystack
+        // (`ModelDetail.capabilities`), and promoting them to tags is a follow-up.
+        tags: Vec::new(),
         // The provider rides the group header (ADR-0018 amendment); the row carries the facts.
         group: Some(if row.current {
             format!("{} · Current", row.provider_name)
@@ -1110,6 +1113,7 @@ fn card_item(markdown: &str) -> Item {
         title: "Set AI Model".into(),
         subtitle: None,
         group: None,
+        tags: Vec::new(),
         icon: Some("sparkles".into()),
         actions: vec![],
         payload: serde_json::Value::Null,
@@ -1411,6 +1415,7 @@ mod tests {
             title: "x".into(),
             subtitle: None,
             group: None,
+            tags: Vec::new(),
             icon: None,
             actions: vec![],
             payload: serde_json::Value::Null,
