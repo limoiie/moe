@@ -21,7 +21,7 @@
     >
       <div id="query-row" class="flex items-center gap-2.5 px-5 pt-4 pb-3">
         <span id="input-icon" class="moe-input-icon text-fg-subtle"></span>
-        <div class="moe-query-column flex min-w-0 flex-1 flex-col">
+        <div class="flex min-w-0 flex-1 flex-col">
           <input
             id="query"
             class="moe-query-input w-full bg-transparent text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
@@ -34,9 +34,8 @@
           <span id="query-subtitle" class="hidden truncate text-[11px] leading-4 text-fg-subtle"></span>
         </div>
         <!-- Filter Control (ADR-0043): the result page's second filtering dimension — label + chevron,
-             showing the active value when one is set. Hidden unless the result declares one. It is one
-             row band tall; the text column beside it reserves the same band, so the row measures the
-             same with or without it (ADR-0043's height invariant). -->
+             showing the active value when one is set. Hidden unless the result declares one, and sized
+             inside the row band so the measured panel height never moves (ADR-0043's height invariant). -->
         <button id="filter-control" class="moe-filter-control hidden" type="button"></button>
       </div>
       <!-- Palette search in flight (ADR-0043): a hairline under the Input Bar. Stale rows stay

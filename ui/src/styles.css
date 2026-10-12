@@ -555,24 +555,19 @@ html[data-platform="macos"] .moe-window-card {
   font-size: var(--moe-text-input);
 }
 
-/* The Input Bar's text column reserves one row band (ADR-0026's ROW_HEIGHT), unconditionally — that
-   reservation is what lets the Filter Control be a full band tall while `#query-row`'s measured height
-   stays identical whether or not the control is showing. `resize_panel` only re-fires on a shape
-   change, so a row that grew with the control would silently clip the ten-row grid. */
-.moe-query-column {
-  min-height: var(--moe-row-h);
-}
-
 /* Filter Control (ADR-0043): the Input Bar's trailing element on a result page that declares a
    filter dimension — label plus chevron, carrying the active value when one is set.
    It wears the same glass as the About chip and the action capsule (surface-float + sheen + chip
-   shadow) and is **one row band tall**, the About chip's height: the bar's own band is reserved by
-   `.moe-query-column`, so the chip can be the full band without the row's measured height depending
-   on whether it is showing — which is what holds ADR-0043's height invariant. */
+   shadow), so the bar's trailing control and the bottom bar's leading one read as one family.
+   Its height is the input's, not its own: `align-self: stretch` fills the row's content box, so the
+   chip reads as a peer of the input and — because its own content is only the label and chevron — it
+   can never be the tallest child and grow the row. That is what actually holds ADR-0043's height
+   invariant; before this the chip's own vertical padding made it 21px against the input's ~20px, a
+   latent 1px overhang on same-shape pages (where `resize_panel` does not re-fire). */
 .moe-filter-control {
   display: inline-flex;
   align-items: center;
-  height: var(--moe-row-h);
+  align-self: stretch;
   gap: 6px;
   flex: none;
   max-width: 15rem;

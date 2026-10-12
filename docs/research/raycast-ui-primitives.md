@@ -105,7 +105,7 @@ keybindings.** Record every divergence (§4).
 | 9 | React components | Serde contracts + vanilla TS DOM | ADR-0007 |
 | 10 | `ActionPanel` as a fixed bottom region | A floating capsule overlaying the last row band, beside an avatar chip | ADR-0015, ADR-0026 |
 | 11 | No About surface; Preferences is a `⌘,` window | An About Card from the avatar chip (`⌘⇧K`), plus a Settings Window | ADR-0026, ADR-0027 |
-| 12 | Window size host-owned, unspecified | Fixed 768×530, a measured ten-row grid | ADR-0026 |
+| 12 | Window size host-owned, unspecified | Fixed 768×510, a measured ten-row grid | ADR-0026 |
 
 ## 5. Non-goals
 
@@ -174,7 +174,7 @@ Work implied by the four ADRs, in rough dependency order:
   [ADR-0044](../adr/0044-card-unification-and-layer-stack.md)
 - Amended by this work: [ADR-0014](../adr/0014-general-actions-browse-actions-new.md) (⌘P
   attribution) · [ADR-0015](../adr/0015-floating-action-bar-and-kbd.md) (retired ⌘⇧P) ·
-  [ADR-0026](../adr/0026-bottom-bar-avatar-chip-and-about-card.md) (512→510→530) ·
+  [ADR-0026](../adr/0026-bottom-bar-avatar-chip-and-about-card.md) (512→510) ·
   [ADR-0028](../adr/0028-one-actions-card-both-windows.md) (input-edge row; anchor-follows-trigger) ·
   [ADR-0034](../adr/0034-input-bar-identity.md) (stale token sizes)
 - Background: [ADR-0007](../adr/0007-vanilla-ts-view-layer.md) ·

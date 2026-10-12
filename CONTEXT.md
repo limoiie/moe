@@ -60,10 +60,9 @@ _Avoid_: search box, address bar
 
 **Filter Control**:
 The Input Bar's trailing control on a result page, narrowing the Result List by a second dimension:
-label plus chevron in the house glass chip — one row band tall, the About chip's height — carrying the
-active value when one is set (ADR-0043). It is the trigger — the surface it opens is the Filter Card —
-and ⌘P opens it, Raycast's chord for the same control, which Browse yields on any page that declares a
-dimension.
+label plus chevron in the house glass chip, carrying the active value when one is set (ADR-0043). It is
+the trigger — the surface it opens is the Filter Card — and ⌘P opens it, Raycast's chord for the same
+control, which Browse yields on any page that declares a dimension.
 _Avoid_: dropdown button, filter icon, search bar accessory
 
 **Filter Card**:

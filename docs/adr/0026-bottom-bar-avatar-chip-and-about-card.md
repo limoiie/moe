@@ -98,21 +98,3 @@ The contract itself is unchanged and still holds: the height is measured from th
 runtime (`panelHeightFor`), and the constant is only the first-frame fallback that must match
 `tauri.conf.json`. Only the number stated above is superseded — the drift was invisible precisely
 because the measured path self-corrects.
-
-## Amendment: the panel is 768×530 — the input bar reserves one row band
-
-ADR-0043's Filter Control is now one row band tall (`--moe-row-h`), matching the About chip it faces
-across the panel. It lives inside the input bar, so the bar has to hold that band: `py` 28 + 40 = 68,
-and the arithmetic becomes `68 + 10×40 + 1×30 + 8 + 0 + 24 = 530`, which is what both
-`crates/moe-app/tauri.conf.json` and `layout.ts`'s `PANEL_HEIGHT = 530` carry.
-
-The band is **reserved unconditionally** — `.moe-query-column`'s `min-height` — rather than the
-control's own height driving the row. That reservation is the load-bearing part: the control renders
-only on result pages that declare a filter dimension, and entering such a page need not change the
-shape ADR-0018 computes, so `resize_panel` (startup and shape switches) would not re-fire. A bar that
-grew when the control appeared would clip the ten-row grid silently. Reserving the band keeps the
-measured height identical with or without the control — the height invariant ADR-0043 states, now
-carried by the bar rather than by the control fitting itself to the bar.
-
-The measurement discipline above is untouched: the height is still measured from the real bar at
-runtime, and only the first-frame fallback constant moved.

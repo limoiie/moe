@@ -64,10 +64,8 @@ export function panelHeightFor(inputBarHeight: number): number {
   );
 }
 
-/** First-frame fallback height (window logical px): 68 + 10×40 + 1×30 + 8 + 24 margins. The input bar
- *  reserves one row band for the Filter Control (ADR-0026's second amendment), so the bar measures 68:
- *  `py` 28 + the 40px band. Must match `tauri.conf.json`. */
-export const PANEL_HEIGHT = 530;
+/** First-frame fallback height (window logical px): 48 + 10×40 + 1×30 + 8 + 24 margins. */
+export const PANEL_HEIGHT = 510;
 
 // Layout classes for the three shapes: applied only in render; nowhere else may compose widths.
 
