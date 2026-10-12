@@ -306,9 +306,10 @@ html[data-platform="macos"] .moe-window-card {
   -webkit-backdrop-filter: none;
 }
 
-/* Actions card (⌘K / ⌘⇧P) and About card: floating cards above the results (shadow stays within the 8px padding, unclipped by the window) */
+/* Actions card (⌘K / ⌘⇧P), About card and Filter card: floating cards above the results (shadow stays within the 8px padding, unclipped by the window) */
 .moe-actions-card,
-.moe-about-card {
+.moe-about-card,
+.moe-filter-card {
   backdrop-filter: blur(48px) saturate(200%);
   -webkit-backdrop-filter: blur(48px) saturate(200%);
   background-image: var(--moe-glass-bg);
@@ -318,6 +319,7 @@ html[data-platform="macos"] .moe-window-card {
 .moe-window-card,
 .moe-actions-card,
 .moe-about-card,
+.moe-filter-card,
 .moe-avatar-chip,
 .moe-action-bar,
 .moe-composer-capsule,
@@ -479,6 +481,46 @@ html[data-platform="macos"] .moe-window-card {
    and label x stay aligned with the item rows whatever the size. */
 .moe-query-input {
   font-size: var(--moe-text-input);
+}
+
+/* Filter Control (ADR-0043): the Input Bar's trailing element on a result page that declares a
+   filter dimension — label plus chevron, carrying the active value when one is set. Sized inside
+   the row band (the secondary-text token, no vertical padding growth) because the panel height is
+   measured from this row and `resize_panel` only fires at startup and on a shape change: a control
+   that grew the row mid-session would clip the ten-row grid with no error. */
+.moe-filter-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  max-width: 14rem;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--moe-surface-float);
+  color: var(--moe-fg-muted);
+  font-size: var(--moe-text-secondary);
+  line-height: 1;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+[data-pointer="live"] .moe-filter-control:hover {
+  background: var(--moe-surface-hover);
+  color: var(--moe-fg);
+}
+/* An active value reads as the main text step; "Tags" alone stays muted, so the row says at a
+   glance whether the list is narrowed. */
+.moe-filter-control[data-active="true"] {
+  color: var(--moe-fg);
+}
+.moe-filter-control .moe-filter-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Unlayered, so it beats this rule's own display (same trick as `.moe-generating.hidden`) */
+.moe-filter-control.hidden {
+  display: none;
 }
 
 /* The input row's leading slot (one grid column with the item-row icons): the square-m mark on

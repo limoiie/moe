@@ -26,7 +26,7 @@
 // (`separator`), so the canonical order is visible without losing the sections' labels.
 
 import type { CardRow, CardSection } from "./card";
-import type { Item } from "./types";
+import type { Filter, Item } from "./types";
 
 /** The page the card is being loaded for. */
 export interface PageContext {
@@ -40,6 +40,10 @@ export interface PageContext {
   commandId?: string;
   /** The focused root row sits in Suggestions (⌃X forgets it instead of deleting a record, ADR-0025). */
   suggestion?: boolean;
+  /** The result page's declared filter dimension (ADR-0043), when it has one. */
+  filter?: Filter;
+  /** The active value of that dimension; undefined = All. */
+  filterValue?: string;
 }
 
 /** The canonical action order (ADR-0037 amendment) — the card's slots, top to bottom. */

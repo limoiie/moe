@@ -33,6 +33,10 @@
                title, smaller and muted; hidden on every other page. -->
           <span id="query-subtitle" class="hidden truncate text-[11px] leading-4 text-fg-subtle"></span>
         </div>
+        <!-- Filter Control (ADR-0043): the result page's second filtering dimension — label + chevron,
+             showing the active value when one is set. Hidden unless the result declares one, and sized
+             inside the row band so the measured panel height never moves (ADR-0043's height invariant). -->
+        <button id="filter-control" class="moe-filter-control hidden" type="button"></button>
       </div>
       <!-- Palette search in flight (ADR-0043): a hairline under the Input Bar. Stale rows stay
            visible while it shows — the list is never blanked mid-typing. -->
@@ -124,6 +128,22 @@
           id="action-search"
           class="w-full border-t border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Filter actions…"
+          spellcheck="false"
+        />
+      </div>
+
+      <!-- Filter Card (ADR-0043): the Filter Control's menu, anchored under its trigger (ADR-0028's
+           anchor-follows-trigger rule). Rows are the dimension's values plus a platform-supplied reset;
+           the input sits at the bottom edge like every other menu card. -->
+      <div
+        id="filter-card"
+        class="moe-filter-card absolute right-2 top-14 z-30 hidden w-64 overflow-hidden rounded-2xl bg-surface-overlay"
+      >
+        <ul id="filter-list" class="max-h-72 overflow-y-auto p-1"></ul>
+        <input
+          id="filter-search"
+          class="w-full border-t border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
+          placeholder="Filter values…"
           spellcheck="false"
         />
       </div>

@@ -52,8 +52,10 @@ export interface CardOptions {
   cardEl: HTMLElement;
   listEl: HTMLElement;
   inputEl: HTMLInputElement;
-  /** Message when there is nothing to show and no filter is set (a filtered-empty card always reads "No matching actions"). */
+  /** Message when there is nothing to show and no filter is set. */
   emptyText?: string;
+  /** Message when the filter excludes every row. Defaults to "No matching actions". */
+  filteredEmptyText?: string;
   /**
    * Server-side filtering (the model switcher, MOE-0030): the owner replaces the sections per
    * query, so the card can offer rows it has not loaded (the backend ranks and caps them). Absent
@@ -90,7 +92,15 @@ export interface Card {
 }
 
 export function createCard(options: CardOptions): Card {
-  const { cardEl, listEl, inputEl, emptyText = "No matching actions", onFocusChange, onClose } = options;
+  const {
+    cardEl,
+    listEl,
+    inputEl,
+    emptyText = "No matching actions",
+    filteredEmptyText = "No matching actions",
+    onFocusChange,
+    onClose,
+  } = options;
   let sections: CardSection[] = [];
   /** Focus over the flat row order (sections are rendering only; headers are never focused). */
   let focus = 0;
@@ -187,7 +197,7 @@ export function createCard(options: CardOptions): Card {
     if (rows.length === 0 || rows.every((row) => row.disabled)) {
       const empty = document.createElement("li");
       empty.className = "px-2 py-3 text-xs text-fg-subtle";
-      empty.textContent = inputEl.value.trim() ? "No matching actions" : emptyText;
+      empty.textContent = inputEl.value.trim() ? filteredEmptyText : emptyText;
       listEl.replaceChildren(empty);
       onFocusChange?.(undefined);
       return;

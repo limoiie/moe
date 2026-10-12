@@ -39,10 +39,33 @@ export interface Item {
   /** Optional group label (ADR-0018 amendment): the list–detail template renders a non-focusable
    *  header before the first item of each group; navigation and actions count items only. */
   group?: string;
+  /**
+   * Values of this list's filter dimension (ADR-0043). Meaningless without a matching `filter` on the
+   * result; omitted when the item carries none.
+   */
+  tags?: string[];
   /** Detail content (Markdown); the split page renders it in the right pane (ADR-0018). */
   detail?: string | null;
   /** Still producing (streaming placeholder): Esc prioritizes stopping the generation. */
   pending?: boolean;
+}
+
+/**
+ * One filter dimension a list supports (ADR-0043). The Extension states which axis matters and what
+ * the values are; the trigger, the Filter Card and the focus rules are the platform's.
+ */
+export interface Filter {
+  /** Stable id within the Extension (the platform keys a remembered value by it). */
+  id: string;
+  /** The dimension's name: shown at rest in the Input Bar ("Tags") and in the reset row ("All Tags"). */
+  label: string;
+  /** Semantic icon name (ADR-0012); also the Filter Card's leading glyph. */
+  icon?: string;
+  /**
+   * Explicit values in display order. Empty = derived from the returned items' `tags`, which is why a
+   * declared list cannot drift from the tags actually present.
+   */
+  values: string[];
 }
 
 export interface CommandMeta {
@@ -76,7 +99,7 @@ export type ActionResult =
   | string
   | { writeBack: { text: string } }
   | { rerun: { text: string } }
-  | { list: { items: Item[]; detailFull?: boolean; empty?: EmptyView } }
+  | { list: { items: Item[]; detailFull?: boolean; empty?: EmptyView; filter?: Filter } }
   | { conversation: { conversationId: string | null } }
   | { openSideView: { payload: unknown } }
   | { openSettings: Record<string, never> };

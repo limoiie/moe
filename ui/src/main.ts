@@ -7,6 +7,7 @@ import { appendMention, humanBytes, validatePath } from "./attachment";
 import { createActionPlan, type ActionRow, type PageContext } from "./actions";
 import { createCard, type CardSection } from "./card";
 import { createComposer } from "./composer";
+import { applyTagFilter, deriveFilterValues, settleFilterValue } from "./filter";
 import { generatingEl } from "./generating";
 import { iconEl } from "./icons";
 import { invokeWithTimeout } from "./ipc";
@@ -45,6 +46,7 @@ import type {
   CommandSection,
   Conversation,
   EmptyView,
+  Filter,
   Item,
   Message,
   ToolCall,
@@ -68,7 +70,21 @@ interface View {
   suggestionsStart: number;
   /** The Suggestions section's item count (0 = none, ADR-0025). */
   suggestionsCount: number;
+  /**
+   * The **visible** item set. The tag filter narrows it, so focus, navigation, the actions card, the
+   * delete slots and `pageShapeOf` keep walking one list — which is what lets the platform filter
+   * without touching anything else (ADR-0043).
+   */
   items: Item[];
+  /** The result set as returned, before the tag filter: what re-widening restores, and what the
+   *  Filter Card's values are derived from. */
+  allItems: Item[];
+  /** The result's declared filter dimension (ADR-0043); absent on pages that have none. */
+  filter?: Filter;
+  /** The dimension's values, derived from `allItems` before the filter narrows anything. */
+  filterValues: string[];
+  /** The active value; undefined = All. */
+  filterValue?: string;
   /** Source command of items mode. */
   sourceCommandId?: string;
   /** Source command's icon (fallback when a result item has no icon of its own). */
@@ -103,6 +119,10 @@ const inputIconEl = document.querySelector<HTMLSpanElement>("#input-icon")!;
 const bannerIconEl = document.querySelector<HTMLSpanElement>("#banner-icon")!;
 const confirmCardEl = document.querySelector<HTMLDivElement>("#confirm-card")!;
 const loadingBarEl = document.querySelector<HTMLDivElement>("#loading-bar")!;
+const filterControlEl = document.querySelector<HTMLButtonElement>("#filter-control")!;
+const filterCardEl = document.querySelector<HTMLDivElement>("#filter-card")!;
+const filterListEl = document.querySelector<HTMLUListElement>("#filter-list")!;
+const filterSearchEl = document.querySelector<HTMLInputElement>("#filter-search")!;
 const confirmTextEl = document.querySelector<HTMLDivElement>("#confirm-text")!;
 const confirmOkEl = document.querySelector<HTMLButtonElement>("#confirm-ok")!;
 const confirmCancelEl = document.querySelector<HTMLButtonElement>("#confirm-cancel")!;
@@ -115,6 +135,8 @@ const view = store<View>({
   suggestionsStart: -1,
   suggestionsCount: 0,
   items: [],
+  allItems: [],
+  filterValues: [],
 });
 
 /// The item the current detail card belongs to (streaming events re-render by it)
@@ -181,6 +203,55 @@ const actionsCard = createCard({
     renderActionBar();
     draftEl().focus();
   },
+});
+
+/**
+ * The Filter Card (ADR-0043): the dimension's values plus a platform-supplied reset, anchored under
+ * its trigger (ADR-0028's anchor-follows-trigger rule). The same component and key discipline as
+ * every other card (ADR-0044); single-select, so choosing a value closes it.
+ */
+const filterCard = createCard({
+  cardEl: filterCardEl,
+  listEl: filterListEl,
+  inputEl: filterSearchEl,
+  emptyText: "No filter values",
+  filteredEmptyText: "No matching values",
+  onClose: () => draftEl().focus(),
+});
+
+function openFilterCard() {
+  const v = view.get();
+  const filter = filterableDimension();
+  if (!filter) return;
+  filterCard.open([
+    {
+      rows: [
+        {
+          title: `All ${filter.label}`,
+          icon: filter.icon,
+          checked: v.filterValue === undefined,
+          run: () => setFilterValue(undefined),
+        },
+        ...v.filterValues.map((value) => ({
+          title: value,
+          icon: filter.icon,
+          checked: v.filterValue === value,
+          run: () => setFilterValue(value),
+        })),
+      ],
+    },
+  ]);
+}
+
+function closeFilterCard() {
+  filterCard.close();
+}
+
+// The Filter Control is the card's trigger, so a click on it toggles rather than counting as "outside"
+filterControlEl.addEventListener("mousedown", (e) => e.preventDefault());
+filterControlEl.addEventListener("click", () => {
+  if (filterCard.isOpen()) closeFilterCard();
+  else openFilterCard();
 });
 
 // ---- Quick Ask page (the panel's conversation, ADR-0036) ----
@@ -576,10 +647,46 @@ function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
   return li;
 }
 
+/**
+ * The dimension this page can actually filter by (ADR-0043): nothing on the command layer, nothing on
+ * a full-detail page (a single result has nothing to narrow), and nothing when the result declared no
+ * dimension. One predicate, so the Filter Control, the Filter Card and the ⌘K row can never disagree
+ * about whether the page has one.
+ */
+function filterableDimension(): Filter | undefined {
+  const v = view.get();
+  if (v.mode !== "items") return undefined;
+  const shape = pageShapeOf(v.items[v.focus], v.detailFull === true, v.items.length);
+  return shape === "detail" ? undefined : v.filter;
+}
+
+/**
+ * The Filter Control (ADR-0043): shown only on a result page that declares a dimension, because a
+ * filter exists on some pages and not others. Label at rest ("Tags"), label + value when set
+ * ("Tags: Agentic"), so the bar says at a glance whether the list is narrowed.
+ */
+function renderFilterControl() {
+  const declared = filterableDimension();
+  filterControlEl.classList.toggle("hidden", declared === undefined);
+  if (!declared) return;
+  const v = view.get();
+  filterControlEl.dataset.active = v.filterValue !== undefined ? "true" : "false";
+  filterControlEl.title = `Filter by ${declared.label}`;
+  const label = document.createElement("span");
+  label.className = "moe-filter-label";
+  label.textContent = v.filterValue ? `${declared.label}: ${v.filterValue}` : declared.label;
+  filterControlEl.replaceChildren(
+    label,
+    iconEl("chevron-down", { size: 12, className: "shrink-0" }),
+  );
+}
+
 function render() {
   const v = view.get();
   // The Input Bar's leading slot follows the page layer (Moe logo → back arrow, ADR-0034)
   renderInputIcon();
+  // The Filter Control follows the page's declared dimension (ADR-0043)
+  renderFilterControl();
   // Page shape decides window size (ADR-0018): split pages are wider and taller, others use the default size.
   // Only call IPC when the shape changes, so the window isn't touched on every render.
   const shape = pageShapeOf(
@@ -636,12 +743,24 @@ function render() {
       if (i === v.focus) focusedLi = li;
       lis.push(li);
     });
-    // Zero rows (ADR-0043): the Extension's declared Empty View, or a platform default when it
-    // declared none — never a blank panel. Suppressed while a query-free load is in flight, so the
-    // first paint cannot flash "no results" (Raycast's rule).
+    // Zero rows (ADR-0043): never a blank panel. Suppressed while a query-free load is in flight, so
+    // the first paint cannot flash "no results" (Raycast's rule).
     if (v.items.length === 0) {
       if (!(searchLoading && q.value.trim() === "")) {
-        lis.push(emptyViewEl(v.empty ?? { title: "No results" }));
+        // When the *tag* filter is what emptied the list, the copy has to be the platform's: the
+        // Extension's Empty View ("No matching chat history") is wrong when the query matched and
+        // the tag did not.
+        const narrowedAway = v.filterValue !== undefined && v.allItems.length > 0;
+        lis.push(
+          emptyViewEl(
+            narrowedAway
+              ? {
+                  title: `No matches for “${v.filterValue}”`,
+                  description: "Clear the filter to see everything.",
+                }
+              : (v.empty ?? { title: "No results" }),
+          ),
+        );
       }
     }
     listEl.replaceChildren(...lis);
@@ -1254,6 +1373,19 @@ function secondaryOf(item: Item) {
   return item.actions.find((a) => a.kind === "secondary");
 }
 
+/**
+ * Set the active filter value and re-widen `items` from `allItems`. Focus returns to the first row:
+ * the previous index pointed into a different list.
+ */
+function setFilterValue(value: string | undefined) {
+  view.update((v) => ({
+    ...v,
+    filterValue: value,
+    items: applyTagFilter(v.allItems, value),
+    focus: 0,
+  }));
+}
+
 function applyResult(
   res: ActionResult,
   commandId: string,
@@ -1290,21 +1422,38 @@ function applyResult(
     return;
   }
   if ("list" in res) {
-    const items = res.list.items;
+    const allItems = res.list.items;
+    const filter = res.list.filter;
     closeActionsCard();
+    closeFilterCard();
     clearDetail();
-    view.update((v) => ({
-      ...v,
-      mode: "items",
-      items,
-      focus: 0,
-      sourceCommandId: commandId,
-      sourceLive: live,
-      sourceIcon: icon,
-      sourceTitle: title,
-      detailFull: res.list.detailFull === true,
-      empty: res.list.empty,
-    }));
+    view.update((v) => {
+      // The dimension's values come from the returned set *before* the tag filter narrows anything,
+      // so the picker cannot lose values as the list narrows (ADR-0043).
+      const filterValues = !filter
+        ? []
+        : filter.values.length > 0
+          ? filter.values
+          : deriveFilterValues(allItems);
+      // A remembered value the new set no longer carries falls back to All (see filter.ts).
+      const filterValue = settleFilterValue(v.filterValue, filterValues);
+      return {
+        ...v,
+        mode: "items",
+        allItems,
+        items: applyTagFilter(allItems, filterValue),
+        filter,
+        filterValues,
+        filterValue,
+        focus: 0,
+        sourceCommandId: commandId,
+        sourceLive: live,
+        sourceIcon: icon,
+        sourceTitle: title,
+        detailFull: res.list.detailFull === true,
+        empty: res.list.empty,
+      };
+    });
     // The avatar chip follows the extension now entered (ADR-0026)
     void refreshExtensionMeta(commandId);
   }
@@ -1417,6 +1566,8 @@ function panelPageContext(): PageContext {
     item: v.mode === "items" ? v.items[v.focus] : undefined,
     commandId: currentCommandId(),
     suggestion: isSuggestionFocus(v),
+    filter: filterableDimension(),
+    filterValue: v.filterValue,
   };
 }
 
@@ -1616,9 +1767,31 @@ async function pageCardRows(ctx: PageContext): Promise<ActionRow[]> {
 
 /** The panel's card (ADR-0037): Actions / Command / General, each canonically ordered and
  *  ordered among themselves by their topmost row (MOE-0033). */
+/**
+ * The page's filter rows (ADR-0043): the keyboard route to the Filter Control, which deliberately has
+ * no keybinding of its own — ⌘P is Browse, and the ⌘K card is where Raycast puts the same affordance
+ * (`ActionPanel.Submenu`).
+ */
+function filterCardRows(ctx: PageContext): ActionRow[] {
+  const filter = ctx.filter;
+  if (!filter) return [];
+  const rows: ActionRow[] = [
+    { title: `Filter by ${filter.label}`, icon: "filter", run: () => openFilterCard() },
+  ];
+  if (ctx.filterValue !== undefined) {
+    rows.push({
+      title: `Clear ${filter.label} filter`,
+      icon: "close",
+      run: () => setFilterValue(undefined),
+    });
+  }
+  return rows;
+}
+
 const panelActionPlan = createActionPlan([
   { title: "Actions", when: (ctx) => ctx.mode !== "commands", rows: objectCardRows },
   { title: "Command", when: (ctx) => ctx.commandId !== undefined, rows: commandCardRows },
+  { title: "Filter", when: (ctx) => ctx.filter !== undefined, rows: filterCardRows },
   { title: "General", when: () => true, rows: pageCardRows },
 ]);
 
@@ -1629,6 +1802,7 @@ const panelActionPlan = createActionPlan([
  */
 async function openActionsCard() {
   closeAboutCard(); // the two cards are peers: opening one closes the other (like openAboutCard)
+  closeFilterCard();
   actionsCard.open(await panelActionPlan.sections(panelPageContext()));
 }
 
@@ -1780,6 +1954,11 @@ const panelLayers = createLayers();
 panelLayers.register({ name: "actions card", isOpen: actionsCard.isOpen, close: actionsCard.close });
 panelLayers.register({ name: "about card", isOpen: aboutCard.isOpen, close: aboutCard.close });
 panelLayers.register({
+  name: "filter card",
+  isOpen: filterCard.isOpen,
+  close: filterCard.close,
+});
+panelLayers.register({
   name: "model switcher",
   isOpen: modelSwitcher.isOpen,
   close: modelSwitcher.close,
@@ -1898,6 +2077,7 @@ async function runAboutTheme(theme: ThemePreference) {
 /** Open the About card: `createCard` resets its filter, focuses its input and renders the rows. */
 function openAboutCard() {
   closeActionsCard();
+  closeFilterCard();
   aboutCard.open(aboutSections());
 }
 
@@ -2405,6 +2585,10 @@ document.addEventListener("mousedown", (e) => {
   // The about card closes when clicking outside it or the chip it belongs to (ADR-0026)
   if (aboutCard.isOpen() && !aboutCardEl.contains(target) && !chipEl.contains(target)) {
     closeAboutCard();
+  }
+  // The Filter Card closes on a click outside it or the control that owns it (ADR-0043)
+  if (filterCard.isOpen() && !filterCardEl.contains(target) && !filterControlEl.contains(target)) {
+    closeFilterCard();
   }
 });
 

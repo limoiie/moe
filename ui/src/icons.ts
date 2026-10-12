@@ -7,6 +7,7 @@ import {
   ArrowUp,
   Briefcase,
   Check,
+  ChevronDown,
   ChevronRight,
   Circle,
   Command,
@@ -14,6 +15,7 @@ import {
   CornerDownLeft,
   Expand,
   ExternalLink,
+  Filter,
   FileText,
   Globe,
   History,
@@ -48,6 +50,7 @@ import {
   Square,
   Star,
   Sun,
+  Tag,
   Terminal,
   Trash2,
   TriangleAlert,
@@ -97,6 +100,9 @@ const ICONS: Record<string, IconNode> = {
   "file-text": FileText,
   globe: Globe,
   "rotate-cw": RotateCw,
+  // The Filter Control and its dimension (ADR-0043)
+  tag: Tag,
+  filter: Filter,
   // The Thinking row's lightning (MOE-0036)
   zap: Zap,
   // Model detail (MOE-0030 revision)
@@ -109,6 +115,7 @@ const ICONS: Record<string, IconNode> = {
   search: Search,
   "arrow-left": ArrowLeft,
   "chevron-right": ChevronRight,
+  "chevron-down": ChevronDown,
   "trash-2": Trash2,
   command: Command,
   copy: Copy,
