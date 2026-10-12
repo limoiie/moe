@@ -6,10 +6,10 @@
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
 
-`render()` has no zero-length branch (`ui/src/main.ts:540-615`): both the commands and items paths
+`render()` has no zero-length branch (`render`, `ui/src/main.ts`): both the commands and items paths
 end at `listEl.replaceChildren(...lis)`, so a query that matches nothing shows a blank panel. Three
 Extensions paper over it by returning a real `Item` as the empty answer (`notice_item`,
-`ai.rs:1056-1059`; `no_match_item`, `ai_models.rs:1111-1126`; `ai_commands.rs:168-180`) — which
+`ai.rs`; `no_match_item`, `ai_models.rs`; `ai_commands.rs`) — which
 means the "no results" row is focusable and can be Applied. A search refresh shows nothing at all.
 ADR-0043 adopts Raycast's `List.EmptyView` and its `isLoading` bar, and retires the notice item.
 
@@ -35,7 +35,7 @@ ADR-0043 adopts Raycast's `List.EmptyView` and its `isLoading` bar, and retires 
   (`:2115-2125`, debounced at `:2478-2488`).
 - `ui/src/styles.css` — the hairline.
 - `crates/moe-extensions/src/ai.rs`, `ai_models.rs`, `ai_commands.rs` — the three migrations.
-- `crates/moe-core/src/registry.rs:225-252` — the root's no-match path returns `Vec::new()` when no
+- `crates/moe-core/src/registry.rs` — the root's no-match path returns `Vec::new()` when no
   Extension captures; ADR-0043 gives the root a platform Empty View there too.
 
 ## Acceptance

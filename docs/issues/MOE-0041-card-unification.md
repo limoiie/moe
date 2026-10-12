@@ -7,16 +7,17 @@
 - **Updated**: 2026-10-12
 - **Blocks**: MOE-0042, MOE-0043
 
-Five card surfaces exist. Three use `createCard` — the panel's actions card (`main.ts:126-136`), the
-Side View's More Actions card (`chat.ts:559-564`), the model switcher (`models.ts:349-365`). Two are
-hand-rolled: the About card has its own row builder, renderer and key handling (`main.ts:1856`,
-`:1882-1909`, `:1948-1970`), and the Side View's history card has its own open/close, rows and Esc
-handling (`chat.ts:213-230`, `:304`, `:450-459`). ADR-0026 deferred unification "until a third card
-needs it"; ADR-0043's Filter Card is the sixth.
+Five card surfaces exist. Three use `createCard` — the panel's actions card (`actionsCard`,
+`ui/src/main.ts`), the Side View's More Actions card (`actionsCard`, `ui/src/chat.ts`), and the model
+switcher (`ensureCard`, `ui/src/models.ts`). Two are hand-rolled: the About card has its own row
+builder, renderer and key handling (`aboutRowEl`, `renderAboutCard`, `ui/src/main.ts`), and the Side
+View's history card has its own open/close, rows and Esc handling (`openHistoryCard`,
+`closeHistoryCard`, `conversationRow`, `ui/src/chat.ts`). ADR-0026 deferred unification "until a third
+card needs it"; ADR-0043's Filter Card is the sixth.
 
-`createCard` cannot host the About card today: `runRow` always closes before running
-(`card.ts:226-230`), and the About card's theme rows must stay open (`runAboutTheme`,
-`main.ts:1823-1837`, per ADR-0035's amendment).
+`createCard` cannot host the About card today: `runRow` always closes before running (`runRow`,
+`ui/src/card.ts`), and the About card's theme rows must stay open (`runAboutTheme`, `ui/src/main.ts`,
+per ADR-0035's amendment).
 
 ## Decision
 
@@ -28,8 +29,9 @@ needs it"; ADR-0043's Filter Card is the sixth.
   rather than violates" ADR-0026's deferral. App / Theme / Support map onto `CardSection` unchanged,
   the trailing check onto the existing `CardRow.checked`, the theme rows onto `keepOpen`.
 - **The history card migrates too.** `createCard` already has the exact mechanism it hand-rolls —
-  `onQuery` for server-backed per-keystroke replacement (`card.ts:50-56`), which the model switcher
-  uses (`models.ts:354`) — and its 80ms debounce (`chat.ts:425-428`) is that pattern. Precondition:
+  `onQuery` for server-backed per-keystroke replacement (`onQuery`, `ui/src/card.ts`), which the model
+  switcher uses (`onQuery`, `ui/src/models.ts`) — and its 80ms debounce (`ui/src/chat.ts`) is that
+  pattern. Precondition:
   `conversationRow`'s visuals must be expressible as `CardRow` (`title`/`icon`/`trailing`/`keys`); if
   one is not, **extend `CardRow` rather than keep the duplicate**.
 - This removes the last copy of the input discipline ADR-0031's Cost warns "must be copied into every
@@ -50,7 +52,7 @@ needs it"; ADR-0043's Filter Card is the sixth.
   preference; every other About row closes it. Sections, filter, ↑↓/⏎, Esc / empty-⌫ and
   click-outside behave exactly as before.
 - History: per-keystroke server search still works with its debounce, and ⌃[ / ⌃] still step
-  conversations per the *filtered* list (`chat.ts:917`).
+  conversations per the *filtered* list (`ui/src/chat.ts`).
 - No hand-rolled Esc / empty-⌫ handling remains for either surface outside `createCard`.
 - `CardRow` gains no field that only one surface uses (ADR-0044's discipline: a field earns its place
   on at least two surfaces — `keepOpen` is About today, Filter-adjacent multi-select later).

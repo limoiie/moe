@@ -9,7 +9,7 @@
 
 Result rows carry a title and a subtitle and nothing else, so an Extension holding a status, a date
 or a tag has nowhere to put it: AI history folds a relative timestamp into the subtitle, and the
-model picker's only real tag vocabulary (`capabilities: Vec<String>`, `ai_models.rs:486-487`) rides a
+model picker's only real tag vocabulary (`capabilities: Vec<String>`, `ai_models.rs`) rides a
 wire type that never reaches the panel. ADR-0041 adopts Raycast's `List.Item.Accessory` and its
 nine-name `Color` enum, mapped onto ADR-0035's semantic token layer.
 
@@ -19,9 +19,16 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
 
 - `Item.accessories` — one tagged enum, five kinds (`tag`, `text`, `date`, `icon`), each with an
   optional `tooltip`. Shipping four of the five costs nothing over shipping one.
-- **The platform formats dates relatively**, so `ai.rs`'s `relative_time` subtitle migrates onto a
-  `date` accessory *in this same change* — doing one without the other renders two dates on every
-  history row. `recency.rs`'s group labels stay backend-side (section names, not live values).
+- **The platform formats dates; the contract carries a timestamp, not a rendered string.** `ai.rs`'s
+  `relative_time` subtitle migrates onto a `date` accessory *in this same change* — doing one without
+  the other renders two dates on every history row. The reason is the wire format (a timestamp can be
+  sorted, localized, or rendered absolutely later), **not** liveness: history rows are fetched once
+  and never re-render as time passes, so a backend-formatted string is exactly as fresh.
+  `recency.rs`'s group labels stay backend-side (section names, not live values).
+- **Known coverage loss, accepted deliberately.** `relative_time` is covered today by a Rust unit test
+  (`relative_time_buckets`, `crates/moe-extensions/src/ai.rs`) and the UI has no test runner — only
+  `typecheck` and `build`. This ticket moves tested logic into an untested layer. Either port the cases
+  when a UI runner lands, or keep the Rust formatter and send both timestamp and string.
 - Nine theme-paired tokens `--moe-tag-{blue,green,magenta,orange,purple,red,yellow}`; PrimaryText
   and SecondaryText are the existing `--moe-fg` / `--moe-fg-muted`, so an uncolored accessory needs
   no token. `Color.Raw` is rejected — ADR-0035's contrast guarantee is measured against the worst
@@ -30,7 +37,7 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
   kind badge stays plain text (ADR-0030's amendment: a descriptor is not a control).
 - Accessories hide in the `split` shape; at most three render; the title truncates first.
 - `iconEl` needs a semantic-color→class mapping — it takes only a `className` today
-  (`ui/src/icons.ts:141-151`).
+  (`iconEl`, `ui/src/icons.ts`).
 
 ## Delivery
 
@@ -50,8 +57,8 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
 - No accessory renders in the `split` shape's 280px column.
 - All seven tokens resolve in both themes, and every tag text step is ≥4.5:1 against the composed
   surface (ADR-0035's measurement rule, not a raw-contrast check).
-- History rows show exactly one relative date, formatted in the UI, and it stays correct while the
-  panel sits open.
+- History rows show exactly one relative date, formatted in the UI from a timestamp on the wire, and
+  the rendered string matches the Rust formatter's output for the same age.
 - The root row's kind badge is unchanged — still plain text.
 - `just lint`, `just test`, `just ui-build` green.
 

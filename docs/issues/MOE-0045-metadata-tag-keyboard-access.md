@@ -5,7 +5,7 @@
 - **Labels**: needs-triage, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
-- **Blocked by**: MOE-0044
+- **Blocked by**: MOE-0048
 
 ADR-0042 makes detail-metadata tags clickable, but only by pointer. There is no Keymap slot for
 per-tag actions, and the Keymap is platform-owned and identical across Extensions (`CONTEXT.md` →
@@ -28,7 +28,8 @@ built, which is why it is `triage` / `needs-triage` while its siblings are `todo
    "a card row can never do something the keyboard would not" principle in the direction that matters
    here. The tag's action would appear in the focused item's **Actions** section.
 4. **Reserve a global binding.** Needs a Keymap change and its own ADR, and every plausible slot is
-   either taken or an OS/edit convention (`keymap.rs:57-80`; ADR-0031 deliberately leaves ⌃K to
+   either taken or an OS/edit convention (`SystemKey`, `crates/moe-core/src/keymap.rs`; ADR-0031
+   deliberately leaves ⌃K to
    macOS kill-line).
 
 ## Recommendation
@@ -49,6 +50,8 @@ per-item affordance, which is the trade ADR-0043 already declined once for the F
 
 ## Comments
 
+- 2026-10-12 (agent): blocker updated from MOE-0044 to MOE-0048 — the tags this decides about are
+  the `TagList` tags, and their rendering is MOE-0048's, not the metadata block's.
 - 2026-10-12 (agent): filed from the Raycast primitives grilling session. Left as `needs-triage`
   deliberately: the four options have real trade-offs against ADR-0031 and ADR-0037 that are the
   owner's call, not something to settle inside an implementation issue.
