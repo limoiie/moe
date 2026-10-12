@@ -4,7 +4,7 @@
 - **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-12
-- **Updated**: 2026-10-12
+- **Updated**: 2026-10-13
 - **Commit**: dd703f7
 
 Requested from use: "I need a Ask selection or something like that for chat with agent about the selected
@@ -59,3 +59,9 @@ something that matched nothing to be offered the ask — the opposite of discove
   would have given. If the command turns out to be hard to find in practice, that is the follow-up.
 - 2026-10-12 (agent): a keybinding was deliberately not added. Every plausible chord is either taken or an
   OS/edit convention (ADR-0031), and a command that is searchable by name does not need one to be usable.
+- 2026-10-13 (agent): **superseded — the command is removed (MOE-0058).** Reported from use as useless,
+  and the follow-up the first comment anticipated is the one that landed: what the command made reachable
+  is now visible where the conversation starts — the Quick Ask composer shows the selection its first
+  message will carry, and hovering it peeks the whole text (MOE-0059). The mechanism this ticket built is
+  untouched (`panel_ask` and the capture row carry the selection exactly as before); only the
+  command-shaped door to it is gone, because ⌘' and the page already are one.
