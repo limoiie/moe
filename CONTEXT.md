@@ -59,9 +59,10 @@ identical across all Extension shapes.
 _Avoid_: search box, address bar
 
 **Filter Control**:
-The Input Bar's trailing control on a result page, narrowing the Result List by a second dimension: a
-label plus a chevron, ghost at rest and a soft accent chip when a value is set (ADR-0043). It is the
-trigger — the surface it opens is the Filter Card — and ⌘P opens it, Raycast's chord for the same control.
+The Input Bar's trailing control on a result page, narrowing the Result List by a second dimension:
+label plus chevron in the house glass chip, carrying the active value when one is set (ADR-0043). It is
+the trigger — the surface it opens is the Filter Card — and ⌘P opens it, Raycast's chord for the same
+control, which Browse yields on any page that declares a dimension.
 _Avoid_: dropdown button, filter icon, search bar accessory
 
 **Filter Card**:
@@ -77,8 +78,7 @@ _Avoid_: dropdown
 **Row Accessory**:
 A trailing value on a result row — a tinted tag, plain text, a relative date, or an icon, each
 optionally with a tooltip (ADR-0041). Colors come from the platform's bounded palette, never from an
-Extension, and accessories hide in the split shape, where the same information belongs in the Detail
-Metadata.
+Extension; at most three render in every shape, and the title truncates before any is dropped.
 _Avoid_: badge, chip, label
 
 **Empty View**:

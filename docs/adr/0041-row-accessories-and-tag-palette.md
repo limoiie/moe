@@ -80,3 +80,19 @@ an enforced type: an unknown name falls back to the secondary step, exactly as a
 falls back to a Circle (ADR-0012). Enum-ifying it would reject an Extension's typo at deserialize
 instead of degrading, and the mirror would have to claim a union the wire does not guarantee — the
 `skip_serializing_if` lesson in a different costume. The UI's `inkClass` is the one mapping.
+
+## Amendment: accessories render in `split` too
+
+The decision above hides every accessory while the detail pane shows, reading Raycast's sentence as a
+host rule. It is a recommendation addressed to extension authors — "*it is* recommended *not to show*
+any accessories on the `List.Item`" — and Moe is both host and author, so that sentence describes a
+choice, not a rule the host can enforce on itself.
+
+As written, the rule also defeated this ADR's own date decision. `ai.rs`'s history rows carry a preview
+`detail` (`preview_excerpt`), so `pageShapeOf` makes the history list a `split` page — and the date
+accessory that the migration moved off the subtitle was suppressed on exactly the one list it was moved
+for. A manual pass over MOE-0039 found the history list showing no dates at all.
+
+Accessories therefore render in **every** shape. The cap of three and the title-truncates-first rule
+still hold, and those are what actually protect the 280px column; the pane's own structured information
+is still ADR-0042's `TagList`, which was the other half of the original reasoning.

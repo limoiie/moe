@@ -7,7 +7,7 @@
 - **Updated**: 2026-10-12
 - **Blocked by**: MOE-0041, MOE-0042
 - **Blocks**: MOE-0046, MOE-0048
-- **Commit**: 7a500d1 (712ca26, 5c304e4 fix and refine it post-close)
+- **Commit**: 7a500d1 (712ca26, 5c304e4, e479809 fix and refine it post-close)
 
 The tracer bullet. There is no way to narrow a list by a second dimension: `Item` has no tags and
 `ActionResult::List` carries only `items` and `detail_full`. ADR-0043 adopts Raycast's
@@ -179,3 +179,16 @@ one Extension that declares a dimension.
   rest, a hover wash, a soft accent chip once a value is set). Withdrew divergence #2 in
   `docs/research/raycast-ui-primitives.md` rather than renumber. Opening the Filter Card also now closes
   the actions and About cards, matching the peer rule the other two already followed.
+- 2026-10-12 (agent): **the chip restyled and `⌘P` given one owner** (e479809), both from a manual pass
+  over MOE-0039's accessory work.
+
+  The ghost treatment is gone: the chip now wears the same glass as the About chip and the action
+  capsule (surface-float + sheen + chip shadow), muted at rest and the main text step plus an accent
+  hairline once a value is set. The `align-self: stretch` height rule is unchanged, so the height
+  invariant still holds.
+
+  And `⌘P` was being advertised twice in the ⌘K card — Browse Records and Filter by Tags both showed it,
+  because the fourth amendment gave the filter the chord while Browse kept printing it. Raycast has no
+  such case (nothing else of its sits on `⌘P`), so the rule borrowed from it is the general one: one
+  owner per chord. The Browse row renders no Kbd on a page that declares a dimension and stays
+  clickable. ADR-0043's fifth amendment records both.

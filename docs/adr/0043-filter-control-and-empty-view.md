@@ -193,3 +193,20 @@ reads as an accessory of the Input Bar rather than a button competing with the i
 neutral wash; a set value turns the ghost into a soft accent chip (`--moe-accent-soft` with a
 `--moe-accent-line` hairline), the ink staying at the main text step per ADR-0041's contrast rule. The
 row-band constraint is untouched — no padding changed — so the measured panel height still cannot move.
+
+## Amendment: one owner per chord, and the chip wears the house glass
+
+Two corrections from a manual pass over the shipped control.
+
+**`⌘P` has exactly one owner.** The amendment above gave the filter the chord on pages that declare a
+dimension, but Browse's ⌘K row kept advertising `⌘P` there — two actions claiming one key inside the
+same card. Raycast has no such case because nothing else of its sits on `⌘P`, and the model worth
+keeping is therefore **one owner per chord**: where `filterableDimension()` returns one, the filter owns
+`⌘P`, the Browse row renders no Kbd (it stays clickable), and the keydown path routes `⌘P` to the
+Filter Card.
+
+**The chip is a glass chip, not a ghost.** The amendment above made it a ghost. It now wears the same
+material as the About chip and the action capsule — `--moe-surface-float`, `--moe-glass-sheen`, the
+32px/200% backdrop, `--moe-shadow-chip` — reading `--moe-fg-muted` at rest and, once a value is set,
+the main text step plus the accent hairline the composer capsule uses for its focus ring. The
+`align-self: stretch` height rule is unchanged, so the height invariant above still holds.

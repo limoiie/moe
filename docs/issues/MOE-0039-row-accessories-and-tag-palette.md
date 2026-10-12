@@ -57,7 +57,10 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
       `rowAccessories`, covered by `accessories.test.ts`. **The visual half is unverified:** the title
       truncating first and the row staying 40px are the flex layout's job (`min-w-0 flex-1` left cell,
       `flex: none` accessories) and nobody has looked at a rendered row.
-- [x] No accessory renders in the `split` shape's 280px column (tested).
+- [x] **Reversed after a manual pass:** accessories render in `split` too. As first written, the split
+      hide silenced the date on the history list — which *is* a split page, because its rows carry a
+      preview detail — so the migration this ticket made was invisible. See the second comment below
+      and ADR-0041's second amendment. The cap of three still holds.
 - [x] All seven `--moe-tag-*` tokens exist in both theme blocks, and `inkClass` maps every name;
       unknown names add no class. **The 4.5:1 contrast rule (ADR-0035) is not machine-checked** — the
       values are chosen against it, not measured.
@@ -93,3 +96,19 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
   unvalidated wire value would be a type that lies. And the row's trailing order is accessories →
   shortcut Kbd → kind badge; the accessories sit right after the title cell, which is what makes the
   title truncate before any is dropped.
+- 2026-10-12 (agent): **manual pass found three things; all fixed** (e479809).
+
+  1. **No date rendered on history rows.** Not a bug in the renderer: the history list is a `split`
+     page (its rows carry the preview `detail`), and ADR-0041's split rule suppressed every accessory
+     there — including the one this ticket exists to add. `rowAccessories` no longer gates on shape;
+     the case in `accessories.test.ts` pins it. ADR-0041's second amendment withdraws the rule and
+     explains why Raycast's sentence is a recommendation to extension authors, not host behaviour.
+  2. **`⌘P` was claimed twice** in the ⌘K card — Browse Records and Filter by Tags both showed it. The
+     Browse row now drops its Kbd on a page that declares a dimension (still clickable); one owner per
+     chord. ADR-0043's fifth amendment records it.
+  3. **The chip's ghost treatment was replaced** by the same glass the About chip and the action capsule
+     wear (surface-float + sheen + chip shadow), with the accent hairline marking a set value. The
+     `align-self: stretch` height rule is untouched. ADR-0043's fifth amendment records it.
+
+  Still unticked: the *fixed* version has not been on screen — the pass above is what found these
+  three, and the date rendering in both themes is the part no test covers.
