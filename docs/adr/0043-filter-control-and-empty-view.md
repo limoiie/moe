@@ -210,3 +210,22 @@ material as the About chip and the action capsule — `--moe-surface-float`, `--
 32px/200% backdrop, `--moe-shadow-chip` — reading `--moe-fg-muted` at rest and, once a value is set,
 the main text step plus the accent hairline the composer capsule uses for its focus ring. The
 `align-self: stretch` height rule is unchanged, so the height invariant above still holds.
+
+## Amendment: the two edge rules, implemented (MOE-0046)
+
+The freeze and the session scope the decision above names are now built, and both took a slightly
+sharper form than the text implies.
+
+**The freeze is a named predicate, checked against `allItems`.** `filterChangeAllowed`
+(`ui/src/filter.ts`) is read by the control's affordance, the card's open path and the change path
+alike — the same discipline `filterableDimension` follows for “does this page have a dimension at
+all”, so the three surfaces cannot disagree. It reads the *unfiltered* set: a stream runs whether or
+not the active filter happens to show the item, and gating on the filtered list would let a change
+through and orphan it. Because a refusal is otherwise invisible, the control goes `disabled` with the
+reason in its tooltip rather than swallowing a click.
+
+**A vanished value is forgotten, not merely ignored.** The settle step writes its outcome back over the
+remembered key, so the derived list stays the authority: a value the new result set no longer carries
+does not resurrect on a later re-run. The memory itself is a module `Map` keyed by command id — a
+session cache, never disk — and a fresh entry through ⌘P / ⌘N clears the key while any other re-entry
+keeps it.

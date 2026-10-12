@@ -1,11 +1,12 @@
 # M9r: the filter's edge rules — stable values, a frozen stream, session scope
 
 - **ID**: MOE-0046
-- **State**: todo
+- **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
-- **Blocked by**: MOE-0043
+- **Commit**: 72eb9ff
+- **Blocked by**: MOE-0043 (done)
 
 The correctness rules that surround MOE-0043's visible path. Separately demoable — each one is
 observable on its own — but not independently useful, which is why it is a sibling rather than
@@ -34,15 +35,25 @@ ADR-0043 names all three; this ticket is where they get built and verified.
 
 ## Acceptance
 
-- [ ] With an active tag, typing a query does not remove values from the Filter Card, and the active
-      tag never disappears from its own picker.
-- [ ] Changing the filter while the focused item is `pending` re-runs nothing and does not disturb
-      the stream; Enter still means Stop.
-- [ ] Filter state survives leaving the command and re-entering it within a session.
-- [ ] Nothing is written to disk; a fresh process has no remembered filter.
-- [ ] Entering the list via ⌘P or ⌘N resets the filter.
-- [ ] Back still leaves the page in one step, to the fresh root — the filter adds no layer.
-- [ ] `just lint`, `just test`, `just ui-build` green.
+- [x] With an active tag, typing a query does not remove values from the Filter Card, and the active
+      tag never disappears from its own picker — **landed in MOE-0043** (derive-before-filter), and
+      covered by `deriveFilterValues`' tests rather than only by this text.
+- [x] Changing the filter while an item is `pending` re-runs nothing and does not disturb the stream;
+      Enter still means Stop. The change is refused outright (`filterChangeAllowed`, checked against
+      `allItems`), which also gates the card's open and the control's affordance — so the control goes
+      visibly disabled with a reason in its tooltip. Enter-when-pending was already Stop. **Not
+      verified on screen:** no pass has changed a filter mid-stream yet.
+- [x] Filter state survives leaving the command and re-entering it within a session — a session-only
+      `Map` keyed by command id.
+- [x] Nothing is written to disk; a fresh process has no remembered filter — the memory is a module
+      `Map`, so this is structural rather than a promise.
+- [x] Entering the list via ⌘P or ⌘N resets the filter — `openEntry` clears the key once the entry
+      command resolves, which is also the only path that does; a palette re-invocation keeps it, which
+      is Raycast's `storeValue` reading.
+- [x] Back still leaves the page in one step, to the fresh root — the filter was never a layer, and
+      this change adds none.
+- [x] 43 UI tests (was 40), 253 Rust tests, `tsc`, `vite build` green. **`just lint` is red on the
+      pre-existing `cargo fmt` diff in `anthropic.rs`** — unchanged by this work.
 
 ## Comments
 
@@ -54,3 +65,16 @@ ADR-0043 names all three; this ticket is where they get built and verified.
   a ticket later would have been silly — and it is now covered by `deriveFilterValues`' tests in
   `ui/src/filter.ts` rather than only by the acceptance text. What remains here is session scope
   (the remembered value surviving a re-entry) and the pending-freeze.
+- 2026-10-12 (agent): **landed** (72eb9ff). The freeze became a named predicate,
+  `filterChangeAllowed`, rather than an inline `some(pending)` in three places — the Filter Control's
+  affordance, the card's open and the change path all read it, so they cannot disagree, which is the
+  same discipline `filterableDimension` follows for "does this page have a dimension at all".
+
+  Two decisions worth flagging. **The freeze checks `allItems`**, not the filtered list: a stream runs
+  whether or not the active filter happens to show the item, and gating on the filtered list would let
+  a change slip through and orphan it. And **a value the new set no longer carries is forgotten, not
+  merely ignored** — the settle step writes the outcome back over the remembered key, so the derived
+  list stays the authority rather than a stale value resurrecting later.
+
+  ADR-0043's sixth amendment records both. Unverified on screen: no pass has yet changed a filter
+  mid-stream, which is the one behavior here that needs hands.
