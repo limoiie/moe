@@ -7,7 +7,7 @@
 //! by whitespace tokens against a per-row haystack that includes capability words — so
 //! `vision tools` finds the models that have both.
 
-use moe_core::contract::{Action, ActionKind, ActionResult, EmptyView, Item, MoeError};
+use moe_core::contract::{Action, ActionKind, ActionResult, EmptyView, Item, Metadata, MoeError};
 use moe_platform::config::{MoeConfig, Protocol, ProviderConfig};
 use moe_platform::keychain;
 use moe_platform::model_catalog::{self, Catalog, Cost, Model as CatalogModel};
@@ -129,7 +129,15 @@ pub fn apply_selection_with(
         .iter()
         .find(|row| row.provider_id == provider && row.model_id == model);
     let mut card = String::from("## AI model set\n\n");
-    match found {
+    // The confirmation card is a `detail`-shape page, so its facts ride the metadata column (ADR-0042)
+    // instead of only prose: provider and model as labels, in the Extension's order.
+    let label = |title: &str, text: &str| Metadata::Label {
+        title: title.into(),
+        icon: None,
+        text: Some(text.into()),
+        color: None,
+    };
+    let metadata = match found {
         Some(row) => {
             card.push_str(&format!(
                 "**{} · {}** is now the active model (`[ai] provider` / `[ai] model` written to \
@@ -138,6 +146,10 @@ pub fn apply_selection_with(
                 row.provider_name, row.model_name
             ));
             card.push_str(&model_markdown(row, has_key(row.provider_id)));
+            vec![
+                label("Provider", row.provider_name),
+                label("Model", row.model_name),
+            ]
         }
         None => {
             card.push_str(&format!(
@@ -145,9 +157,10 @@ pub fn apply_selection_with(
                  written to config.toml).\n\n{}",
                 key_state(provider, has_key(provider))
             ));
+            vec![label("Provider", provider), label("Model", model)]
         }
-    }
-    Ok(ActionResult::detail(vec![card_item(&card)]))
+    };
+    Ok(ActionResult::detail(vec![card_item(&card, metadata)]))
 }
 
 /// The picker's order (MOE-0028), shared by the picker list and the switcher card (MOE-0029):
@@ -1109,7 +1122,7 @@ fn env_names(catalog: &Catalog, provider_id: &str) -> Vec<String> {
 }
 
 /// The full-screen card a `detail` result renders (the setup cards' shape).
-fn card_item(markdown: &str) -> Item {
+fn card_item(markdown: &str, metadata: Vec<Metadata>) -> Item {
     Item {
         id: "ai.model-card".into(),
         title: "Set AI Model".into(),
@@ -1117,7 +1130,7 @@ fn card_item(markdown: &str) -> Item {
         group: None,
         tags: Vec::new(),
         accessories: Vec::new(),
-        metadata: Vec::new(),
+        metadata,
         icon: Some("sparkles".into()),
         actions: vec![],
         payload: serde_json::Value::Null,
