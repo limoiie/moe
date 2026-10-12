@@ -96,3 +96,17 @@ described, on a page that already existed.
 
 The `detail` shape's placement is still unbuilt (**MOE-0047**); the renderer takes its item and its
 container so that ticket reuses it instead of writing a second one.
+
+## Amendment: both placements are built, and the `detail` shape changed
+
+MOE-0047 landed the right-hand column, so the two placements above are both real. It is the piece of
+this ADR that alters an existing layout contract rather than adding to it, and ADR-0018 now carries
+the amendment its ticket asked for: the `detail` shape is full-bleed *unless the item carries
+metadata*, at which point it is the Markdown beside a 240px column, each half scrolling on its own.
+
+Two things held the change to ADR-0018's own rules. The column's width is a **shape constant published
+as a CSS variable at boot** (`METADATA_COLUMN_WIDTH` → `--moe-metadata-col-w`, the same path as
+`--moe-row-h`), so no renderer composes a width. And the picker's apply-confirmation became the first
+`detail`-shape producer, because that surface was already `detailFull` with a single item and its facts
+were prose only — without a producer this placement, like the data model before it, would have had
+nothing to render.

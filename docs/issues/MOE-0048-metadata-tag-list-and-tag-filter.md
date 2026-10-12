@@ -37,10 +37,9 @@ Raycast has no filter dimension to match against.
 
 ## Acceptance
 
-- [ ] `tagList` renders in both placements, from one shared renderer, in ADR-0041's tokens.
-      **Unticked: only one placement exists.** `metadataEl` is written to take its container and its
-      item, so MOE-0047's `detail`-shape column reuses it verbatim — but that column is MOE-0047, and
-      the ticket that changes ADR-0018's shape was deliberately kept separate for isolated review.
+- [x] `tagList` renders in both placements, from one shared renderer, in ADR-0041's tokens — the split
+      pane's bottom and, since **MOE-0047**, the `detail` shape's right-hand column. Same `metadataEl`,
+      different container.
 - [x] A tag with a valid `actionId` runs that action; an invalid one renders display-only, and the
       same list's other tags still work — the rule is `tagIntent`, pinned in `metadata.test.ts`
       including the precedence case (a tag that matches a dimension *and* carries an id filters).

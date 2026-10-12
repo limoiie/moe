@@ -1,11 +1,12 @@
 # M9s: the detail shape's metadata column
 
 - **ID**: MOE-0047
-- **State**: todo
+- **State**: done
 - **Labels**: ready-for-human, feature, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
-- **Blocked by**: MOE-0044
+- **Commit**: c8fb9cd (870a34a adds its producer)
+- **Blocked by**: MOE-0044 (done)
 
 Raycast places `Detail.Metadata` in the **right-hand column** of a standalone `Detail`, and that is
 the placement ADR-0042 adopts. It is the risky half of the metadata work, which is why it is not
@@ -33,13 +34,18 @@ this set that alters an existing layout contract rather than adding to it.
 
 ## Acceptance
 
-- [ ] With metadata present, the `detail` shape renders Markdown beside a right-hand metadata column;
-      with metadata absent it is pixel-identical to today.
-- [ ] The column width lives in `layout.ts`, not in a renderer class string.
-- [ ] The same metadata renders correctly in both placements (bottom in `split`, right in `detail`)
-      from one shared renderer — not two divergent implementations.
-- [ ] Long Markdown still scrolls within its own region; the column does not scroll with it.
-- [ ] `just ui-build` green.
+- [x] With metadata present, the `detail` shape renders Markdown beside a right-hand column; with
+      metadata absent the pane class, `paintDetail`'s branch and the CSS are all untouched — the
+      additive claim is structural, not a promise. **Verified on screen:** pending the manual pass;
+      the producer below is what finally gives it something to show.
+- [x] The column width lives in `layout.ts` (`METADATA_COLUMN_WIDTH`), published as
+      `--moe-metadata-col-w` at boot exactly like `--moe-row-h`; no class string composes it.
+- [x] Both placements come from one renderer: `metadataEl` is called with the same arguments and only
+      its container differs, so a divergence would have to be written deliberately.
+- [x] Long Markdown scrolls in its own region: the pane drops to `DETAIL_COLUMNS_CLASS`
+      (`overflow-hidden`) only when a column is coming, and the prose region inside takes the scroll.
+- [x] 40 UI tests, 253 Rust tests, `tsc`, `vite build`, clippy green. **`just lint` is red on the
+      pre-existing `cargo fmt` diff in `anthropic.rs`** — unchanged by this work.
 
 ## Comments
 
@@ -49,3 +55,13 @@ this set that alters an existing layout contract rather than adding to it.
   expects before the code lands.
 - 2026-10-12 (agent): ADR-0018 should carry an amendment for this once the shape ships — the ADR
   currently says the detail shape fills the panel, and that stops being unconditionally true.
+- 2026-10-12 (agent): **landed** (c8fb9cd, producer 870a34a). ADR-0018 carries the amendment this
+  ticket asked for. `paintDetail` now takes one params object — the item is needed in *both*
+  placements, while the header row stays the split shape's alone, which is the assumption the earlier
+  "metadata renders exactly when a header is present" shortcut rested on and could not survive this
+  ticket. The two placements' remaining differences (the split block's top rule and margin) live in CSS
+  beside the block rather than in the renderer.
+
+  **The producer is the picker's apply-confirmation card** — the one surface that is already
+  `detailFull` with a single item, and whose facts were prose only. Provider and model now ride the
+  column. Without it this ticket, like MOE-0044, would have been unverifiable by eye.

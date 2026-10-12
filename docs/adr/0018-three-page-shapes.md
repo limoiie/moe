@@ -56,3 +56,17 @@ commands from being a pure data fill:
   extension's delete hooks, Esc/⌫ layered back, and the streaming update path. Adopting it is
   filling `Item`s — group, title, subtitle, icon, actions, payload, detail — and implementing the
   hooks its actions route to; no command renders its own list or binds its own keys.
+
+## Amendment: the `detail` shape is no longer unconditionally full-bleed (MOE-0047)
+
+ADR-0042 adopts Raycast's second metadata placement — the right-hand column of a standalone `Detail` —
+and landing it is the first change to the `detail` shape since this ADR was decided. The table above
+says 详情占满; that now holds **unless the item carries metadata**, in which case the shape is the
+Markdown beside a fixed 240px column (`METADATA_COLUMN_WIDTH`, `ui/src/layout.ts`), each half scrolling
+on its own. With no metadata the shape is byte-identical to before.
+
+Nothing in the judgement changes: `pageShapeOf` is still the single decision, `detailFull` still
+decides which shape a result takes (ADR-0013), and metadata only widens *whether a pane exists* — which
+is ADR-0042's change, not this one. The reason this deserved its own ticket rather than riding along
+with the metadata data model is that a reader comparing this ADR with ADR-0042 now has to hold
+“full-bleed unless metadata” in their head; the cost is stated in ADR-0042 so it is not discovered here.

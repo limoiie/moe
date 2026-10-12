@@ -133,8 +133,9 @@ Work implied by the four ADRs, in rough dependency order:
    `no_match_item`, `ai_models.rs`; `notice_item`, `ai_commands.rs`); each needs an audit for `actions` a user
    would lose, and `no_match_item`'s Markdown guidance must move into `description` (ADR-0043).
 4. `pageShapeOf`'s `hasDetail` test widened to include metadata — **done (MOE-0044)**, pinned in
-   `layout.test.ts`. Still open: the `detail` shape's new metadata column width joins the constants in
-   `ui/src/layout.ts` (ADR-0042's other placement, MOE-0047).
+   `layout.test.ts`. **Both halves now landed (MOE-0047):** the `detail` shape's metadata column is
+   built, its width is `METADATA_COLUMN_WIDTH` in `ui/src/layout.ts`, and ADR-0018 carries the
+   amendment for the shape change.
 5. `conversationRow` must be expressible as `CardRow` before the history card migrates; if it is not,
    extend `CardRow` rather than keep the duplicate (ADR-0044).
 6. The layer-stack refactor must preserve confirm-dialog → attach-mode → pending-item precedence
