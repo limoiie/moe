@@ -45,3 +45,18 @@ places the input); the convention is this amendment. The switcher additionally f
 server-side (`createCard`'s `onQuery`): its rows are ranked and capped backend-side, so a client
 title filter would hide exactly the capability matches the backend found — with `onQuery` the
 card replaces its sections per query instead of filtering what it loaded.
+
+## Amendment: the anchor table's input-edge row is superseded
+
+The table above gives the Side View "Input edge: top (`border-b`)". The amendment below it already
+reversed that — "The bottom edge wins everywhere … on the panel's and the Side View's actions card,
+the history card, the about card and the switcher card alike" — and the DOM agrees with the
+reversal: in `ui/chat.html` the `<ul id="action-list">` precedes the `<input id="action-search">`,
+which carries `border-t`. The table row is therefore stale, and the stale claim had propagated into
+that file's own comment (now fixed). Read the table's **Position** row — that one still holds, and it
+remains the only difference between the two windows.
+
+Worth recording because it is now load-bearing: **a card anchors near its trigger.** Each card sits
+next to the control that opens it — the action pill's card bottom-right, the avatar chip's
+bottom-left, the Side View toolbar's top-center. ADR-0043's Filter Card inherits the rule and anchors
+top-right beneath the Filter Control: a fourth anchor for the same component, not a new component.

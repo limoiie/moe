@@ -56,3 +56,18 @@ AI 扩展原先声明 New → `ai.new-chat`，与 `ai.quick-ask` 是同一个动
 各页面上的 ⌘N 行为不变（仍是打开空白会话页）；「New Chat」只留在 UI 的固定文案里
 （actions card 的 General 行、Side View 表头按钮）。两个界面的直达键见 ADR-0036 修订：
 ⌘/ = 面板内 Quick Ask，⌘⇧/ = 直开侧栏聊天（`ai.side-chat`）。
+
+## Amendment: the ⌘P attribution to Raycast does not hold
+
+The context above justifies these bindings with "Raycast 的做法值得照搬：… 键位固定为 ⌘P / ⌘⇧P / ⌘N".
+The ⌘P half of that attribution is wrong. Raycast's documented ⌘P inside a `List` opens the
+**search-bar dropdown accessory** — "Invoke it either by using the global shortcut ⌘P or by clicking
+on it" — not a browse/history entry. Browse on ⌘P is a Moe choice, and a defensible one, but it is
+ours; the table above is also stale on its second row, since Actions is ⌘K alone per this ADR's first
+amendment.
+
+The binding stands; only its justification changes. That matters now because ADR-0043 needs a key for
+the Filter Control, which *is* the Raycast control ⌘P opens, and the honest answer is that the slot
+was spent on Browse first. ADR-0043 therefore gives the Filter Control no global shortcut rather
+than rebinding Browse: Browse is a general action present on every surface, while a filter exists
+only on some result pages.
