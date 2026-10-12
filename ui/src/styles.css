@@ -487,7 +487,9 @@ html[data-platform="macos"] .moe-window-card {
    filter dimension — label plus chevron, carrying the active value when one is set. Sized inside
    the row band (the secondary-text token, no vertical padding growth) because the panel height is
    measured from this row and `resize_panel` only fires at startup and on a shape change: a control
-   that grew the row mid-session would clip the ten-row grid with no error. */
+   that grew the row mid-session would clip the ten-row grid with no error.
+   It is a *ghost* control: no fill and no border at rest, so it reads as an accessory rather than a
+   button competing with the input. */
 .moe-filter-control {
   display: inline-flex;
   align-items: center;
@@ -497,19 +499,23 @@ html[data-platform="macos"] .moe-window-card {
   padding: 4px 8px;
   border: 0;
   border-radius: 999px;
-  background: var(--moe-surface-float);
-  color: var(--moe-fg-muted);
+  background: transparent;
+  color: var(--moe-fg-subtle);
   font-size: var(--moe-text-secondary);
   line-height: 1;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
 }
-[data-pointer="live"] .moe-filter-control:hover {
+/* At rest a hover wash is the only tell it is a control (ghost) … */
+[data-pointer="live"] .moe-filter-control:not([data-active="true"]):hover {
   background: var(--moe-surface-hover);
   color: var(--moe-fg);
 }
-/* An active value reads as the main text step; "Tags" alone stays muted, so the row says at a
-   glance whether the list is narrowed. */
+/* … and a set value turns the ghost into a soft accent chip, so the bar says at a glance whether the
+   list is narrowed. Ink stays at the main step (ADR-0041's contrast rule); the hue rides the wash and
+   its hairline. */
 .moe-filter-control[data-active="true"] {
+  background: var(--moe-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--moe-accent-line);
   color: var(--moe-fg);
 }
 .moe-filter-control .moe-filter-label {

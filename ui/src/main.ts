@@ -223,6 +223,9 @@ function openFilterCard() {
   const v = view.get();
   const filter = filterableDimension();
   if (!filter) return;
+  // The cards are peers: opening one closes the others (like openActionsCard / openAboutCard)
+  closeActionsCard();
+  closeAboutCard();
   filterCard.open([
     {
       rows: [
@@ -671,7 +674,7 @@ function renderFilterControl() {
   if (!declared) return;
   const v = view.get();
   filterControlEl.dataset.active = v.filterValue !== undefined ? "true" : "false";
-  filterControlEl.title = `Filter by ${declared.label}`;
+  filterControlEl.title = `Filter by ${declared.label} (${GENERAL_KEY_LABELS.browse})`;
   const label = document.createElement("span");
   label.className = "moe-filter-label";
   label.textContent = v.filterValue ? `${declared.label}: ${v.filterValue}` : declared.label;
@@ -1764,15 +1767,20 @@ async function pageCardRows(ctx: PageContext): Promise<ActionRow[]> {
 /** The panel's card (ADR-0037): Actions / Command / General, each canonically ordered and
  *  ordered among themselves by their topmost row (MOE-0033). */
 /**
- * The page's filter rows (ADR-0043): the keyboard route to the Filter Control, which deliberately has
- * no keybinding of its own — ⌘P is Browse, and the ⌘K card is where Raycast puts the same affordance
- * (`ActionPanel.Submenu`).
+ * The page's filter rows (ADR-0043): the ⌘K card is where Raycast puts the same affordance
+ * (`ActionPanel.Submenu`), and it shows the control's chord — ⌘P, the dropdown's key, which Browse
+ * yields on any page that declares a dimension (ADR-0043 amendment).
  */
 function filterCardRows(ctx: PageContext): ActionRow[] {
   const filter = ctx.filter;
   if (!filter) return [];
   const rows: ActionRow[] = [
-    { title: `Filter by ${filter.label}`, icon: "filter", run: () => openFilterCard() },
+    {
+      title: `Filter by ${filter.label}`,
+      icon: "filter",
+      keys: GENERAL_KEY_LABELS.browse,
+      run: () => openFilterCard(),
+    },
   ];
   if (ctx.filterValue !== undefined) {
     rows.push({
@@ -2464,6 +2472,15 @@ window.addEventListener("keydown", (e) => {
           return;
         }
       }
+      return;
+    }
+    if (general === "browse" && filterableDimension()) {
+      // Raycast binds the search bar's dropdown to ⌘P (ADR-0043 amendment, reversing divergence #2):
+      // a page that declares a dimension gives the chord to its filter, and Browse keeps it everywhere
+      // else. Toggles, exactly like a click on the control.
+      e.preventDefault();
+      if (filterCard.isOpen()) closeFilterCard();
+      else openFilterCard();
       return;
     }
     e.preventDefault();
