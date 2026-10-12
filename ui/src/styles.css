@@ -484,19 +484,22 @@ html[data-platform="macos"] .moe-window-card {
 }
 
 /* Filter Control (ADR-0043): the Input Bar's trailing element on a result page that declares a
-   filter dimension — label plus chevron, carrying the active value when one is set. Sized inside
-   the row band (the secondary-text token, no vertical padding growth) because the panel height is
-   measured from this row and `resize_panel` only fires at startup and on a shape change: a control
-   that grew the row mid-session would clip the ten-row grid with no error.
-   It is a *ghost* control: no fill and no border at rest, so it reads as an accessory rather than a
-   button competing with the input. */
+   filter dimension — label plus chevron, carrying the active value when one is set. It is a *ghost*
+   control: no fill and no border at rest, so it reads as an accessory rather than a button competing
+   with the input.
+   Its height is the input's, not its own: `align-self: stretch` fills the row's content box, so the
+   chip reads as a peer of the input and — because its own content is only the label and chevron — it
+   can never be the tallest child and grow the row. That is what actually holds ADR-0043's height
+   invariant; before this the chip's own vertical padding made it 21px against the input's ~20px, a
+   latent 1px overhang on same-shape pages (where `resize_panel` does not re-fire). */
 .moe-filter-control {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  align-self: stretch;
+  gap: 6px;
   flex: none;
-  max-width: 14rem;
-  padding: 4px 8px;
+  max-width: 15rem;
+  padding: 0 14px;
   border: 0;
   border-radius: 999px;
   background: transparent;
