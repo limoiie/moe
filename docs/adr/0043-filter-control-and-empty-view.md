@@ -96,3 +96,30 @@ search bar.
   without the other.
 - "No pagination" is now load-bearing in two places: here, and in ADR-0041's row-height reasoning
   for the three-accessory cap.
+
+## Amendment: two empty-state call sites, not three — and no `actions` field
+
+Implementing this decision surfaced two corrections to it.
+
+**The notice-item migration is two call sites, not three.** The decision above says "the three
+notice-item call sites migrate". Auditing them found that all seven `ai_commands` notice items go
+through `ActionResult::detail(...)` — the full-detail shape, `detail_full` true — carrying
+multi-paragraph Markdown and fenced code ("## AI setup needed", a fenced error block). They are
+**content cards, not empty states**: the list holds one item, so an Empty View would never trigger,
+and a one-string `description` could not hold the prose. They keep their cards. The real migrations
+are the sites that returned a **one-item list whose single item was a notice** — `ai.rs`'s zero-row
+and read-failure history cases, and `ai_models.rs`'s no-match picker — because that is exactly what
+made "no results" focusable.
+
+**No `actions` field, though Raycast's `EmptyView` has one.** Moe's only action dispatch path is
+`run_item_action`, which needs an `Item`, and an empty list has none. A field with no way to run it
+would be dead API, so it is omitted rather than carried; both migrated sites declared zero actions,
+so nothing is lost. If an empty view ever needs a row, the right shape is a reference to a
+**Command** — Moe's platform action vocabulary — not an `Action`, and that is a design round of its
+own rather than a field to slip in.
+
+**And the palette's own no-match state needed no Extension at all.** `Registry::search` returns an
+empty `Vec` when nothing matches and no Extension captures the input, so the platform supplies the
+copy there. That makes the command layer the Empty View's first real consumer — ahead of any
+Extension declaring one — and it is why the platform default exists at all rather than every empty
+list needing a declaration.
