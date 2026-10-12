@@ -556,9 +556,9 @@ html[data-platform="macos"] .moe-window-card {
 }
 
 /* Filter Control (ADR-0043): the Input Bar's trailing element on a result page that declares a
-   filter dimension — label plus chevron, carrying the active value when one is set. It is a *ghost*
-   control: no fill and no border at rest, so it reads as an accessory rather than a button competing
-   with the input.
+   filter dimension — label plus chevron, carrying the active value when one is set.
+   It wears the same glass as the About chip and the action capsule (surface-float + sheen + chip
+   shadow), so the bar's trailing control and the bottom bar's leading one read as one family.
    Its height is the input's, not its own: `align-self: stretch` fills the row's content box, so the
    chip reads as a peer of the input and — because its own content is only the label and chevron — it
    can never be the tallest child and grow the row. That is what actually holds ADR-0043's height
@@ -571,27 +571,31 @@ html[data-platform="macos"] .moe-window-card {
   gap: 6px;
   flex: none;
   max-width: 15rem;
-  padding: 0 14px;
+  padding: 0 12px;
   border: 0;
   border-radius: 999px;
-  background: transparent;
-  color: var(--moe-fg-subtle);
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  color: var(--moe-fg-muted);
   font-size: var(--moe-text-secondary);
   line-height: 1;
+  box-shadow: var(--moe-shadow-chip);
   transition: background-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
 }
-/* At rest a hover wash is the only tell it is a control (ghost) … */
-[data-pointer="live"] .moe-filter-control:not([data-active="true"]):hover {
+/* Hover brightens the chip, exactly as the About chip and the capsule buttons do. */
+[data-pointer="live"] .moe-filter-control:hover {
   background: var(--moe-surface-hover);
   color: var(--moe-fg);
 }
-/* … and a set value turns the ghost into a soft accent chip, so the bar says at a glance whether the
-   list is narrowed. Ink stays at the main step (ADR-0041's contrast rule); the hue rides the wash and
-   its hairline. */
+/* A set value keeps the material and gains the accent hairline the composer capsule uses for its focus
+   ring, so "this list is narrowed" reads without changing the chip's shape. */
 .moe-filter-control[data-active="true"] {
-  background: var(--moe-accent-soft);
-  box-shadow: inset 0 0 0 1px var(--moe-accent-line);
   color: var(--moe-fg);
+  box-shadow:
+    var(--moe-shadow-chip),
+    0 0 0 1px var(--moe-accent-line);
 }
 .moe-filter-control .moe-filter-label {
   min-width: 0;

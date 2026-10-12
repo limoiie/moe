@@ -12,24 +12,20 @@ function tags(n: number): Accessory[] {
 }
 
 describe("rowAccessories", () => {
-  it("hides every accessory while the detail pane shows", () => {
-    // Raycast's own recommendation: the information belongs in the pane, not the narrow left column.
-    expect(rowAccessories(item(tags(2)), "split")).toEqual([]);
-  });
-
-  it("shows them on both list shapes", () => {
+  it("renders on every shape, including the split page's narrow column", () => {
+    // The history list is a split page (its items carry a preview detail); the date accessory has to
+    // survive there or the migration this ADR made would be invisible.
     const a = tags(2);
-    expect(rowAccessories(item(a), "list")).toEqual(a);
-    expect(rowAccessories(item(a), "detail")).toEqual(a);
+    expect(rowAccessories(item(a))).toEqual(a);
   });
 
   it("caps at three, dropping the rest in declared order", () => {
-    expect(rowAccessories(item(tags(5)), "list")).toHaveLength(MAX_ACCESSORIES);
-    expect(rowAccessories(item(tags(5)), "list").map((x) => x.value)).toEqual(["t0", "t1", "t2"]);
+    expect(rowAccessories(item(tags(5)))).toHaveLength(MAX_ACCESSORIES);
+    expect(rowAccessories(item(tags(5))).map((x) => x.value)).toEqual(["t0", "t1", "t2"]);
   });
 
   it("is empty when the item carries none", () => {
-    expect(rowAccessories(item(), "list")).toEqual([]);
+    expect(rowAccessories(item())).toEqual([]);
   });
 });
 

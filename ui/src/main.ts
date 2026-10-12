@@ -580,8 +580,6 @@ interface Row {
 
 function currentEntries(): Row[] {
   const v = view.get();
-  // The shape gates accessories (ADR-0041): none render while the detail pane shows (`split`).
-  const shape = pageShapeOf(v.items[v.focus], v.detailFull === true, v.items.length);
   return v.items.map((i) => {
     const icon = i.icon ?? v.sourceIcon;
     return {
@@ -590,7 +588,7 @@ function currentEntries(): Row[] {
       key: secondaryOf(i)?.keybinding ?? undefined,
       icon,
       iconMuted: !icon,
-      accessories: rowAccessories(i, shape),
+      accessories: rowAccessories(i),
     };
   });
 }
@@ -1751,7 +1749,10 @@ async function pageCardRows(ctx: PageContext): Promise<ActionRow[]> {
       rows.push({
         title: titles[kind],
         icon: kind === "browse" ? "history" : "plus",
-        keys: GENERAL_KEY_LABELS[kind],
+        // ⌘P belongs to the Filter Control on a page that declares a dimension (ADR-0043's fourth
+        // amendment). Raycast's model is one owner per chord, so the row drops its Kbd there rather
+        // than advertising a key that would open the filter — the action stays clickable.
+        keys: kind === "browse" && filterableDimension() ? undefined : GENERAL_KEY_LABELS[kind],
         run: () => void openEntry(kind),
       });
     });
