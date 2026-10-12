@@ -110,3 +110,20 @@ as a CSS variable at boot** (`METADATA_COLUMN_WIDTH` → `--moe-metadata-col-w`,
 `detail`-shape producer, because that surface was already `detailFull` with a single item and its facts
 were prose only — without a producer this placement, like the data model before it, would have had
 nothing to render.
+
+## Amendment: pointer-only tags are not a keyboard regression (MOE-0045)
+
+The Cost above names the pointer-only tags as "a small keyboard-first regression worth naming rather
+than hiding". MOE-0045 was filed to decide the keyboard path, and settled it the other way: **the tags add
+no capability the keyboard lacks**, so there is nothing to build.
+
+The argument is checkable in the shipped code, which is why it waited until the tags existed. The
+action case only fires for an `actionId` naming one of the item's own actions (`tagIntent`,
+`ui/src/metadata.ts`), and those actions are already the ⌘K card's **Actions** rows (`objectCardRows`
+maps `item.actions`). The filter case only fires for a text among the page's `filterValues`, which are
+exactly the Filter Card's rows. A tag is therefore a pointer *shortcut* to a path that is already
+complete — the one shape of divergence that costs the keyboard-first claim nothing. Option 3 from that
+ticket, the recommendation it was filed with, would have added a row duplicating one already on screen.
+
+The **revisit trigger**: a tag affordance that is not one of the item's actions reopens this. Divergence
+#8 in `docs/research/raycast-ui-primitives.md` keeps its place and gains this rationale.

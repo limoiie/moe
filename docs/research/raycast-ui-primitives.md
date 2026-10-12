@@ -101,7 +101,7 @@ keybindings.** Record every divergence (§4).
 | 5 | `Icon` enum | Lucide names | ADR-0012 (ADR-0041) |
 | 6 | Tags tinted wherever they appear | Tinted on result rows; the root kind badge stays plain text | ADR-0030's amendment: a descriptor is not a control. This is a divergence from *internal* uniformity, and it is the one that costs the most visually (ADR-0041) |
 | 7 | `TagList.Item.onAction` only | A tag matching a filter dimension sets the Filter Control | Closes the tags↔filter loop; goes *past* Raycast, knowingly (ADR-0042) |
-| 8 | Actions are keyboard-reachable | Metadata tags are pointer-only | No keymap slot for per-tag actions; named as a keyboard-first regression (ADR-0042) |
+| 8 | Actions are keyboard-reachable | Metadata tags are pointer-only | Narrowed by MOE-0045: a tag is a pointer shortcut to a path the ⌘K card already lists — its action is one of the item's own actions, its value is a filter value — so no capability is lost (ADR-0042's fourth amendment) |
 | 9 | React components | Serde contracts + vanilla TS DOM | ADR-0007 |
 | 10 | `ActionPanel` as a fixed bottom region | A floating capsule overlaying the last row band, beside an avatar chip | ADR-0015, ADR-0026 |
 | 11 | No About surface; Preferences is a `⌘,` window | An About Card from the avatar chip (`⌘⇧K`), plus a Settings Window | ADR-0026, ADR-0027 |
@@ -144,8 +144,9 @@ Work implied by the four ADRs, in rough dependency order:
    "needed on at least two surfaces" (ADR-0044).
 8. The three-accessory cap has no Raycast precedent; revisit if a real list needs four, since what
    gives is the row height and the ten-row grid (ADR-0041).
-9. Keyboard access to metadata tags (divergence #8) — **MOE-0045**, unblocked by MOE-0048, which left
-the tags out of the tab order on purpose.
+9. Keyboard access to metadata tags (divergence #8) — **closed by MOE-0045 as needing nothing**: both
+tag interactions resolve to ⌘K paths that already exist, so the pointer-only affordance costs no
+capability. The revisit trigger is a tag affordance that is not one of the item's actions.
 10. `Color.Dynamic`, and sections in filter value lists — both deferred with a named trigger
     (exact brand reproduction; a declared value list that needs grouping).
 

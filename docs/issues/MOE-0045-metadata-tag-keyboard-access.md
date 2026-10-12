@@ -1,11 +1,11 @@
 # M9q: metadata tags are pointer-only — decide the keyboard path
 
 - **ID**: MOE-0045
-- **State**: triage
-- **Labels**: needs-triage, ux
+- **State**: done
+- **Labels**: wontfix, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
-- **Blocked by**: MOE-0048
+- **Blocked by**: MOE-0048 (done)
 
 ADR-0042 makes detail-metadata tags clickable, but only by pointer. There is no Keymap slot for
 per-tag actions, and the Keymap is platform-owned and identical across Extensions (`CONTEXT.md` →
@@ -32,21 +32,37 @@ built, which is why it is `triage` / `needs-triage` while its siblings are `todo
    deliberately leaves ⌃K to
    macOS kill-line).
 
-## Recommendation
+## Decision: option 1 — accepted, because the tags add no capability the keyboard lacks
 
-Option 3, with the pointer affordance kept. It costs one `ActionSource` row builder, adds no key
-handling, no Keymap change and no ADR, and it makes the tag's action discoverable in the one place
-every other action already is. Options 2 and 4 both spend platform-wide keyboard surface on a
-per-item affordance, which is the trade ADR-0043 already declined once for the Filter Control.
+Chosen over this ticket's own recommendation (option 3), on evidence from the shipped code:
+
+- **A tag's action is already a card row, by construction.** `tagIntent`'s action case only fires when
+  `actionId` names one of the item's own `Action`s (`ui/src/metadata.ts`), and the ⌘K card's **Actions**
+  section is `item.actions.map(…)` verbatim (`objectCardRows`, `ui/src/main.ts`). Option 3 would
+  therefore add a row that duplicates one already on screen — the tag is a pointer *shortcut* to an
+  action the card lists, not a second action.
+- **A matching tag's value is already a Filter Card row.** The filter case fires only when the tag's
+  text is in the page's `filterValues`, and those are exactly the values the Filter Card lists (plus
+  its reset row). "Filter by ⟨label⟩" in the same card opens it.
+
+So the divergence costs a *shortcut*, not a *capability*: the keyboard-first claim survives, and the
+regression ADR-0042's Cost named is smaller than it looked — it is a mouse-only convenience over paths
+that are already complete, which is the one shape of divergence this product can live with.
+
+**The trigger to revisit:** if a tag ever gains an affordance that is *not* one of the item's actions —
+a tag-level action of its own, or a target the card cannot express — this decision is void and the
+question reopens. Written here so the next reader does not have to re-derive it.
+
+This is recorded as ADR-0042's fourth amendment, and divergence #8's rationale is sharpened to match:
+the tags stay pointer-only, and that is now a stated non-cost rather than an open regression.
 
 ## Acceptance
 
-- A decision recorded here or as an amendment to ADR-0042.
-- If the answer is not option 1, a follow-up issue with the chosen mechanism, its files, and its own
-  acceptance criteria.
-- If the answer is option 3, divergence #8 in `docs/research/raycast-ui-primitives.md` is updated —
-  the tags stay pointer-only, but their actions stop being pointer-only, which is the part that
-  actually mattered.
+- [x] A decision recorded here **and** as an amendment to ADR-0042.
+- [x] Not option 1's inverse: no follow-up issue is needed, because no mechanism is being built. The
+      revisit trigger is named above instead.
+- [x] Divergence #8 updated — not withdrawn (the tags *are* pointer-only), but its rationale now says
+      why that costs nothing.
 
 ## Comments
 
@@ -55,3 +71,9 @@ per-item affordance, which is the trade ADR-0043 already declined once for the F
 - 2026-10-12 (agent): filed from the Raycast primitives grilling session. Left as `needs-triage`
   deliberately: the four options have real trade-offs against ADR-0031 and ADR-0037 that are the
   owner's call, not something to settle inside an implementation issue.
+- 2026-10-12 (agent): **decided — option 1, with a proof rather than a shrug.** MOE-0048 shipped the
+  tags, which made the question answerable from code instead of from taste: both tag interactions
+  resolve to affordances the ⌘K card already lists (`objectCardRows` over `item.actions`; the Filter
+  Card over `filterValues`), so option 3's row would duplicate one already on screen. The regression is
+  a shortcut, not a capability. Revisit trigger recorded above. This supersedes the recommendation the
+  ticket was filed with, which was written before the tags existed.
