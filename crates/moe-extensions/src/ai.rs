@@ -57,6 +57,7 @@ fn answer_item(
         group: None,
         tags: Vec::new(),
         accessories: Vec::new(),
+        metadata: Vec::new(),
         icon: Some("sparkles".into()),
         actions: vec![
             Action {
@@ -122,6 +123,7 @@ fn history_item(conversation: Conversation, now_unix: u64, preview: Option<Strin
         group: Some(recency::group_label(conversation.updated_unix, now_unix).to_string()),
         icon: Some("message-square".into()),
         accessories: vec![Accessory::date(conversation.updated_unix as i64)],
+        metadata: Vec::new(),
         actions: vec![Action {
             id: "materialize".into(),
             title: "Open in Side View".into(),

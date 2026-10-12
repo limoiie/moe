@@ -539,6 +539,54 @@ html[data-platform="macos"] .moe-window-card {
   color: var(--moe-fg-muted);
 }
 
+/* Detail-pane metadata (ADR-0042): Raycast's `List.Item.Detail.Metadata`, under the Markdown at the
+   split pane's bottom. Rows read title-left / value-right; the block draws its own top hairline and
+   the `separator` kind draws the ones between rows, so no rule wraps the block itself. */
+.moe-metadata {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--moe-line);
+  font-size: var(--moe-text-secondary);
+}
+.moe-metadata-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 1.625rem;
+}
+.moe-metadata-title {
+  flex: none;
+  color: var(--moe-fg-subtle);
+}
+.moe-metadata-value {
+  margin-left: auto;
+  min-width: 0;
+  color: var(--moe-fg-muted);
+}
+.moe-metadata-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+/* A link is the one value that is itself a control; the accent is this design system's "link" role. */
+.moe-metadata-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--moe-accent);
+  cursor: pointer;
+}
+.moe-metadata-link:hover {
+  text-decoration: underline;
+}
+.moe-metadata-separator {
+  height: 1px;
+  margin: 0.5rem 0;
+  background: var(--moe-line);
+}
+
 /* Row hover is a pointer affordance, gated on real pointer movement (ADR-0031 amendment): while
    the keyboard drives the UI, rows re-render under a stationary cursor and CSS :hover recomputes
    on the fresh nodes — the wash flickered on arbitrary rows during ↑↓/⌃N/⌃P navigation and while

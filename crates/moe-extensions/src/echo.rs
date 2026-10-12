@@ -90,6 +90,7 @@ impl Extension for Echo {
                         group: None,
                         tags: Vec::new(),
                         accessories: Vec::new(),
+                        metadata: Vec::new(),
                         icon: Some("quote".into()),
                         actions: vec![
                             action(

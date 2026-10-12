@@ -130,6 +130,11 @@ pub struct Item {
     /// truncates before any is dropped, and none render while the detail pane is showing (`split`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accessories: Vec<Accessory>,
+    /// Structured facts about this result, rendered under its detail (ADR-0042): labels, links, tag
+    /// lists and separators, in the Extension's order. Also makes an item with no Markdown open a
+    /// detail pane, because the metadata is something to show.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub metadata: Vec<Metadata>,
     /// Optional group label for list pages (e.g. recency buckets in a history list): the platform
     /// renders a non-focusable header before the first item of each group and keeps navigation,
     /// actions and delete counting the items only (ADR-0018 amendment). None = one unlabeled group.
@@ -215,6 +220,61 @@ impl Accessory {
             tooltip: None,
         }
     }
+}
+
+/// One row of structured detail metadata (ADR-0042): Raycast's `Detail.Metadata`, with the same four
+/// field types and the same placement rules. Order is the Extension's; the platform neither sorts nor
+/// groups. Colors come from ADR-0041's palette, so there is no second color vocabulary here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    rename_all = "camelCase",
+    tag = "kind",
+    rename_all_fields = "camelCase"
+)]
+pub enum Metadata {
+    /// A title with an optional icon and/or an optional value to its right.
+    Label {
+        title: String,
+        /// Semantic icon name (ADR-0012).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        /// Semantic color name for `text` (ADR-0041); unknown names fall back.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+    },
+    /// A title with a link to its right. Only http(s) targets reach the OS (`open::open_url`).
+    Link {
+        title: String,
+        text: String,
+        target: String,
+    },
+    /// A titled row of tags.
+    TagList {
+        title: String,
+        items: Vec<MetadataTag>,
+    },
+    /// A separator line between rows.
+    Separator,
+}
+
+/// One tag of a `Metadata::TagList` (ADR-0042). At least one of `text`/`icon` should be set; a tag
+/// whose `action_id` names none of the item's own actions renders display-only rather than erroring.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataTag {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Semantic icon name (ADR-0012).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Semantic color name (ADR-0041); unknown names fall back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// The `Action::id` this tag dispatches through `run_item_action` (ADR-0042).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<String>,
 }
 
 /// Result after Apply or any action runs. The output type is not a closed enum — Items in a
@@ -575,6 +635,7 @@ mod tests {
                 icon: None,
                 tags: Vec::new(),
                 accessories: Vec::new(),
+                metadata: Vec::new(),
             },
         };
         let json = serde_json::to_value(&event).unwrap();
@@ -634,6 +695,7 @@ mod tests {
             pending: false,
             tags: Vec::new(),
             accessories: Vec::new(),
+            metadata: Vec::new(),
         }
     }
 
@@ -691,6 +753,56 @@ mod tests {
         // Empty accessories stay off the wire entirely, like tags and group.
         let plain = serde_json::to_value(answer()).unwrap();
         assert!(plain.get("accessories").is_none());
+    }
+
+    /// Metadata rides the wire as an ordered, internally tagged list (ADR-0042) and stays off it when
+    /// empty. The tag list is carried whole even though only MOE-0048 renders it.
+    #[test]
+    fn metadata_serializes_tagged_and_omits_optionals() {
+        let result = ActionResult::list(vec![Item {
+            metadata: vec![
+                Metadata::Label {
+                    title: "Model".into(),
+                    icon: None,
+                    text: Some("claude-sonnet-4-5".into()),
+                    color: Some("blue".into()),
+                },
+                Metadata::Link {
+                    title: "Docs".into(),
+                    text: "example.com".into(),
+                    target: "https://example.com".into(),
+                },
+                Metadata::TagList {
+                    title: "Capabilities".into(),
+                    items: vec![MetadataTag {
+                        text: Some("tools".into()),
+                        icon: None,
+                        color: Some("green".into()),
+                        action_id: None,
+                    }],
+                },
+                Metadata::Separator,
+            ],
+            ..answer()
+        }]);
+        let json = serde_json::to_value(&result).unwrap();
+        let metadata = &json["list"]["items"][0]["metadata"];
+        assert_eq!(metadata[0]["kind"], "label");
+        assert_eq!(metadata[0]["text"], "claude-sonnet-4-5");
+        assert_eq!(metadata[0]["color"], "blue");
+        assert!(metadata[0].get("icon").is_none(), "unset icon is omitted");
+        assert_eq!(metadata[1]["kind"], "link");
+        assert_eq!(metadata[1]["target"], "https://example.com");
+        assert_eq!(metadata[2]["kind"], "tagList");
+        assert_eq!(metadata[2]["items"][0]["text"], "tools");
+        assert!(
+            metadata[2]["items"][0].get("actionId").is_none(),
+            "unset actionId is omitted"
+        );
+        assert_eq!(metadata[3]["kind"], "separator");
+        // Empty metadata stays off the wire entirely, like tags, group and accessories.
+        let plain = serde_json::to_value(answer()).unwrap();
+        assert!(plain.get("metadata").is_none());
     }
 
     /// View layout is declared by the Extension (ADR-0013): the UI uses `list.detailFull` to decide

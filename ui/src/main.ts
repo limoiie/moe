@@ -51,6 +51,7 @@ import type {
   Filter,
   Item,
   Message,
+  Metadata,
   ToolCall,
 } from "./types";
 
@@ -858,6 +859,76 @@ function detailHeaderEl(item: Item): HTMLElement {
   return header;
 }
 
+/** One metadata row's right-hand value: an optional icon and/or text, in a palette color when one is
+ * named (ADR-0041). The ink class sits on the inner span so it wins by specificity rather than by
+ * rule order against the wrapper's default step. */
+function metadataValueEl(icon?: string, text?: string, color?: string): HTMLElement | undefined {
+  if (!icon && !text) return undefined;
+  const wrap = document.createElement("span");
+  wrap.className = "moe-metadata-value";
+  const inner = document.createElement("span");
+  inner.className = "moe-metadata-inline";
+  const ink = inkClass(color);
+  if (ink) inner.classList.add(ink);
+  if (icon) inner.append(iconEl(icon, { size: 13 }));
+  if (text) {
+    const label = document.createElement("span");
+    label.textContent = text;
+    inner.append(label);
+  }
+  wrap.append(inner);
+  return wrap;
+}
+
+/** One metadata row (ADR-0042): the Extension's title on the left, its value on the right. */
+function metadataRowEl(title: string, value?: HTMLElement): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "moe-metadata-row";
+  const label = document.createElement("span");
+  label.className = "moe-metadata-title";
+  label.textContent = title;
+  row.append(label);
+  if (value) row.append(value);
+  return row;
+}
+
+/**
+ * The detail pane's metadata block (ADR-0042): Raycast's `List.Item.Detail.Metadata`, at the split
+ * pane's bottom under the Markdown. `tagList` is carried whole by the contract but renders nothing
+ * until MOE-0048, which also gives its tags their click behavior.
+ */
+function metadataEl(metadata: Metadata[]): HTMLElement {
+  const block = document.createElement("div");
+  block.className = "moe-metadata not-prose";
+  for (const entry of metadata) {
+    if (entry.kind === "separator") {
+      const separator = document.createElement("div");
+      separator.className = "moe-metadata-separator";
+      block.append(separator);
+    } else if (entry.kind === "label") {
+      block.append(
+        metadataRowEl(entry.title, metadataValueEl(entry.icon, entry.text, entry.color)),
+      );
+    } else if (entry.kind === "link") {
+      // A button rather than an `<a>`: the panel is a webview and a raw href would navigate it. Only
+      // http(s) reaches the OS (`open::open_url`), so a bad target fails without spawning anything.
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "moe-metadata-link";
+      link.textContent = entry.text;
+      link.title = entry.target;
+      link.addEventListener("click", () => {
+        void invoke("open_external", { url: entry.target }).catch(() =>
+          toast("Could not open that link"),
+        );
+      });
+      block.append(metadataRowEl(entry.title, link));
+    }
+    // `tagList`: MOE-0048.
+  }
+  return block;
+}
+
 function paintDetail(
   markdown: string,
   itemId: string | null,
@@ -891,6 +962,10 @@ function paintDetail(
   prose.className = "md";
   prose.innerHTML = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
   body.append(prose);
+  // Metadata sits at the split pane's bottom (ADR-0042) — exactly when a header is present. The
+  // `detail` shape puts it in a right-hand column instead, which is MOE-0047.
+  const metadata = headerItem?.metadata;
+  if (metadata && metadata.length > 0) body.append(metadataEl(metadata));
   // Inline generating indicator (like ChatGPT's loading dots, rather than writing status into the body):
   // body and indicator are separate; streaming events only replace the body, so the dot animation is never restarted
   parts.indicator.classList.toggle("hidden", !pending);

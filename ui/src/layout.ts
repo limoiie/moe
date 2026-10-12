@@ -101,7 +101,11 @@ export function pageShapeOf(
   itemCount: number,
 ): PageShape {
   if (!item) return "list";
-  const hasDetail = item.detail != null || item.pending === true;
+  // Metadata counts as something to show (ADR-0042): a metadata-only item opens a pane rather than
+  // rendering nothing. This widens only *whether* a pane exists — `detailFull` still decides which
+  // shape a result takes, so ADR-0013 is untouched.
+  const hasDetail =
+    item.detail != null || item.pending === true || (item.metadata?.length ?? 0) > 0;
   if (!hasDetail) return "list";
   return detailFull && itemCount === 1 ? "detail" : "split";
 }

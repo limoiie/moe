@@ -573,6 +573,7 @@ mod tests {
                 group: None,
                 tags: Vec::new(),
                 accessories: Vec::new(),
+                metadata: Vec::new(),
                 icon: None,
                 actions: vec![],
                 payload: serde_json::json!({

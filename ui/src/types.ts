@@ -5,6 +5,29 @@
 export type ActionKind = "primary" | "secondary";
 
 /**
+ * One tag of a `Metadata` tag list (ADR-0042). At least one of `text`/`icon` should be set. A tag
+ * whose `actionId` names none of the item's own actions renders display-only rather than erroring.
+ */
+export interface MetadataTag {
+  text?: string;
+  icon?: string;
+  color?: string;
+  actionId?: string;
+}
+
+/**
+ * One row of structured detail metadata (ADR-0042), mirroring `moe-core`'s internally-tagged
+ * `Metadata`: `kind` picks the renderer, and the list's order is the Extension's. `color` is a
+ * semantic name from ADR-0041's palette, so it stays a plain string here for the same reason the
+ * accessory's does.
+ */
+export type Metadata =
+  | { kind: "label"; title: string; icon?: string; text?: string; color?: string }
+  | { kind: "link"; title: string; text: string; target: string }
+  | { kind: "tagList"; title: string; items: MetadataTag[] }
+  | { kind: "separator" };
+
+/**
  * One trailing accessory on a result row (ADR-0041), mirroring `moe-core`'s internally-tagged
  * `Accessory`: `kind` picks the renderer. `color` is a semantic name from the bounded palette
  * (blue/green/magenta/orange/purple/red/yellow/primary/secondary); unknown names fall back, so it
@@ -62,6 +85,11 @@ export interface Item {
    * and the title truncates before any is dropped. Omitted when the item carries none.
    */
   accessories?: Accessory[];
+  /**
+   * Structured facts about this result, rendered under its detail (ADR-0042): labels, links, tag
+   * lists and separators. Also makes an item with no Markdown open a pane. Omitted when empty.
+   */
+  metadata?: Metadata[];
   /** Detail content (Markdown); the split page renders it in the right pane (ADR-0018). */
   detail?: string | null;
   /** Still producing (streaming placeholder): Esc prioritizes stopping the generation. */
