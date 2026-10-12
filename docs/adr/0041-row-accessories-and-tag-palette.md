@@ -1,9 +1,9 @@
 # Row accessories and a bounded tag palette
 
 Result rows can carry a title and a subtitle and nothing else (`Item`,
-`crates/moe-core/src/contract.rs:42-67`), so an Extension holding a status, a date, or a tag has
+`crates/moe-core/src/contract.rs`), so an Extension holding a status, a date, or a tag has
 nowhere to put it: the AI history list folds a relative timestamp into the subtitle, and the model
-picker's only real tag vocabulary (`capabilities: Vec<String>`, `ai_models.rs:486-487`) rides a wire
+picker's only real tag vocabulary (`capabilities: Vec<String>`, `ai_models.rs`) rides a wire
 type that never reaches the panel. Raycast solves this with `List.Item.Accessory` plus a bounded
 `Color` enum that adapts to the theme. We adopt both — with the palette mapped onto ADR-0035's
 semantic token layer, because the panel is translucent and an Extension-supplied hex cannot be
@@ -16,11 +16,12 @@ contrast-checked against the composed backdrop.
   `date` (a unix timestamp), `icon` (a Lucide name), each with an optional `tooltip`. Shipping four
   of the five costs nothing over shipping one, so the enum is whole.
 - **The platform formats dates, not the Extension.** Raycast takes a `Date` and renders it
-  relatively ("now", "1d"); Moe formats backend-side today (`relative_time` in `ai.rs:104-123`). One
-  UI formatter means one output vocabulary and a value that stays correct while the panel sits open
-  — a backend-formatted "now" is stale the moment it renders. The history subtitle migrates onto a
-  `date` accessory. `recency.rs`'s group labels stay backend-side: those are section names, not live
-  values.
+  relatively ("now", "1d"); Moe formats backend-side today (`relative_time` in `ai.rs`). The reason to
+  move it is the **wire format**: a contract carrying a timestamp can be sorted, localized, or
+  rendered absolutely later, while a pre-baked English string cannot. It is *not* liveness — history
+  rows are fetched once and never re-render as time passes, so both approaches are equally fresh. The
+  history subtitle migrates onto a `date` accessory. `recency.rs`'s group labels stay backend-side:
+  those are section names, not live values.
 - **A bounded nine-name palette, as theme-paired semantic tokens.** Raycast's standard `Color` is
   exactly nine names — Blue, Green, Magenta, Orange, Purple, Red, Yellow, PrimaryText,
   SecondaryText — that "automatically adapt to the Raycast theme". They become
@@ -40,14 +41,14 @@ contrast-checked against the composed backdrop.
 - **Accessories hide in the `split` shape.** Raycast is explicit that when detail is showing "it is
   recommended not to show any accessories on the List.Item and instead show the additional
   information in the List.Item.Detail view". Adopted verbatim — the left column is 280px
-  (`LIST_NARROW_CLASS`, `ui/src/layout.ts:77-78`) and the information belongs in the pane, as
+  (`LIST_NARROW_CLASS`, `ui/src/layout.ts`) and the information belongs in the pane, as
   ADR-0042's `TagList`.
 - **Three rendered accessories at most; the title truncates first.** Raycast documents no cap, but
   its rows are not 40px tall inside a fixed ten-row grid (ADR-0026). The cap protects the row
   height, which the measured-height path cannot recover from mid-session.
 - **Accessory icons stay Lucide** (ADR-0012), not Raycast's `Icon` enum. Tinting one needs a
   semantic-color→class mapping in `iconEl`, which today takes only a `className`
-  (`ui/src/icons.ts:141-151`).
+  (`iconEl`, `ui/src/icons.ts`).
 
 ## Cost
 
@@ -57,6 +58,8 @@ contrast-checked against the composed backdrop.
   internal uniformity rather than from Raycast.
 - Relative-date formatting moves from Rust to TypeScript, so the two must not both format: the
   `ai.rs` subtitle migration is part of this work, not a follow-up, or history rows show two dates.
+  It also moves logic a Rust unit test covers (`relative_time_buckets`) into a layer with no test
+  runner — accepted deliberately, with porting the cases as the follow-up once a UI runner exists.
 - Nine names is a ceiling. An Extension wanting a tenth hue gets a semantic argument, not a hex code
   — that is the point, but it will eventually be asked for.
 - The cap of three is a Moe guess with no Raycast precedent. If a real list needs four, what gives

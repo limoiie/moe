@@ -1,6 +1,6 @@
 # Structured detail metadata, in Raycast's two placements
 
-`Item.detail` is Markdown and nothing else (`crates/moe-core/src/contract.rs:63`), so structured
+`Item.detail` is Markdown and nothing else (`Item.detail`, `crates/moe-core/src/contract.rs`), so structured
 facts about a result — a status, a link, a set of tags — must be flattened into prose or dropped.
 Raycast has a dedicated block for them (`Detail.Metadata` / `List.Item.Detail.Metadata`) with
 `Label`, `Link`, `TagList` and `Separator`, and places it differently by context: at the **bottom**
@@ -24,7 +24,7 @@ was decided.
   The column's width joins the other shape constants in `ui/src/layout.ts`, so no renderer composes
   widths (ADR-0018's rule).
 - **Metadata alone opens a pane.** `pageShapeOf` tests `item.detail != null || item.pending === true`
-  (`layout.ts:98-107`); the test widens to include metadata. A metadata-only item has something to
+  (`pageShapeOf`, `layout.ts`); the test widens to include metadata. A metadata-only item has something to
   show, and silently rendering no pane would be a worse surprise than a pane with no prose.
 - **ADR-0013 is not being reversed.** The shape is still *declared*, never guessed: `detailFull`
   remains the Extension's decision, and this change widens only *whether a pane exists*, not which
@@ -32,7 +32,7 @@ was decided.
 - **A tag may be clickable, by reference.** Raycast's `TagList.Item` has `onAction`; a closure
   cannot cross the IPC boundary, so a Moe tag carries an optional `actionId` that must resolve to
   one of the item's declared `Action`s and dispatches through `run_item_action`
-  (`contract.rs:331-338`). A tag with no `actionId` is display-only, and an unresolvable id renders
+  (`run_item_action`, `contract.rs`). A tag with no `actionId` is display-only, and an unresolvable id renders
   display-only rather than erroring, so the row's other tags keep working.
 - **A tag matching a filter dimension sets the filter.** When a tag's text equals a value of a
   dimension declared for the page (ADR-0043), clicking it sets the Filter Control instead of running

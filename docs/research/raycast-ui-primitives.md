@@ -123,18 +123,18 @@ keybindings.** Record every divergence (§4).
 Work implied by the four ADRs, in rough dependency order:
 
 1. `iconEl` needs a semantic-color→class mapping; it takes only a `className` today
-   (`ui/src/icons.ts:141-151`). Required by ADR-0041's tinted accessory icons.
+   (`iconEl`, `ui/src/icons.ts`). Required by ADR-0041's tinted accessory icons.
 2. A relative-date formatter in TypeScript, **and** migration of `ai.rs`'s `relative_time` subtitle —
    doing one without the other renders two dates on history rows (ADR-0041).
-3. Three notice-item call sites migrate to the Empty View (`ai.rs:1056-1059`,
-   `ai_models.rs:1111-1126`, `ai_commands.rs:168-180`); each needs an audit for `actions` a user
+3. Three notice-item call sites migrate to the Empty View (`notice_item`, `ai.rs`;
+   `no_match_item`, `ai_models.rs`; `notice_item`, `ai_commands.rs`); each needs an audit for `actions` a user
    would lose, and `no_match_item`'s Markdown guidance must move into `description` (ADR-0043).
-4. `pageShapeOf`'s `hasDetail` test widens to include metadata (`ui/src/layout.ts:98-107`), and the
+4. `pageShapeOf`'s `hasDetail` test widens to include metadata (`pageShapeOf`, `ui/src/layout.ts`), and the
    `detail` shape's new metadata column width joins the constants there (ADR-0042).
 5. `conversationRow` must be expressible as `CardRow` before the history card migrates; if it is not,
    extend `CardRow` rather than keep the duplicate (ADR-0044).
 6. The layer-stack refactor must preserve confirm-dialog → attach-mode → pending-item precedence
-   above the cards (`main.ts:2267-2300`, `:2085-2088`). This is its main regression risk (ADR-0044).
+   above the cards (`confirmOpen`, `attaching`, `openStopConfirm`, `main.ts`). This is its main regression risk (ADR-0044).
 7. `CardRow.keepOpen` is the first per-row behavior flag; the discipline for future fields is
    "needed on at least two surfaces" (ADR-0044).
 8. The three-accessory cap has no Raycast precedent; revisit if a real list needs four, since what

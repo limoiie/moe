@@ -2,11 +2,11 @@
 
 Three gaps surfaced together while specifying the UI primitives. There is no way to narrow a list by
 a second dimension: `Item` has no tags and `ActionResult::List` carries only `items` and
-`detail_full` (`crates/moe-core/src/contract.rs:71-106`). There is no empty state in the main result
-list — `render()` has no zero-length branch (`ui/src/main.ts:540-615`), so a query matching nothing
+`detail_full` (`ActionResult::List`, `crates/moe-core/src/contract.rs`). There is no empty state in the main result
+list — `render()` has no zero-length branch (`render`, `ui/src/main.ts`), so a query matching nothing
 shows a blank panel, and three Extensions paper over that by returning a real `Item` as the empty
-answer (`notice_item`, `ai.rs:1056-1059`; `no_match_item`, `ai_models.rs:1111-1126`;
-`ai_commands.rs:168-180`). And a search refresh shows nothing at all. Raycast has one answer for
+answer (`notice_item`, `ai.rs`; `no_match_item`, `ai_models.rs`;
+`notice_item`, `ai_commands.rs`). And a search refresh shows nothing at all. Raycast has one answer for
 each: the `List.Dropdown` search-bar accessory, `List.EmptyView`, and an `isLoading` bar below the
 search bar.
 
@@ -21,27 +21,27 @@ search bar.
   Server-side filtering (a filter argument on `Extension::invoke`) is the named fallback if
   pagination ever lands or a dimension needs values absent from the loaded set.
 - **`payload` was never an option.** It is documented "opaque to the UI; sent back to the Extension
-  verbatim" (`contract.rs:59`), so it cannot carry values the UI reads. That is why tags are a
+  verbatim" (`payload`, `contract.rs`), so it cannot carry values the UI reads. That is why tags are a
   first-class field rather than a convention inside the payload.
 - **A platform-supplied "All ⟨label⟩" row resets the filter**, and the active value carries a check
-  — `CardRow.checked` already exists and renders it (`ui/src/card.ts:24`), so the Filter Card needs
+  — `CardRow.checked` already exists and renders it (`CardRow.checked`, `ui/src/card.ts`), so the Filter Card needs
   no new row capability. Derived values have no natural grouping, so no sections in v1.
 - **The Filter Control is the Input Bar's first trailing element.** `#query-row` has exactly two
   children today — the leading identity slot and a `flex-1` column holding `#query` above
-  `#query-subtitle` (`ui/index.html:22-36`) — so the control is appended as a third child and the
+  `#query-subtitle` (`#query-row`, `ui/index.html`) — so the control is appended as a third child and the
   input column narrows. It renders as **label + chevron**: "Tags" at rest, "Tags: Agentic" when set,
   truncated, with a right inset mirroring the row's `px-5`.
 - **It must not change the Input Bar's height.** Panel height is measured from `#query-row`
-  (`main.ts:435-439`), but `resize_panel` fires only at startup and on a shape change —
+  (`measuredPanelHeight`, `main.ts`), but `resize_panel` fires only at startup and on a shape change —
   `applyPanelSize` early-returns when the shape is unchanged and there is no `ResizeObserver`
-  (`main.ts:424-433`). A control that grew the row mid-session would silently clip the ten-row grid
+  (`applyPanelSize`, `main.ts`). A control that grew the row mid-session would silently clip the ten-row grid
   (ADR-0026) with no error, so the control is sized inside the existing row band, always.
 - **Result pages only** — the `list` and `split` shapes. Not `detail` (a single full-detail result
   has nothing to narrow) and not the command layer (the root groups by Extension source per
   ADR-0020, where a tag axis has no meaning).
 - **No global shortcut.** Raycast binds its dropdown to ⌘P; Moe's ⌘P is Browse on every surface
-  (`crates/moe-core/src/keymap.rs:66`) and toggles the history card in the Side View
-  (`ui/src/chat.ts:883-888`). Browse is a *general* action present everywhere, while a filter exists
+  (`Browse`, `crates/moe-core/src/keymap.rs`) and toggles the history card in the Side View
+  (`toggleHistoryCard`, `ui/src/chat.ts`). Browse is a *general* action present everywhere, while a filter exists
   on some result pages — spending a universal slot on a usually-absent control is the worse trade,
   and rebinding Browse breaks documented muscle memory in both windows. The retired `⌘⇧P` is
   deliberately **not** revived (ADR-0015 amendment). Keyboard access comes from a **"Filter by Tag"
@@ -81,14 +81,14 @@ search bar.
 - **The ⌘P divergence from Raycast is permanent** unless Browse is ever rebound. Recorded in the
   divergences list rather than left as a surprise, and ADR-0014's attribution is corrected there.
 - Retiring the Notice Item touches three Extensions, and each site must be checked for `actions` a
-  user would lose. `ai_commands.rs:168-180`'s are guidance cards, but that is a per-site
+  user would lose. `ai_commands.rs`'s are guidance cards, but that is a per-site
   verification, not an assumption.
 - Client-side filtering can only offer values present in the loaded set. Invisible without
   pagination; a real limit the day pagination lands — at which point the dimension declaration
   already exists and only the evaluation side moves.
 - The Filter Control is the Input Bar's first trailing element, and it collides with
   `#query-subtitle`: on the chat page that column already carries a second line (provider · model,
-  `main.ts:815-828`). The two never render together today because the control is result-pages-only —
+  `syncChatTopbar`, `main.ts`). The two never render together today because the control is result-pages-only —
   but that is a consequence of the scope rule, not a structural separation, and putting a control on
   the chat page would have to solve it.
 - Deriving values before filtering means the UI holds two views of one list (unfiltered for the
