@@ -23,3 +23,12 @@
 - 系统键位（⌘M 侧栏、⌘⇧A 附件、⌘P/⌘N、⌃[/⌃]）不再常显，可发现性由 README、tooltip 与动作层承担。
 - 动作条浮在内容之上，长内容需要额外底部留白（已加），且它是「覆盖」而非「挤占」布局，改布局时要跟着调。
 - 主操作按钮的标题来自 Extension 的动作标题，过长会撑宽按钮（当前动作标题都在三四个字内）。
+
+## Amendment: the actions button shows `⌘K` alone
+
+The decision above describes the pill's second button as `⌘K / ⌘⇧P`. That display string is stale:
+ADR-0014's amendment unified Show All Actions on **⌘K** across every surface and unbound `⌘⇧P`
+altogether ("一个语义两个键" was the burden it removed). The pill renders whatever
+`moe-core::keymap` serves, so the fix was never in this view code — only in this text. `⌘⇧P` is
+free today and must not be revived for an unrelated semantic (ADR-0043 declines it for the Filter
+Control for exactly that reason).

@@ -84,3 +84,17 @@ shows.
 
 This retires ADR-0034's "Moe's mark shows twice" cost note: the chip no longer carries the mark —
 the app mark lives in the Input Bar's leading slot.
+
+## Amendment: the panel is 768×510, not 768×512
+
+The height budget in the decision above counts "the card's 2px borders". ADR-0035's Siri-window
+amendment later made the glass rim an inset ring inside the shadow token rather than a CSS border,
+so `CARD_BORDER` is now `0` (`ui/src/layout.ts`). The arithmetic therefore yields
+`48 + 10×40 + 1×30 + 8 + 0 + 24 = 510`, which is what both `crates/moe-app/tauri.conf.json`
+(`"width": 768, "height": 510`) and `layout.ts`'s `PANEL_HEIGHT = 510` carry. No 512px height
+exists anywhere in the repo.
+
+The contract itself is unchanged and still holds: the height is measured from the real input bar at
+runtime (`panelHeightFor`), and the constant is only the first-frame fallback that must match
+`tauri.conf.json`. Only the number stated above is superseded — the drift was invisible precisely
+because the measured path self-corrects.

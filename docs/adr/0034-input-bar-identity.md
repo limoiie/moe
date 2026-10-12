@@ -81,3 +81,22 @@ arrow opened — and the composer pill at the bottom owns the draft. The slot's 
 (mark / back / paperclip) therefore describe the command layer and the result pages only; the
 chat page's paperclip lives in the composer's attach button. Leaving the page restores the bar
 with whichever identity the layer it returns to declares.
+
+## Amendment: two stale numbers, and what "no Input Bar" actually did
+
+**The sizes moved.** `--moe-text-input` is **18px** (not the 16px stated above) and
+`--moe-input-icon-size` is **24px** (not 20px); the "22px slot token" the brand-mark amendment
+mentions does not exist in `styles.css`. `--moe-input-icon-stroke` is still `2`, and the alignment
+slot is still a **16px** flex box that the glyph overflows symmetrically. The grid invariant is
+untouched, and the reason the drift is cosmetic rather than structural is this ADR's own
+measured-height path: `panelHeightFor` measures the real bar, so the ten-row grid self-corrected
+when the tokens grew.
+
+**"The chat page has no Input Bar" is about semantics, not about the element.** The MOE-0030
+amendment above is right that the page has no *input* — but `#query-row` survives, repurposed as the
+chat page's title bar: `#query` goes `readOnly` and carries the conversation title, and
+`#query-subtitle` (a second line inside the same flex column) shows the active provider · model pair
+(`syncChatTopbar` in `ui/src/main.ts`). So the leading slot's three states — mark / back / paperclip —
+still describe every page that has the bar, and the chat page reuses the bar's *geometry* while
+owning none of its input behavior. Any future trailing control in that row (ADR-0043's Filter
+Control) must reckon with the subtitle already occupying the column's second line.
