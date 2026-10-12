@@ -210,3 +210,13 @@ material as the About chip and the action capsule — `--moe-surface-float`, `--
 32px/200% backdrop, `--moe-shadow-chip` — reading `--moe-fg-muted` at rest and, once a value is set,
 the main text step plus the accent hairline the composer capsule uses for its focus ring. The
 `align-self: stretch` height rule is unchanged, so the height invariant above still holds.
+
+## Amendment: the chip is one row band tall
+
+The chip is now the About chip's height exactly — `--moe-row-h`, 40px — rather than the input's line
+box. A stretched chip could never be taller than the row's content box, so the band moved into the row:
+`.moe-query-column` reserves one row band unconditionally and the chip fills it.
+
+The invariant above therefore holds more simply than before: the row measures the same with or without
+the chip, because the reservation does not depend on the chip being present. The cost is the bar's
+height — 48px → 68px, and the panel 768×510 → 768×530 (ADR-0026's second amendment).

@@ -7,7 +7,7 @@
 - **Updated**: 2026-10-12
 - **Blocked by**: MOE-0041, MOE-0042
 - **Blocks**: MOE-0046, MOE-0048
-- **Commit**: 7a500d1 (712ca26, 5c304e4, e479809 fix and refine it post-close)
+- **Commit**: 7a500d1 (712ca26, 5c304e4, e479809, 02bddd0 post-close)
 
 The tracer bullet. There is no way to narrow a list by a second dimension: `Item` has no tags and
 `ActionResult::List` carries only `items` and `detail_full`. ADR-0043 adopts Raycast's
@@ -192,3 +192,9 @@ one Extension that declares a dimension.
   such case (nothing else of its sits on `⌘P`), so the rule borrowed from it is the general one: one
   owner per chord. The Browse row renders no Kbd on a page that declares a dimension and stays
   clickable. ADR-0043's fifth amendment records both.
+- 2026-10-12 (agent): **the chip is one row band tall** (02bddd0). A stretched chip could not exceed
+  the row's content box, so the band moved into the row: `.moe-query-column` reserves one row band
+  unconditionally and the chip fills it, which makes the height invariant hold without depending on the
+  chip being present. The cost is real and accepted: the bar goes 48px → 68px and the panel 768×510 →
+  768×530, so `tauri.conf.json` and `PANEL_HEIGHT` both moved (ADR-0026's second amendment, ADR-0043's
+  sixth).
