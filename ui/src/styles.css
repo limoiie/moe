@@ -743,7 +743,15 @@ html[data-platform="macos"] .moe-window-card {
    loading bar below the search bar"). It is 1px of accent at partial opacity rather than a
    spinner, because it reports latency, not work — and it never covers the list, so stale rows stay
    readable while a new set is on the way. */
+/* The palette's loading hairline (ADR-0043): the input row's bottom edge, positioned out of flow so
+   it changes no layout — as a flex sibling it moved the whole list by its own height on every
+   keystroke (MOE-0055). Being out of flow also keeps `measuredPanelHeight` honest: the row's rect
+   ignores absolutely positioned children. The *when* lives in ui/src/loading.ts. */
 .moe-loading-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   height: 1px;
   background: linear-gradient(
     90deg,

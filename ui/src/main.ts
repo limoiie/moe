@@ -17,6 +17,7 @@ import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
 import { createLayers } from "./layers";
+import { createLoadingHairline } from "./loading";
 import { logoEl } from "./logo";
 import { createModelSwitcher, type ActivePair } from "./models";
 import {
@@ -162,10 +163,20 @@ let detailMode: DetailMode = "none";
  */
 let searchLoading = false;
 
+/**
+ * The palette's loading hairline (MOE-0055): delayed and minimum-visible, so a fast local search never
+ * flashes it. `searchLoading` itself stays immediate — the Empty View's suppression reads it, and that
+ * rule is about a load being in flight, not about the hairline being up (ADR-0043's no-flash rule).
+ */
+const loadingHairline = createLoadingHairline({
+  delayMs: 150,
+  minVisibleMs: 250,
+  onChange: (visible) => loadingBarEl.classList.toggle("hidden", !visible),
+});
+
 function setSearchLoading(on: boolean) {
-  if (searchLoading === on) return;
   searchLoading = on;
-  loadingBarEl.classList.toggle("hidden", !on);
+  loadingHairline.set(on);
 }
 
 
