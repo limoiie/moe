@@ -1,7 +1,7 @@
 # M9o: the Filter Control narrows a result list by tags
 
 - **ID**: MOE-0043
-- **State**: todo
+- **State**: in-progress
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
@@ -81,6 +81,41 @@ one Extension that declares a dimension.
   decision, and divergence #2 in `docs/research/raycast-ui-primitives.md` records the ⌘P cost.
   Blocked by MOE-0041 and MOE-0042 so the Filter Card is built on the unified component and registers
   in the stack once, rather than becoming a sixth hand-rolled surface.
+- 2026-10-12 (agent): **first half landed** (66f0b8e) — the contract. `Item.tags`, the `Filter`
+  declaration on `ActionResult::List`, `Filter::derived()` and a chainable `with_filter()`, plus the
+  first consumer: chat history tags every conversation Agentic or not and declares one derived
+  dimension labelled Tags. Tested on its own terms (the declaration rides the result with derived
+  values; the tag derivation itself). **Not demoable alone** — nothing in the UI reads the fields —
+  which is the one way this step departs from a tracer bullet, and the reason it is recorded rather
+  than glossed.
+- 2026-10-12 (agent): **the UI half is what remains**, and it is specified enough to be mechanical:
+
+  1. `ui/src/types.ts` — the `Filter` mirror, `Item.tags?: string[]` (the Rust side omits it when
+     empty), `filter?: Filter` on the list variant.
+  2. `ui/index.html` — the Filter Control as `#query-row`'s **third child**, after the `flex-1`
+     column, and the Filter Card anchored `right-2 top-14` (under its trigger, per ADR-0028's
+     anchor-follows-trigger amendment).
+  3. `ui/src/styles.css` — `.moe-filter-control` (label + chevron, muted; **sized inside the row band
+     so `#query-row`'s measured height never changes**, ADR-0043) and `.moe-filter-card` added to the
+     floating-card selectors.
+  4. `ui/src/main.ts` — the View gains `allItems` / `filter` / `filterValues` / `filterValue`;
+     `applyResult` derives the values **before** the tag filter narrows anything and falls back to All
+     when the new set no longer carries the remembered value; `setFilterValue()` re-widens `items`
+     from `allItems` and resets focus. **Filtering narrows `v.items` rather than happening at render
+     time**, so focus, navigation, the actions card, the delete slots and `pageShapeOf` keep walking
+     one list — which is what lets the platform filter without touching anything else.
+  5. `ui/src/actions.ts` — a Filter source contributing "Filter by ⟨label⟩" (and "Clear ⟨label⟩
+     filter" when one is set), which needs `filter`/`filterValue` on `PageContext`.
+  6. The Filter Card is a `createCard` instance with `CardRow.checked` marking the active value and a
+     platform-supplied "All ⟨label⟩" reset row.
+  7. Edge case decided while planning: when the *tag* filter excludes everything, the Empty View must
+     be the **platform's**, not the Extension's — "No matching chat history" is wrong copy when the
+     query matched but the tag did not. Planned copy: `No matches for “⟨value⟩”` / "Clear the filter
+     to see everything."
+
+  Left to **MOE-0046** (unchanged): session scope, the pending-freeze, and the entry reset.
+  "Values derived before filtering" moved into step 4, since shipping the vanishing-value bug and
+  fixing it a ticket later would have been silly.
 - 2026-10-12 (agent): **scope trimmed.** This was eight behaviors plus a consumer in one ticket — too
   much for one context window. The visible path stays here; the edge rules move to MOE-0046, which is
   separately demoable ("type a query and the tag list does not shrink"). Splitting also removed the
