@@ -1,10 +1,11 @@
 # M9k: result rows grow accessories, and the tag palette is nine bounded tokens
 
 - **ID**: MOE-0039
-- **State**: todo
+- **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
+- **Commit**: 2b1d83e
 - **Blocks**: MOE-0044
 
 Result rows carry a title and a subtitle and nothing else, so an Extension holding a status, a date
@@ -52,18 +53,43 @@ ADR-0041 holds the reasoning. The load-bearing points for implementation:
 
 ## Acceptance
 
-- A result row renders up to three accessories after the subtitle; the title truncates before any
-  accessory is dropped, and the row stays 40px.
-- No accessory renders in the `split` shape's 280px column.
-- All seven tokens resolve in both themes, and every tag text step is ≥4.5:1 against the composed
-  surface (ADR-0035's measurement rule, not a raw-contrast check).
-- History rows show exactly one relative date, formatted in the UI from a timestamp on the wire, and
-  the rendered string matches the Rust formatter's output for the same age.
-- The root row's kind badge is unchanged — still plain text.
-- `just lint`, `just test`, `just ui-build` green.
+- [x] A result row renders up to three accessories; the cap and the split-shape hide are
+      `rowAccessories`, covered by `accessories.test.ts`. **The visual half is unverified:** the title
+      truncating first and the row staying 40px are the flex layout's job (`min-w-0 flex-1` left cell,
+      `flex: none` accessories) and nobody has looked at a rendered row.
+- [x] No accessory renders in the `split` shape's 280px column (tested).
+- [x] All seven `--moe-tag-*` tokens exist in both theme blocks, and `inkClass` maps every name;
+      unknown names add no class. **The 4.5:1 contrast rule (ADR-0035) is not machine-checked** — the
+      values are chosen against it, not measured.
+- [x] History rows show exactly one relative date, formatted in the UI from a timestamp on the wire;
+      the buckets are ported one-for-one into `dates.test.ts` (the Rust formatter is gone, so the port
+      is the parity check).
+- [x] The root row's kind badge is unchanged — still plain text.
+- [x] 252 Rust tests, 31 UI tests, `tsc`, `vite build`, and clippy green. **`just lint` is red on the
+      pre-existing `cargo fmt` diff in `anthropic.rs`** — unchanged by this work.
+- [ ] **Nothing has rendered on screen.** The whole point of the ticket is visual — tinted tags, tinted
+      glyphs, the row holding 40px with three accessories — and only a manual pass confirms it. Worth
+      checking before trusting it.
 
 ## Comments
 
 - 2026-10-12 (agent): filed from the Raycast primitives grilling session. ADR-0041 records the
   decision; `docs/research/raycast-ui-primitives.md` holds the Raycast fidelity map and divergence #6
   (the root/result trailing-treatment split) is this issue's known visual cost.
+- 2026-10-12 (agent): **landed** (2b1d83e). The whole `Accessory` enum (tag/text/date/icon, each with
+  optional `color` and `tooltip`) plus `Item.accessories`; nine theme-paired `--moe-tag-*` tokens and
+  the `.moe-ink-*` classes; `inkClass` in `icons.ts` gives `iconEl` the semantic-color→class mapping
+  the tint needed; and the result row renders accessories through `rowAccessories` (cap three, hidden
+  in `split`) and `accessoryEl`.
+
+  The date migration rode along as the ADR required: `ai.rs`'s `relative_time` and its Rust test are
+  gone, the history subtitle is now `Accessory::date(updated_unix)`, and the buckets were ported
+  one-for-one into `ui/src/dates.ts` + `dates.test.ts`. **The "no UI test runner" cost the ADR and this
+  ticket both named is now moot** — MOE-0050 landed vitest, so the moved logic has its cases back
+  (nine new UI tests).
+
+  Two small notes: `color` stays a plain `string` on both sides rather than a union — the Rust side
+  does not validate it into an enum (unknown names fall back, like icon names), and a TS union over an
+  unvalidated wire value would be a type that lies. And the row's trailing order is accessories →
+  shortcut Kbd → kind badge; the accessories sit right after the title cell, which is what makes the
+  title truncate before any is dropped.

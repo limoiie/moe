@@ -124,10 +124,11 @@ keybindings.** Record every divergence (§4).
 
 Work implied by the four ADRs, in rough dependency order:
 
-1. `iconEl` needs a semantic-color→class mapping; it takes only a `className` today
-   (`iconEl`, `ui/src/icons.ts`). Required by ADR-0041's tinted accessory icons.
-2. A relative-date formatter in TypeScript, **and** migration of `ai.rs`'s `relative_time` subtitle —
-   doing one without the other renders two dates on history rows (ADR-0041).
+1. ~~`iconEl` needs a semantic-color→class mapping~~ **Done (MOE-0039):** `inkClass` maps a semantic
+   color name to a class and `iconEl` takes `color` (`inkClass`, `ui/src/icons.ts`).
+2. ~~A relative-date formatter in TypeScript, and migration of `ai.rs`'s `relative_time` subtitle~~
+   **Done (MOE-0039):** `relativeTime` lives in `ui/src/dates.ts`, its buckets are ported into
+   `dates.test.ts`, and the history subtitle is now a `date` accessory.
 3. Three notice-item call sites migrate to the Empty View (`notice_item`, `ai.rs`;
    `no_match_item`, `ai_models.rs`; `notice_item`, `ai_commands.rs`); each needs an audit for `actions` a user
    would lose, and `no_match_item`'s Markdown guidance must move into `description` (ADR-0043).

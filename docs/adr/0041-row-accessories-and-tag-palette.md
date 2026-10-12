@@ -64,3 +64,19 @@ contrast-checked against the composed backdrop.
   — that is the point, but it will eventually be asked for.
 - The cap of three is a Moe guess with no Raycast precedent. If a real list needs four, what gives
   is the row height and the ten-row grid, and both are ADR-0026 constants.
+
+## Amendment: the formatter's cases moved with it, and `color` stays a string
+
+Implemented in MOE-0039. Two notes the decision left open.
+
+**The ported cases replaced the cost, not the coverage.** The Cost above worried that moving
+`relative_time` into TypeScript dropped logic a Rust test covered. Between that decision and this
+implementation, MOE-0050 landed a UI runner (vitest), so the buckets were ported one-for-one into
+`dates.test.ts` (plus the `saturating_sub` clamp the Rust used). The coverage loss named here did not
+happen; the Rust formatter is gone and its cases live on the other side.
+
+**`color` is a `String`, not an enum, on both sides.** The nine names are a bounded *vocabulary*, not
+an enforced type: an unknown name falls back to the secondary step, exactly as an unknown icon name
+falls back to a Circle (ADR-0012). Enum-ifying it would reject an Extension's typo at deserialize
+instead of degrading, and the mirror would have to claim a union the wire does not guarantee — the
+`skip_serializing_if` lesson in a different costume. The UI's `inkClass` is the one mapping.
