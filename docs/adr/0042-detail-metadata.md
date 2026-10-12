@@ -55,3 +55,24 @@ was decided.
   keyboard-first regression worth naming rather than hiding.
 - The filter-matching rule couples this ADR to ADR-0043: a tag behaves differently depending on
   whether the page declared a filter. If filters are ever removed, this rule goes with them.
+
+## Amendment: the data model landed without a producer
+
+MOE-0044 implemented the decision above: `Item.metadata`, the whole four-type enum, the widened
+`pageShapeOf`, and the split pane's bottom block. Three things are worth recording.
+
+**The enum landed whole, the renderers did not.** `tagList` and its `MetadataTag` struct cross the
+contract and the mirror now; only MOE-0048 renders them. That is deliberate — the wire shape is the
+part that is expensive to change later, and the two rendering tickets then grow renderers only.
+
+**A link is a button, not an anchor.** The panel is a webview, so an `<a href>` would navigate Moe
+away from itself; the row dispatches through `open_external`, which refuses anything but http(s)
+before spawning a process (`open_url`, `moe-platform/src/open.rs`). Same route the About card's
+feedback link already took.
+
+**Nothing produces metadata yet, so the placement is unverified.** No Extension declares a `metadata`
+list, which means the split pane's bottom block has never rendered. The model picker is the closest
+candidate — its detail card carries the same facts this ADR wanted structured (`catalog_facts`,
+`ai_models.rs`) — but moving them out of the prose is a change to a shipped surface, and the honest
+home for it is MOE-0048, which needs a real `TagList` on a real page. Until then this ADR's first
+placement claim rests on code review, not on a screen.

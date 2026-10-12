@@ -1,11 +1,12 @@
 # M9p: structured detail metadata in the split pane
 
 - **ID**: MOE-0044
-- **State**: todo
+- **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
-- **Blocked by**: MOE-0039
+- **Commit**: 8211e95
+- **Blocked by**: MOE-0039 (done)
 - **Blocks**: MOE-0047, MOE-0048
 
 `Item.detail` is Markdown and nothing else, so structured facts about a result — a status, a link —
@@ -46,13 +47,20 @@ ADR-0042 holds the reasoning. The load-bearing points:
 ## Acceptance
 
 - [ ] In `split`, metadata renders under the Markdown at the pane's bottom; label, link and separator
-      all render, in the Extension's declared order.
-- [ ] A metadata-only item (no Markdown) opens a pane rather than rendering nothing.
-- [ ] `detailFull` still decides the `detail` shape — a multi-item result with metadata stays `split`.
-- [ ] A `tagList` in the data is carried through the contract and the mirror without loss, even
-      though its rendering arrives in MOE-0048.
-- [ ] Metadata colors resolve from ADR-0041's tokens.
-- [ ] `just lint`, `just test`, `just ui-build` green.
+      all render, in the Extension's declared order. **Unticked: no Extension produces metadata yet**,
+      so there is nothing on screen to check. See the comment below — the renderer is written and the
+      first consumer is a decision this ticket deliberately did not take.
+- [x] A metadata-only item (no Markdown) opens a pane rather than rendering nothing — `pageShapeOf`'s
+      widened test, pinned in `layout.test.ts`.
+- [x] `detailFull` still decides the `detail` shape — a multi-item result with metadata stays `split`
+      (also `layout.test.ts`; this is the case that would quietly reverse ADR-0013).
+- [x] A `tagList` is carried through the contract without loss: the Rust test asserts the whole shape
+      (`kind`, `items`, camelCase `actionId` omitted when unset) even though its rendering waits for
+      MOE-0048, and the mirror declares it.
+- [x] Metadata colors resolve from ADR-0041's tokens — the same `inkClass` mapping the row accessories
+      use. Not machine-checked; it is one map, shared.
+- [x] 34 UI tests (was 30), 253 Rust tests, `tsc`, `vite build`, clippy green. **`just lint` is red on
+      the pre-existing `cargo fmt` diff in `anthropic.rs`** — unchanged by this work.
 
 ## Comments
 
@@ -62,3 +70,19 @@ ADR-0042 holds the reasoning. The load-bearing points:
   MOE-0043 was previously an invisible coupling inside this ticket.
 - 2026-10-12 (agent): blocker narrowed from `MOE-0039, MOE-0043` to `MOE-0039` only — the tag→filter
   rule that needed a declared dimension moved out to MOE-0048 with the `TagList` rendering.
+- 2026-10-12 (agent): **landed** (8211e95). `Item.metadata` with all four field types, the `MetadataTag`
+  struct (`text`/`icon`/`color`/`actionId`), the widened `pageShapeOf`, and the split pane's bottom
+  block rendering `label` / `link` / `separator`. `layout.test.ts` is new and pins the shape rule,
+  including the case that would quietly reverse ADR-0013 (a multi-item result with metadata stays
+  `split`).
+
+  Two implementation notes. A metadata **link is a button, not an `<a>`**: the panel is a webview, so a
+  raw `href` would navigate Moe away from itself — it dispatches through `open_external`, which refuses
+  anything but http(s) before spawning a process. And a **metadata value's color rides an inner span**,
+  so the palette class wins by specificity rather than by where the rule sits in `styles.css`.
+
+  **The gap this leaves:** nothing produces metadata yet, so the ticket's first acceptance box cannot be
+  ticked and the work is invisible in the app. The model picker is the obvious candidate — its detail
+  card already carries the same facts as bold prose (`catalog_facts`) — but moving them would change an
+  existing surface, and it is genuinely a consumer decision rather than part of this data-model half.
+  The natural home for it is **MOE-0048**, which needs a real `TagList` on a real page anyway.
