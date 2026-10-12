@@ -49,3 +49,8 @@ ADR-0043 names all three; this ticket is where they get built and verified.
 - 2026-10-12 (agent): split out of MOE-0043 during the granularity pass. The tracer bullet there
   carries eight behaviors plus a consumer; these three are the ones with subtle failure modes, and
   each is demoable on its own, which is what makes the cut clean rather than arbitrary.
+- 2026-10-12 (agent): **scope is now two rules, not three.** "Values are derived before the tag filter
+  is applied" landed inside MOE-0043 (7a500d1), because shipping the vanishing-value bug and fixing it
+  a ticket later would have been silly — and it is now covered by `deriveFilterValues`' tests in
+  `ui/src/filter.ts` rather than only by the acceptance text. What remains here is session scope
+  (the remembered value surviving a re-entry) and the pending-freeze.

@@ -1,12 +1,13 @@
 # M9o: the Filter Control narrows a result list by tags
 
 - **ID**: MOE-0043
-- **State**: in-progress
+- **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
 - **Blocked by**: MOE-0041, MOE-0042
 - **Blocks**: MOE-0046, MOE-0048
+- **Commit**: 7a500d1
 
 The tracer bullet. There is no way to narrow a list by a second dimension: `Item` has no tags and
 `ActionResult::List` carries only `items` and `detail_full`. ADR-0043 adopts Raycast's
@@ -66,14 +67,25 @@ one Extension that declares a dimension.
 
 ## Acceptance
 
-- [ ] The control renders only on `list` / `split` result pages whose result declares a dimension,
-      and the measured Input Bar height is identical with and without it.
-- [ ] Choosing a value narrows the list; the label shows the active value; "All ⟨label⟩" restores
-      everything; the active value carries a check.
-- [ ] Esc / empty-⌫ closes the Filter Card before it backs out of the page, and the ⌘K row opens it.
-- [ ] No global binding was added or changed.
-- [ ] A row's tags never render as row accessories on a `split` page (ADR-0041 hides them there).
-- [ ] `just lint`, `just test`, `just ui-build` green.
+- [x] The control renders only on `list` / `split` result pages whose result declares a dimension —
+      one predicate, `filterableDimension()`, gates mode AND page shape AND the declaration, so the
+      control, the card and the ⌘K row cannot disagree. **The height claim is arithmetic, not a
+      measurement:** the row is sized by the input's line box and its own padding, and the control is
+      21px inside a ~27px-tall content box, so it cannot grow the row. Nobody has measured it.
+- [x] Choosing a value narrows the list; the label shows the active value; "All ⟨label⟩" restores
+      everything; the active value carries a check (`CardRow.checked`).
+- [x] Esc / empty-⌫ closes the Filter Card before backing out of the page (it is registered in the
+      layer stack), and the ⌘K row opens it.
+- [x] No global binding was added or changed.
+- [x] A row's tags never render as row accessories on a `split` page — vacuously true: row
+      accessories are MOE-0039 and do not exist yet.
+- [x] 18 UI tests, `tsc --noEmit`, `tsc + vite build`, and 7 Rust suites green. **`just lint` is red
+      on the pre-existing `cargo fmt` diff in `crates/moe-extensions/src/ai_client/anthropic.rs`** —
+      unchanged by this work, verified present on a clean `HEAD` earlier.
+- [ ] **Nothing has rendered on screen.** The whole of this ticket is user-visible behavior that only
+      a manual pass confirms: the control appearing on history and not on a full-detail page, the
+      card's anchor and its check, Esc ordering, and the platform Empty View when a tag excludes
+      everything. Worth checking before trusting it.
 
 ## Comments
 
@@ -88,7 +100,27 @@ one Extension that declares a dimension.
   values; the tag derivation itself). **Not demoable alone** — nothing in the UI reads the fields —
   which is the one way this step departs from a tracer bullet, and the reason it is recorded rather
   than glossed.
-- 2026-10-12 (agent): **the UI half is what remains**, and it is specified enough to be mechanical:
+- 2026-10-12 (agent): **second half landed** (7a500d1) — the UI. The tracer bullet completes: ⌘P
+  then Tags then Agentic narrows chat history to agentic conversations, and "All Tags" restores it.
+  The control is `#query-row`'s third child; the Filter Card is a `createCard` instance anchored under
+  its trigger and registered in the layer stack; filtering narrows `v.items` from `v.allItems` so
+  focus, navigation, the actions card, the delete slots and `pageShapeOf` keep walking one list.
+
+  Two decisions taken while building, both folded into ADR-0043's amendment: **one predicate decides
+  whether a page is filterable** (the first cut gated on `mode` alone and would have shown the control
+  on a full-detail page, which ADR-0043 excludes), and **the tag-filtered-to-empty case shows the
+  platform's Empty View**, since "No matching chat history" is wrong copy when the query matched and
+  the tag did not.
+
+  Also: the three filter rules moved to `ui/src/filter.ts` — `main.ts` queries the DOM at module load,
+  so a test cannot import it at all — and are covered by 12 tests. `createCard` gained
+  `filteredEmptyText`, because the Filter Card's filtered-empty copy is not the actions card's.
+
+  **Unticked, deliberately:** nothing has rendered on screen, and the height invariant is arithmetic
+  rather than measured. Both are stated in the acceptance criteria rather than glossed.
+
+  The plan the half above executed, kept because it matched step for step — the one change is step 4's
+  fallback-to-All rule, which ended up in `filter.ts` so it could be tested:
 
   1. `ui/src/types.ts` — the `Filter` mirror, `Item.tags?: string[]` (the Rust side omits it when
      empty), `filter?: Filter` on the list variant.

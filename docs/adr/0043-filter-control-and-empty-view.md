@@ -123,3 +123,29 @@ empty `Vec` when nothing matches and no Extension captures the input, so the pla
 copy there. That makes the command layer the Empty View's first real consumer — ahead of any
 Extension declaring one — and it is why the platform default exists at all rather than every empty
 list needing a declaration.
+
+## Amendment: one predicate, the platform's copy, and where the rules live
+
+Building the Filter Control settled three things the decision above left to implementation.
+
+**One predicate decides whether a page is filterable.** The decision scopes the filter to the `list`
+and `split` shapes, but `mode == "items"` is true of all three — the first cut gated on mode alone and
+would have shown the control on a full-detail page, where a single result has nothing to narrow.
+`filterableDimension()` now gates on mode AND page shape (through `pageShapeOf`, the single shape
+authority under ADR-0018) AND the declaration, and the Filter Control, the Filter Card and the ⌘K row
+all read it. Three surfaces, one answer: they cannot disagree about whether the page has a dimension.
+
+**When the tag filter empties the list, the Empty View is the platform's.** The Extension's copy says
+why the *query* matched nothing ("No matching chat history"), which is wrong when the query matched
+and the tag did not. A page narrowed to zero by a filter therefore shows `No matches for "⟨value⟩"` /
+"Clear the filter to see everything." That is the list-is-empty principle one level in — **the party
+that caused the emptiness supplies the words** — and it is why the value list has to be derived
+before the filter is applied: a value that vanished from its own picker would leave the page narrowed
+with no way to see or clear the choice.
+
+**The rules live outside the DOM module.** `applyTagFilter`, `deriveFilterValues` and
+`settleFilterValue` sit in `ui/src/filter.ts` rather than beside their caller, because `main.ts`
+queries the DOM at module load and a test cannot import it at all. Twelve tests cover them — each one
+a way the list could lie: showing rows the value does not match, offering a value nothing carries, or
+staying narrowed by a value that has vanished. `createCard` also gained `filteredEmptyText`, since the
+Filter Card's filtered-empty copy is not the actions card's.
