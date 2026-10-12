@@ -7,11 +7,12 @@ import { appendMention, humanBytes, validatePath } from "./attachment";
 import { createActionPlan, type ActionRow, type PageContext } from "./actions";
 import { createCard, type CardSection } from "./card";
 import { createComposer } from "./composer";
-import { accessoryLabel, rowAccessories } from "./accessories";
+import { rowAccessories } from "./accessories";
 import { applyTagFilter, filterChangeAllowed, filterValuesFor, settleFilterValue } from "./filter";
 import { generatingEl } from "./generating";
-import { iconEl, inkClass } from "./icons";
+import { iconEl } from "./icons";
 import { metadataEl, type MetadataDeps } from "./metadata";
+import { rowEl, type Row, type RowDeps } from "./rows";
 import { invokeWithTimeout } from "./ipc";
 import { kbdEl } from "./kbd";
 import { GENERAL_KEY_LABELS, generalActionOf, keyDisplay, loadKeyDisplay, type EntryAction } from "./keymap";
@@ -43,7 +44,6 @@ import { store } from "./store";
 import { streamCoalescer } from "./stream";
 import { initTheme, themePreference, type ThemePreference } from "./theme";
 import type {
-  Accessory,
   Action,
   ActionResult,
   CommandEventPayload,
@@ -568,22 +568,6 @@ function measuredPanelHeight(): number {
   return panelHeightFor(inputHeight);
 }
 
-interface Row {
-  title: string;
-  subtitle?: string;
-  key?: string;
-  /** Semantic name; undefined = use the source command's icon, or fall back if there is none. */
-  icon?: string;
-  /** Fallback shape (no icon specified) is displayed dimmed. */
-  iconMuted?: boolean;
-  /** Trailing type badge on command rows (ADR-0030): "Command" unless the extension declares otherwise. */
-  badge?: string;
-  /** Trailing accessories on result rows (ADR-0041): tags, text, relative dates, tinted icons. */
-  accessories?: Accessory[];
-  /** Root page rows (ADR-0031): the declared shortcut reveals only while the row is focused or hovered. */
-  revealKeys?: boolean;
-}
-
 function currentEntries(): Row[] {
   const v = view.get();
   return v.items.map((i) => {
@@ -609,84 +593,6 @@ function sectionHeaderEl(title: string): HTMLLIElement {
   return li;
 }
 
-/** One accessory element (ADR-0041): a tinted pill, plain text, a relative date, or a tinted glyph.
- *  `kind` picks the shape; an unknown color name leaves the element in the secondary step. */
-function accessoryEl(a: Accessory, nowUnix: number): HTMLElement | SVGElement {
-  if (a.kind === "icon") {
-    const wrap = document.createElement("span");
-    wrap.className = "moe-accessory";
-    const ink = inkClass(a.color);
-    if (ink) wrap.classList.add(ink);
-    wrap.append(iconEl(a.value, { size: 14 }));
-    if (a.tooltip) wrap.title = a.tooltip;
-    return wrap;
-  }
-  const el = document.createElement("span");
-  el.className = `moe-accessory ${a.kind === "tag" ? "moe-accessory-tag" : `moe-accessory-${a.kind}`}`;
-  const ink = inkClass(a.color);
-  if (ink) el.classList.add(ink);
-  el.textContent = accessoryLabel(a, nowUnix);
-  if (a.tooltip) el.title = a.tooltip;
-  return el;
-}
-
-/** A single row: hover is an interactive hint (never steals focus) and only applies after real
- * pointer movement — the re-render flicker while keyboard-navigating is gated away in
- * styles.css (.moe-row + data-pointer); only the focused row gets the main highlight. */
-function rowEl(e: Row, i: number, focused: boolean): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className =
-    "moe-row group flex cursor-default items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm transition-colors duration-100 " +
-    (focused
-      ? "bg-surface-selected text-fg"
-      : "text-fg");
-  if (focused) li.dataset.focused = "true";
-  li.append(
-    iconEl(e.icon, {
-      className: e.iconMuted
-        ? "text-fg-faint"
-        : focused
-          ? "text-fg"
-          : "text-fg-subtle group-hover:text-fg-muted",
-    }),
-  );
-  const left = document.createElement("div");
-  left.className = "min-w-0 flex-1 truncate";
-  left.textContent = e.title;
-  if (e.subtitle) {
-    const sub = document.createElement("span");
-    sub.className = "ml-2 text-xs text-fg-subtle";
-    sub.textContent = e.subtitle;
-    left.append(sub);
-  }
-  li.append(left);
-  if (e.accessories) {
-    // Trailing accessories (ADR-0041). `rowAccessories` already capped them and hid them in `split`;
-    // a date accessory renders from its timestamp here, not from a backend-formatted string.
-    const now = Math.floor(Date.now() / 1000);
-    for (const a of e.accessories) li.append(accessoryEl(a, now));
-  }
-  if (e.key) {
-    // Key blocks (shadcn Kbd style): the shared kbdEl component, one block per key (ADR-0015/0030)
-    const keys = kbdEl(e.key, { firstOnly: true });
-    keys.classList.add("shrink-0");
-    // Root page (ADR-0031): reveal on focus/hover only (styles.css `.moe-row-keys`)
-    if (e.revealKeys) keys.classList.add("moe-row-keys");
-    li.append(keys);
-  }
-  if (e.badge) {
-    // Trailing type badge (ADR-0030): what kind of row this is (Command / AI Command / File…);
-    // its text size comes from the shared secondary-text token (styles.css, `.moe-kind-badge`)
-    const badge = document.createElement("span");
-    badge.className = "moe-kind-badge";
-    badge.textContent = e.badge;
-    li.append(badge);
-  }
-  li.addEventListener("mousedown", () => {
-    view.update((s) => ({ ...s, focus: i }));
-  });
-  return li;
-}
 
 /**
  * The dimension this page can actually filter by (ADR-0043): nothing on the command layer, nothing on
@@ -729,6 +635,12 @@ function renderFilterControl() {
 
 function render() {
   const v = view.get();
+  // One clock reading and one focus sink for every row this render (ADR-0041/MOE-0053): handed to the
+  // renderer rather than reached for by it, which is what lets a test drive `rowEl`.
+  const rowDeps: RowDeps = {
+    nowUnix: Math.floor(Date.now() / 1000),
+    onFocus: (index) => view.update((s) => ({ ...s, focus: index })),
+  };
   // The Input Bar's leading slot follows the page layer (Moe logo → back arrow, ADR-0034)
   renderInputIcon();
   // The Filter Control follows the page's declared dimension (ADR-0043)
@@ -763,6 +675,7 @@ function render() {
           },
           flat,
           flat === v.focus,
+          rowDeps,
         );
         if (flat === v.focus) focusedLi = li;
         flat += 1;
@@ -785,7 +698,7 @@ function render() {
     v.items.forEach((item, i) => {
       if (item.group && item.group !== lastGroup) lis.push(sectionHeaderEl(item.group));
       lastGroup = item.group;
-      const li = rowEl(entries[i], i, i === v.focus);
+      const li = rowEl(entries[i], i, i === v.focus, rowDeps);
       if (i === v.focus) focusedLi = li;
       lis.push(li);
     });
