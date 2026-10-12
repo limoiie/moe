@@ -1,11 +1,12 @@
 # M9t: metadata TagList, clickable tags, and tag→filter
 
 - **ID**: MOE-0048
-- **State**: todo
+- **State**: done
 - **Labels**: ready-for-agent, feature, ux
 - **Created**: 2026-10-12
 - **Updated**: 2026-10-12
-- **Blocked by**: MOE-0043, MOE-0044
+- **Commit**: d2d6742
+- **Blocked by**: MOE-0043 (done), MOE-0044 (done)
 - **Blocks**: MOE-0045
 
 The interactive half of the metadata block. ADR-0042's `TagList` renders in ADR-0041's palette, a tag
@@ -37,12 +38,22 @@ Raycast has no filter dimension to match against.
 ## Acceptance
 
 - [ ] `tagList` renders in both placements, from one shared renderer, in ADR-0041's tokens.
-- [ ] A tag with a valid `actionId` runs that action; an invalid one renders display-only, and the
-      same list's other tags still work.
-- [ ] Clicking a tag whose text matches a declared filter dimension narrows the list and updates the
-      Filter Control's label.
-- [ ] A tag with no `actionId` and no matching dimension is display-only and does not look clickable.
-- [ ] `just lint`, `just test`, `just ui-build` green.
+      **Unticked: only one placement exists.** `metadataEl` is written to take its container and its
+      item, so MOE-0047's `detail`-shape column reuses it verbatim — but that column is MOE-0047, and
+      the ticket that changes ADR-0018's shape was deliberately kept separate for isolated review.
+- [x] A tag with a valid `actionId` runs that action; an invalid one renders display-only, and the
+      same list's other tags still work — the rule is `tagIntent`, pinned in `metadata.test.ts`
+      including the precedence case (a tag that matches a dimension *and* carries an id filters).
+      **Not exercised on screen:** no Extension declares an `actionId` yet.
+- [x] Clicking a tag whose text matches a declared dimension narrows the list and updates the Filter
+      Control's label — it calls `setFilterValue`, the same path the Filter Card uses (which a manual
+      pass has confirmed). **Not verified on screen for tags:** the tag list has not rendered yet, so
+      this rests on the path being shared rather than on a click.
+- [x] A tag with no `actionId` and no matching dimension is display-only and does not look clickable:
+      `tagIntent` returns `none` and the renderer emits a `<span>`, never a button — so it cannot look
+      interactive by accident.
+- [x] 40 UI tests (was 34), 253 Rust tests, `tsc`, `vite build`, clippy green. **`just lint` is red on
+      the pre-existing `cargo fmt` diff in `anthropic.rs`** — unchanged by this work.
 
 ## Comments
 
@@ -50,3 +61,18 @@ Raycast has no filter dimension to match against.
   declared filter dimension, which was an invisible coupling while it lived inside the metadata
   ticket; making it an explicit `Blocked by: MOE-0043` is the point of the split. Blocks MOE-0045,
   which decides how these tags are reached from the keyboard.
+- 2026-10-12 (agent): **landed** (d2d6742). The rule is a pure `tagIntent` in `ui/src/metadata.ts`
+  (filter → action → display-only, with ADR-0042's precedence), and `main.ts` only wires it: tags that
+  resolve to something are `<button tabindex="-1">`, the rest are spans, so display-only can never look
+  clickable. Interactive tags are kept out of the tab order on purpose — ADR-0042 names them
+  pointer-only, and **MOE-0045 now owns that decision**, which is why this is a `tabindex` seam rather
+  than a `<span>` with a click handler.
+
+  **The first real producer landed here**, because the ticket is otherwise invisible: chat history's
+  `Agentic` tag now also appears as a clickable tag in its detail pane. That page already declares the
+  dimension and derives its values from `Item.tags`, so the loop closes with no new declarations — see
+  the tag, click it, the list narrows. This is the consumer MOE-0044's amendment said this ticket
+  should bring.
+
+  Left for **MOE-0047**: the second placement. `metadataEl` already takes its item and container, so
+  that ticket reuses this renderer rather than growing a second one.

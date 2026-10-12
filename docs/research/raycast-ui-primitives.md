@@ -143,7 +143,8 @@ Work implied by the four ADRs, in rough dependency order:
    "needed on at least two surfaces" (ADR-0044).
 8. The three-accessory cap has no Raycast precedent; revisit if a real list needs four, since what
    gives is the row height and the ten-row grid (ADR-0041).
-9. Keyboard access to metadata tags (divergence #8).
+9. Keyboard access to metadata tags (divergence #8) — **MOE-0045**, unblocked by MOE-0048, which left
+the tags out of the tab order on purpose.
 10. `Color.Dynamic`, and sections in filter value lists — both deferred with a named trigger
     (exact brand reproduction; a declared value list that needs grouping).
 

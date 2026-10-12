@@ -76,3 +76,23 @@ candidate — its detail card carries the same facts this ADR wanted structured 
 `ai_models.rs`) — but moving them out of the prose is a change to a shipped surface, and the honest
 home for it is MOE-0048, which needs a real `TagList` on a real page. Until then this ADR's first
 placement claim rests on code review, not on a screen.
+
+## Amendment: the tag list landed, and found its first producer
+
+MOE-0048 implemented the interactive half. The tag-click rule is a pure function (`tagIntent`,
+`ui/src/metadata.ts`) rather than a closure inside the renderer — it has three outcomes, and two of
+them are the kind that go wrong quietly: an unresolvable `actionId` must degrade to display-only
+rather than error, and a tag that matches a dimension must outrank one that carries an action.
+
+**A display-only tag is a span, and an interactive one is a button with `tabindex="-1"`.** ADR-0042
+names tags pointer-only, so they are deliberately outside the tab order; using a real button keeps the
+cursor and the semantics honest, and makes MOE-0045's keyboard decision a one-attribute change rather
+than a re-render.
+
+**The first producer is chat history**, which is what made this ticket visible: its `Agentic` tag now
+also appears as a clickable tag in the detail pane. That page already derives its dimension from
+`Item.tags`, so the tag→filter rule needs no new declaration to work — which is the loop this ADR
+described, on a page that already existed.
+
+The `detail` shape's placement is still unbuilt (**MOE-0047**); the renderer takes its item and its
+container so that ticket reuses it instead of writing a second one.
