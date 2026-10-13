@@ -14,7 +14,7 @@ use serde::Serialize;
 use crate::ai::{
     FrameBuilder, RoundEnd, RoundRequest, StreamFinish, begin_stream, end_stream, stream_once,
 };
-use crate::ai_client::{AnthropicThinking, ChatRequest, request_body};
+use crate::ai_client::{AnthropicThinking, ChatRequest, Reasoning, request_body};
 use crate::attachment;
 use crate::tools::{self, ToolContext};
 
@@ -114,7 +114,9 @@ pub(crate) struct AgentTurnRequest {
     /// The provider's protocol: the loop speaks `openai-chat` (MOE-0026) and `anthropic`
     /// (MOE-0035); the gate in `ai.rs` admits only these.
     pub protocol: Protocol,
-    pub reasoning: bool,
+    /// What the turn asks of the model's reasoning (MOE-0062); the chat surfaces pass the
+    /// provider's own default, since the per-command settings belong to the AI Commands.
+    pub reasoning: Reasoning,
     pub max_tokens: u64,
     /// The Anthropic adapter's thinking dialect (the other protocols ignore it).
     pub anthropic_thinking: AnthropicThinking,
@@ -221,6 +223,8 @@ pub(crate) fn run_agentic_turn(request: AgentTurnRequest, emitter: Arc<dyn Emitt
                 messages: wire,
                 stream: true,
                 reasoning,
+                // The agentic loop is a chat turn: no per-command temperature rides it (MOE-0062).
+                temperature: None,
                 max_tokens,
                 tools: tool_specs.clone(),
                 anthropic_thinking,
@@ -659,7 +663,7 @@ mod tests {
                     key: "test-key".into(),
                     model: "m".into(),
                     protocol: Protocol::OpenAiChat,
-                    reasoning: false,
+                    reasoning: Reasoning::Off,
                     max_tokens: 8192,
                     anthropic_thinking: AnthropicThinking::Omit,
                     record: vec![Message {
@@ -776,7 +780,7 @@ mod tests {
                     key: "test-key".into(),
                     model: "m".into(),
                     protocol: Protocol::OpenAiChat,
-                    reasoning: false,
+                    reasoning: Reasoning::Off,
                     max_tokens: 8192,
                     anthropic_thinking: AnthropicThinking::Omit,
                     record: vec![Message {
@@ -882,7 +886,7 @@ mod tests {
                     key: "test-key".into(),
                     model: "m".into(),
                     protocol: Protocol::OpenAiChat,
-                    reasoning: false,
+                    reasoning: Reasoning::Off,
                     max_tokens: 8192,
                     anthropic_thinking: AnthropicThinking::Omit,
                     record: vec![Message {

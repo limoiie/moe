@@ -10,7 +10,10 @@
 use moe_core::contract::{
     Action, ActionKind, ActionResult, EmptyView, Filter, Item, Metadata, MoeError,
 };
-use moe_platform::config::{MoeConfig, Protocol, ProviderConfig};
+use moe_core::registry::Registry;
+use moe_platform::config::{
+    CommandAiConfig, MoeConfig, Protocol, ProviderConfig, ReasoningSetting,
+};
 use moe_platform::keychain;
 use moe_platform::model_catalog::{self, Catalog, Cost, Model as CatalogModel};
 
@@ -575,6 +578,41 @@ pub fn model_options_with(
         .as_deref()
         .map(str::trim)
         .filter(|model| !model.is_empty());
+    options_of(rows, active_model)
+}
+
+/// Every enabled model of every keyed provider, ranked — the settings window's per-command model
+/// select (MOE-0062). No per-provider cap and no query: the switcher's top-N is a card affordance
+/// (MOE-0030), while a settings list is a list of what exists.
+pub fn model_choices() -> Vec<ModelOption> {
+    let config = MoeConfig::load();
+    let catalog = model_catalog::load();
+    let has_key = |provider_id: &str| {
+        keychain::ai_api_key_for(provider_id, &env_names(&catalog, provider_id)).is_some()
+    };
+    model_choices_with(&config, &catalog, &has_key)
+}
+
+/// The same with injected config/catalog/key lookup (tests).
+pub fn model_choices_with(
+    config: &MoeConfig,
+    catalog: &Catalog,
+    has_key: &dyn Fn(&str) -> bool,
+) -> Vec<ModelOption> {
+    let mut rows = all_rows(config, catalog);
+    rows.retain(|row| has_key(row.provider_id));
+    rank_rows(&mut rows);
+    let active_model = config
+        .ai
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
+    options_of(rows, active_model)
+}
+
+/// The picker rows → the wire shape; `current` marks the model that is half of the active pair.
+fn options_of(rows: Vec<Row>, active_model: Option<&str>) -> Vec<ModelOption> {
     rows.iter()
         .map(|row| ModelOption {
             provider_id: row.provider_id.to_string(),
@@ -695,6 +733,225 @@ pub struct ModelSettings {
     pub enabled: bool,
     /// The model is half of the active pair.
     pub active: bool,
+}
+
+/// One AI Command's row in the settings window (MOE-0062): the model it runs on, its reasoning
+/// effort and its temperature. Every field is the *current* value — an unconfigured command shows
+/// the active pair it inherits, so the window never has to explain what "default" resolves to.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandSettings {
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub icon: Option<String>,
+    /// The pair this command resolves to: its own override when it has one, else the active pair.
+    /// `None` = nothing is configured yet, and the command will show its setup card.
+    pub provider_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
+    /// The command carries its own pair (the row offers "Use the active model" then).
+    pub overridden: bool,
+    /// The configured effort (`off` / `low` / `medium` / `high`); absent = the provider's default.
+    pub reasoning: Option<String>,
+    /// Whether the protocol this command resolves to has a request-side reasoning knob at all —
+    /// the Chat Completions dialect does not (reasoning there is a property of the model).
+    pub reasoning_supported: bool,
+    /// The configured temperature; absent = the key is not sent.
+    pub temperature: Option<f64>,
+}
+
+/// The AI Commands' settings rows (MOE-0062): every command the `ai-commands` extension declares,
+/// with the model it runs on. The list comes from the real registry, so the window cannot drift
+/// from what the extension actually offers.
+pub fn command_settings() -> Vec<CommandSettings> {
+    let config = MoeConfig::load();
+    let catalog = model_catalog::load();
+    command_settings_with(&config, &catalog)
+}
+
+/// The rows with injected config/catalog (tests).
+pub fn command_settings_with(config: &MoeConfig, catalog: &Catalog) -> Vec<CommandSettings> {
+    let mut registry = Registry::new();
+    crate::install(&mut registry);
+    let active = active_pair_with(config, catalog);
+    registry
+        .commands()
+        .into_iter()
+        .filter(|command| command.extension_id == "ai-commands")
+        .map(|command| {
+            let own = config.ai.commands.get(&command.id);
+            let pair = own
+                .and_then(|c| Some((c.provider.clone()?, c.model.clone()?)))
+                .map(|(provider, model)| {
+                    let block = config.ai.providers.get(&provider);
+                    let provider_name = provider_display_name(&provider, block, catalog);
+                    let model_name = catalog
+                        .get(&provider)
+                        .and_then(|entry| entry.models.get(&model))
+                        .map(model_name)
+                        .unwrap_or(&model)
+                        .to_string();
+                    (provider, provider_name, model, model_name)
+                });
+            let overridden = pair.is_some();
+            let (provider_id, provider_name, model_id, model_name) = match pair {
+                Some((provider, provider_name, model, model_name)) => (
+                    Some(provider),
+                    Some(provider_name),
+                    Some(model),
+                    Some(model_name),
+                ),
+                None => (
+                    active.as_ref().map(|pair| pair.provider_id.clone()),
+                    active.as_ref().map(|pair| pair.provider_name.clone()),
+                    active.as_ref().map(|pair| pair.model_id.clone()),
+                    active.as_ref().map(|pair| pair.model_name.clone()),
+                ),
+            };
+            let reasoning_supported = matches!(
+                provider_id
+                    .as_deref()
+                    .and_then(|id| crate::ai_client::providers::protocol_of(config, id)),
+                Some(Protocol::Anthropic | Protocol::OpenAiResponses)
+            );
+            CommandSettings {
+                id: command.id,
+                title: command.title,
+                subtitle: command.subtitle,
+                icon: command.icon,
+                provider_id,
+                provider_name,
+                model_id,
+                model_name,
+                overridden,
+                reasoning: own
+                    .and_then(|c| c.reasoning)
+                    .map(|effort| effort.as_str().to_string()),
+                reasoning_supported,
+                temperature: own.and_then(|c| c.temperature),
+            }
+        })
+        .collect()
+}
+
+/// One per-command setter's shared shape (MOE-0062): read the current block, apply the patch, write
+/// it back through the store. A block that ends up empty is removed by the store itself, so
+/// "Default" in the window really means the key is gone.
+pub fn set_command_ai_with(
+    command: &str,
+    patch: impl FnOnce(&mut CommandAiConfig) -> Result<(), String>,
+    store: impl FnOnce(&str, &CommandAiConfig) -> Result<(), String>,
+    config: &MoeConfig,
+) -> Result<(), MoeError> {
+    let mut current = config.ai.commands.get(command).cloned().unwrap_or_default();
+    patch(&mut current).map_err(MoeError::Internal)?;
+    store(command, &current).map_err(MoeError::Internal)
+}
+
+/// Point one AI Command at its own provider/model pair, or back at the active pair (`None`).
+pub fn set_command_model(
+    command: &str,
+    pair: Option<(&str, &str)>,
+    store: impl FnOnce(&str, &CommandAiConfig) -> Result<(), String>,
+) -> Result<(), MoeError> {
+    let config = MoeConfig::load();
+    set_command_model_with(command, pair, store, &config)
+}
+
+/// The same with injected config (tests).
+pub fn set_command_model_with(
+    command: &str,
+    pair: Option<(&str, &str)>,
+    store: impl FnOnce(&str, &CommandAiConfig) -> Result<(), String>,
+    config: &MoeConfig,
+) -> Result<(), MoeError> {
+    set_command_ai_with(
+        command,
+        |current| {
+            match pair {
+                Some((provider, model)) => {
+                    if provider.trim().is_empty() || model.trim().is_empty() {
+                        return Err("a command's model needs both a provider and a model".into());
+                    }
+                    current.provider = Some(provider.trim().to_string());
+                    current.model = Some(model.trim().to_string());
+                }
+                None => {
+                    current.provider = None;
+                    current.model = None;
+                }
+            }
+            Ok(())
+        },
+        store,
+        config,
+    )
+}
+
+/// Set one AI Command's reasoning effort (`None` = the provider's own default).
+pub fn set_command_reasoning(
+    command: &str,
+    reasoning: Option<&str>,
+    store: impl FnOnce(&str, &CommandAiConfig) -> Result<(), String>,
+) -> Result<(), MoeError> {
+    let config = MoeConfig::load();
+    set_command_reasoning_with(command, reasoning, store, &config)
+}
+
+/// The same with injected config (tests).
+pub fn set_command_reasoning_with(
+    command: &str,
+    reasoning: Option<&str>,
+    store: impl FnOnce(&str, &CommandAiConfig) -> Result<(), String>,
+    config: &MoeConfig,
+) -> Result<(), MoeError> {
+    set_command_ai_with(
+        command,
+        |current| {
+            current.reasoning = reasoning
+                .map(|raw| ReasoningSetting::parse(raw).map_err(|err| err.to_string()))
+                .transpose()?;
+            Ok(())
+        },
+        store,
+        config,
+    )
+}
+
+/// Set one AI Command's temperature (`None` = the key is not sent). The range is the widest the
+/// protocols allow; a provider with a narrower one says so on its own 4xx.
+pub fn set_command_temperature(
+    command: &str,
+    temperature: Option<f64>,
+    store: impl FnOnce(&str, &CommandAiConfig) -> Result<(), String>,
+) -> Result<(), MoeError> {
+    let config = MoeConfig::load();
+    set_command_temperature_with(command, temperature, store, &config)
+}
+
+/// The same with injected config (tests).
+pub fn set_command_temperature_with(
+    command: &str,
+    temperature: Option<f64>,
+    store: impl FnOnce(&str, &CommandAiConfig) -> Result<(), String>,
+    config: &MoeConfig,
+) -> Result<(), MoeError> {
+    set_command_ai_with(
+        command,
+        |current| {
+            if let Some(value) = temperature
+                && !(0.0..=2.0).contains(&value)
+            {
+                return Err(format!("temperature {value} is out of range (0.0 ..= 2.0)"));
+            }
+            current.temperature = temperature;
+            Ok(())
+        },
+        store,
+        config,
+    )
 }
 
 /// One provider group of the settings window (MOE-0029): the providers this install actually
@@ -1782,6 +2039,164 @@ mod tests {
         // With a key, beta becomes managed and drops out of the search
         let keyed = catalog_providers_with("", &config(), &catalog(), &|id: &str| id == "beta");
         assert!(keyed.is_empty());
+    }
+
+    /// The per-command settings rows (MOE-0062): every AI Command appears once, an unconfigured one
+    /// shows the active pair it inherits, and a configured one shows its own pair plus its knobs.
+    #[test]
+    fn command_settings_show_the_inherited_or_own_pair() {
+        let rows = command_settings_with(&config(), &catalog());
+        assert!(
+            rows.len() >= 10,
+            "the whole AI Commands family: {}",
+            rows.len()
+        );
+        let translate = rows
+            .iter()
+            .find(|row| row.id == "aicmd.translate")
+            .expect("registered");
+        assert_eq!(translate.title, "Translate");
+        assert_eq!(translate.provider_id.as_deref(), Some("deepseek"));
+        assert_eq!(translate.model_name.as_deref(), Some("DeepSeek New"));
+        assert!(!translate.overridden);
+        assert_eq!(translate.reasoning, None);
+        assert_eq!(translate.temperature, None);
+        // The fixture's active provider is openai-chat: no request-side reasoning knob
+        assert!(!translate.reasoning_supported);
+
+        let own = MoeConfig::from_toml(
+            "[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-new\"\n\
+             [ai.providers.custom]\nname = \"My Gateway\"\nprotocol = \"anthropic\"\n\
+             api_url = \"https://gw.example\"\nmodels = [\"c1\"]\n\
+             [ai.commands.\"aicmd.translate\"]\nprovider = \"custom\"\nmodel = \"c1\"\n\
+             reasoning = \"medium\"\ntemperature = 0.3\n",
+        )
+        .expect("fixture config parses");
+        let rows = command_settings_with(&own, &catalog());
+        let translate = rows
+            .iter()
+            .find(|row| row.id == "aicmd.translate")
+            .expect("registered");
+        assert!(translate.overridden);
+        assert_eq!(translate.provider_id.as_deref(), Some("custom"));
+        assert_eq!(translate.provider_name.as_deref(), Some("My Gateway"));
+        assert_eq!(translate.model_id.as_deref(), Some("c1"));
+        assert_eq!(translate.reasoning.as_deref(), Some("medium"));
+        assert_eq!(translate.temperature, Some(0.3));
+        // The custom provider speaks anthropic in the fixture: the effort is a real knob there
+        assert!(translate.reasoning_supported);
+        // Another command still inherits the active pair
+        let improve = rows.iter().find(|row| row.id == "aicmd.improve").unwrap();
+        assert!(!improve.overridden);
+        assert_eq!(improve.provider_id.as_deref(), Some("deepseek"));
+    }
+
+    /// The three setters (MOE-0062) patch one key at a time and hand the whole block to the store:
+    /// each one keeps the keys it does not own, the model pair is both-or-neither, the effort is
+    /// validated, and the temperature has a range.
+    #[test]
+    fn command_setters_patch_one_key_at_a_time() {
+        /// A store that records the block it was handed, so the test can read what was written.
+        fn recording(
+            writes: &mut Vec<CommandAiConfig>,
+        ) -> impl FnMut(&str, &CommandAiConfig) -> Result<(), String> + '_ {
+            move |_command, config| {
+                writes.push(config.clone());
+                Ok(())
+            }
+        }
+
+        // The block already carries an effort and a temperature: a setter that does not own them
+        // must keep them (each setter reads the file's block, patches one key, writes it back).
+        let config = MoeConfig::from_toml(
+            "[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-new\"\n\
+             [ai.commands.\"aicmd.translate\"]\nreasoning = \"high\"\ntemperature = 0.5\n",
+        )
+        .expect("fixture config parses");
+
+        let mut writes = Vec::new();
+        set_command_model_with(
+            "aicmd.translate",
+            Some(("custom", "c1")),
+            recording(&mut writes),
+            &config,
+        )
+        .expect("stored");
+        let after_model = writes.last().expect("written");
+        assert_eq!(after_model.provider.as_deref(), Some("custom"));
+        assert_eq!(after_model.model.as_deref(), Some("c1"));
+        assert_eq!(
+            after_model.reasoning,
+            Some(ReasoningSetting::High),
+            "the model change keeps the effort"
+        );
+        assert_eq!(
+            after_model.temperature,
+            Some(0.5),
+            "the model change keeps the temperature"
+        );
+
+        set_command_reasoning_with(
+            "aicmd.translate",
+            Some("low"),
+            recording(&mut writes),
+            &config,
+        )
+        .expect("stored");
+        let after_reasoning = writes.last().unwrap();
+        assert_eq!(after_reasoning.reasoning, Some(ReasoningSetting::Low));
+        assert_eq!(after_reasoning.temperature, Some(0.5));
+
+        set_command_temperature_with(
+            "aicmd.translate",
+            Some(1.5),
+            recording(&mut writes),
+            &config,
+        )
+        .expect("stored");
+        assert_eq!(writes.last().unwrap().temperature, Some(1.5));
+
+        // Clearing returns each knob to the provider's own default, one key at a time
+        set_command_reasoning_with("aicmd.translate", None, recording(&mut writes), &config)
+            .expect("stored");
+        assert_eq!(writes.last().unwrap().reasoning, None);
+        set_command_temperature_with("aicmd.translate", None, recording(&mut writes), &config)
+            .expect("stored");
+        assert_eq!(writes.last().unwrap().temperature, None);
+        set_command_model_with("aicmd.translate", None, recording(&mut writes), &config)
+            .expect("stored");
+        let cleared = writes.last().unwrap();
+        assert_eq!(cleared.provider, None);
+        assert_eq!(cleared.model, None);
+        assert_eq!(
+            cleared.reasoning,
+            Some(ReasoningSetting::High),
+            "clearing the model leaves the knobs alone"
+        );
+
+        // Unknown effort, half a pair, and an out-of-range temperature are refused
+        assert!(
+            set_command_reasoning_with(
+                "aicmd.translate",
+                Some("sometimes"),
+                |_, _| Ok(()),
+                &config
+            )
+            .is_err()
+        );
+        assert!(
+            set_command_model_with(
+                "aicmd.translate",
+                Some(("custom", " ")),
+                |_, _| Ok(()),
+                &config
+            )
+            .is_err()
+        );
+        assert!(
+            set_command_temperature_with("aicmd.translate", Some(9.0), |_, _| Ok(()), &config)
+                .is_err()
+        );
     }
 
     /// Token formatting: plain below a thousand, `k` truncated, `M` with one significant decimal.

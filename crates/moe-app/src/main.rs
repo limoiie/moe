@@ -1180,6 +1180,13 @@ fn ai_model_options(query: String) -> Vec<moe_extensions::ai_models::ModelOption
     moe_extensions::ai_models::model_options(&query)
 }
 
+/// Every enabled model of every keyed provider, for the settings window's per-command model select
+/// (MOE-0062): no query and no per-provider cap — that is a switcher-card affordance.
+#[tauri::command]
+fn ai_model_choices() -> Vec<moe_extensions::ai_models::ModelOption> {
+    moe_extensions::ai_models::model_choices()
+}
+
 /// Switch the active pair (the switcher card, the settings rows): `[ai] provider` / `[ai] model`
 /// are written in place (the picker's apply rule, MOE-0028), and the new pair comes back.
 #[tauri::command]
@@ -1196,6 +1203,54 @@ fn ai_set_pair(
 #[tauri::command]
 fn ai_settings_providers() -> Vec<moe_extensions::ai_models::ProviderSettings> {
     moe_extensions::ai_models::settings_providers()
+}
+
+/// The AI Commands' per-command settings rows (MOE-0062): the model each command runs on, its
+/// reasoning effort and its temperature — the settings window's new section.
+#[tauri::command]
+fn ai_command_settings() -> Vec<moe_extensions::ai_models::CommandSettings> {
+    moe_extensions::ai_models::command_settings()
+}
+
+/// Point one AI Command at its own provider/model pair, or back at the active pair (`None`).
+#[tauri::command]
+fn ai_set_command_model(
+    command: String,
+    provider: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
+    let pair = match (provider.as_deref(), model.as_deref()) {
+        (Some(provider), Some(model)) => Some((provider, model)),
+        _ => None,
+    };
+    moe_extensions::ai_models::set_command_model(&command, pair, store_command_ai)
+        .map_err(|err| err.to_string())
+}
+
+/// Set one AI Command's reasoning effort (`None` = the provider's own default).
+#[tauri::command]
+fn ai_set_command_reasoning(command: String, reasoning: Option<String>) -> Result<(), String> {
+    moe_extensions::ai_models::set_command_reasoning(
+        &command,
+        reasoning.as_deref(),
+        store_command_ai,
+    )
+    .map_err(|err| err.to_string())
+}
+
+/// Set one AI Command's temperature (`None` = the key is not sent).
+#[tauri::command]
+fn ai_set_command_temperature(command: String, temperature: Option<f64>) -> Result<(), String> {
+    moe_extensions::ai_models::set_command_temperature(&command, temperature, store_command_ai)
+        .map_err(|err| err.to_string())
+}
+
+/// The three setters' store: one `[ai.commands."<id>"]` block in config.toml (MOE-0062).
+fn store_command_ai(
+    command: &str,
+    config: &moe_platform::config::CommandAiConfig,
+) -> Result<(), String> {
+    moe_platform::config::store_command_ai(command, config).map_err(|err| err.to_string())
 }
 
 /// The settings window's "Connect a provider" search: unmanaged catalog providers.
@@ -1715,8 +1770,13 @@ fn main() {
             set_theme,
             ai_active_pair,
             ai_model_options,
+            ai_model_choices,
             ai_set_pair,
             ai_settings_providers,
+            ai_command_settings,
+            ai_set_command_model,
+            ai_set_command_reasoning,
+            ai_set_command_temperature,
             ai_catalog_providers,
             ai_set_model_visibility,
             ai_save_provider_key,

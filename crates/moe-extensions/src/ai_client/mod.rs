@@ -17,7 +17,7 @@ pub use openai_chat::{
     chat_completions_url, sse_delta,
 };
 
-use moe_platform::config::Protocol;
+use moe_platform::config::{Protocol, ReasoningSetting};
 
 /// Outcome of processing one SSE line — the vocabulary every adapter normalizes into
 /// (text / reasoning / tool-call fragment / done), so `ai.rs` stays protocol-agnostic.
@@ -77,9 +77,13 @@ pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<serde_json::Value>,
     pub stream: bool,
-    /// Opt into the protocol's reasoning channel (Anthropic `thinking`, Responses summaries),
-    /// resolved from the model's catalog flag / the provider block's override (ADR-0040).
-    pub reasoning: bool,
+    /// What the request asks of the model's reasoning (MOE-0062): the protocol's own default,
+    /// off, or an explicit effort. Resolved from the per-command setting when there is one, else
+    /// from the model's catalog flag / the provider block's override (ADR-0040).
+    pub reasoning: Reasoning,
+    /// Sampling temperature (MOE-0062): `None` = the key is not sent at all, which is the only
+    /// safe default — several reasoning models reject an explicit one.
+    pub temperature: Option<f64>,
     /// Anthropic requires `max_tokens`; the resolver clamps it to the catalogued output limit.
     pub max_tokens: u64,
     /// The advertised tool definitions in OpenAI function shape; each adapter normalizes them
@@ -88,6 +92,46 @@ pub struct ChatRequest {
     /// The Anthropic adapter's `thinking` dialect (MOE-0035), resolved per provider in `ai.rs`;
     /// the other protocols ignore it.
     pub anthropic_thinking: AnthropicThinking,
+}
+
+/// What a request asks of the model's reasoning (MOE-0062), in one protocol-neutral vocabulary:
+/// the adapters map it to their own knob, and the ones without a knob (OpenAI Chat Completions)
+/// treat `Off` and `Default` alike — reasoning there is a property of the model, not of the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reasoning {
+    /// Ask for no reasoning at all (every dialect's parameter is omitted).
+    Off,
+    /// The provider's own default: today's behavior, i.e. the catalog/block flag's dialect.
+    Default,
+    /// An explicit effort (the settings window's per-command choice).
+    Effort(ReasoningSetting),
+}
+
+impl Reasoning {
+    /// The effective setting for a run: the command's own when it has one, else the provider's
+    /// resolved default (`on` = the dialect's default reasoning, `off` = nothing).
+    pub fn resolve(provider_default: bool, setting: Option<ReasoningSetting>) -> Self {
+        match setting {
+            Some(ReasoningSetting::Off) => Self::Off,
+            Some(effort) => Self::Effort(effort),
+            None if provider_default => Self::Default,
+            None => Self::Off,
+        }
+    }
+
+    /// Whether reasoning is asked for at all (the `Off` reading is what turns every dialect off).
+    pub fn is_on(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    /// The explicit effort, when the request names one (`Off` is not an effort: it is
+    /// [`Reasoning::Off`], and a level is never sent as `off`).
+    pub fn effort(self) -> Option<ReasoningSetting> {
+        match self {
+            Self::Effort(setting) if setting != ReasoningSetting::Off => Some(setting),
+            _ => None,
+        }
+    }
 }
 
 /// Which `thinking` parameter the Anthropic adapter sends (MOE-0035): MiniMax's surface
@@ -99,7 +143,7 @@ pub enum AnthropicThinking {
     #[default]
     Omit,
     /// `{"type":"enabled","budget_tokens":N}` (legacy Anthropic surface).
-    EnabledBudget,
+    EnabledBudget(u64),
     /// `{"type":"adaptive"}` (MiniMax's Anthropic-compatible surface).
     Adaptive,
 }

@@ -73,10 +73,11 @@ function toast(text: string, icon = "check") {
   }, 2600);
 }
 
-type SectionId = "general" | "ai";
+type SectionId = "general" | "ai" | "commands";
 const SECTIONS: { id: SectionId; title: string; icon: string }[] = [
   { id: "general", title: "General", icon: "settings-2" },
   { id: "ai", title: "AI", icon: "sparkles" },
+  { id: "commands", title: "AI Commands", icon: "wand-2" },
 ];
 let section: SectionId = "ai"; // the window exists for the providers (MOE-0029)
 
@@ -172,6 +173,238 @@ function roundButton(icon: string, title: string): HTMLButtonElement {
   button.title = title;
   button.append(iconEl(icon, { size: 15 }));
   return button;
+}
+
+/** A native control in the app's clothes: the settings window is a real window, so the platform's
+ *  own select/input widgets are the right ones here (the checkboxes already are, MOE-0029). */
+const CONTROL_CLASS =
+  "min-w-0 rounded-lg border border-line bg-surface-float px-2 py-1 text-xs text-fg outline-none focus-visible:ring-1 focus-visible:ring-accent-line disabled:opacity-50";
+
+function field(label: string, control: HTMLElement, hint?: string): HTMLElement {
+  const wrap = document.createElement("label");
+  wrap.className = "flex min-w-36 flex-1 flex-col gap-1";
+  const text = document.createElement("span");
+  text.className = "text-[11px] font-medium text-fg-subtle";
+  text.textContent = label;
+  wrap.append(text, control);
+  if (hint) {
+    const note = document.createElement("span");
+    note.className = "text-[10px] leading-snug text-fg-subtle";
+    note.textContent = hint;
+    wrap.append(note);
+  }
+  return wrap;
+}
+
+// ---- AI Commands pane (MOE-0062) ----
+
+/**
+ * One AI Command's row in the settings window: what it runs on at a glance, and — behind the
+ * disclosure — the three things this window owns: the model pair, the reasoning effort and the
+ * temperature. Every control writes one key of `[ai.commands."<id>"]` and re-renders, so the row
+ * always shows what the file says (a failed write leaves the file, and the row, unchanged).
+ */
+interface CommandSettings {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  icon: string | null;
+  providerId: string | null;
+  providerName: string | null;
+  modelId: string | null;
+  modelName: string | null;
+  overridden: boolean;
+  reasoning: string | null;
+  reasoningSupported: boolean;
+  temperature: number | null;
+}
+
+interface ModelChoice {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+}
+
+/** The effort ladder (MOE-0062); `""` is the provider's own default, which is not a value. */
+const REASONING_LEVELS = ["off", "low", "medium", "high"];
+
+async function renderCommands() {
+  paneEl.replaceChildren(
+    heading(
+      "AI Commands",
+      "Each AI Command runs on the active model unless it is given its own. Reasoning effort and temperature are per-command too — they are written to config.toml, one block per command, and a protocol without a reasoning knob says so.",
+    ),
+  );
+  let commands: CommandSettings[] = [];
+  let models: ModelChoice[] = [];
+  try {
+    commands = await invoke<CommandSettings[]>("ai_command_settings");
+    models = await invoke<ModelChoice[]>("ai_model_choices");
+  } catch (err) {
+    toast(`Failed to load the commands: ${String(err)}`, "alert");
+  }
+  const list = card();
+  const head = document.createElement("header");
+  head.className = "border-b border-line px-4 py-2.5 text-xs font-medium text-fg-muted";
+  head.textContent = "Per-command model and run settings";
+  list.append(head);
+  const ul = document.createElement("ul");
+  for (const command of commands) ul.append(commandRow(command, models));
+  list.append(ul);
+  paneEl.append(list);
+}
+
+function commandRow(command: CommandSettings, models: ModelChoice[]): HTMLElement {
+  const li = document.createElement("li");
+  li.className = "border-b border-line last:border-b-0";
+
+  const row = document.createElement("div");
+  row.className = "flex items-center gap-3 px-4 py-2";
+  row.append(
+    iconEl(command.icon ?? "sparkles", { size: 15, className: "shrink-0 text-fg-subtle" }),
+  );
+  const names = document.createElement("div");
+  names.className = "min-w-0 flex-1";
+  const title = document.createElement("div");
+  title.className = "truncate text-sm text-fg";
+  title.textContent = command.title;
+  const sub = document.createElement("div");
+  sub.className = "mt-0.5 truncate text-[11px] text-fg-subtle";
+  sub.textContent = command.modelName
+    ? `${command.providerName} · ${command.modelName}`
+    : "No model yet — the command shows its setup card";
+  names.append(title, sub);
+  row.append(names);
+  if (command.overridden) row.append(badge("own model", "accent"));
+  if (command.reasoning) row.append(badge(`reasoning: ${command.reasoning}`, "muted"));
+  if (command.temperature !== null) row.append(badge(`temp ${command.temperature}`, "muted"));
+  const toggle = roundButton("chevron-down", `Configure ${command.title}`);
+  row.append(toggle);
+  li.append(row);
+
+  const editor = document.createElement("div");
+  editor.className = "hidden flex-wrap items-start gap-3 border-t border-line px-4 py-3";
+  editor.append(
+    modelField(command, models),
+    reasoningField(command),
+    temperatureField(command),
+  );
+  toggle.addEventListener("click", () => {
+    const hidden = editor.classList.contains("hidden");
+    editor.classList.toggle("hidden", !hidden);
+    editor.classList.toggle("flex", hidden);
+  });
+  li.append(editor);
+  return li;
+}
+
+/** The model pair: the active pair (default) or one of the enabled models, grouped by provider. */
+function modelField(command: CommandSettings, models: ModelChoice[]): HTMLElement {
+  const select = document.createElement("select");
+  select.className = CONTROL_CLASS;
+  const active = document.createElement("option");
+  active.value = "";
+  active.textContent = "Active model (default)";
+  select.append(active);
+  const groups = new Map<string, HTMLOptGroupElement>();
+  for (const choice of models) {
+    let group = groups.get(choice.providerId);
+    if (!group) {
+      group = document.createElement("optgroup");
+      group.label = choice.providerName;
+      groups.set(choice.providerId, group);
+      select.append(group);
+    }
+    const option = document.createElement("option");
+    option.value = `${choice.providerId}\u0000${choice.modelId}`;
+    option.textContent = choice.modelName;
+    group.append(option);
+  }
+  select.value =
+    command.overridden && command.providerId && command.modelId
+      ? `${command.providerId}\u0000${command.modelId}`
+      : "";
+  select.addEventListener("change", () => {
+    const [provider, model] = select.value ? select.value.split("\u0000") : [null, null];
+    void invoke("ai_set_command_model", { command: command.id, provider, model })
+      .then(() => {
+        toast(`${command.title}: model saved`);
+        return renderPane();
+      })
+      .catch((err) => {
+        toast(`Failed to save: ${String(err)}`, "alert");
+        return renderPane();
+      });
+  });
+  return field("Model", select);
+}
+
+/** The reasoning effort: the provider's default, off, or one of the three levels. */
+function reasoningField(command: CommandSettings): HTMLElement {
+  const select = document.createElement("select");
+  select.className = CONTROL_CLASS;
+  const fallback = document.createElement("option");
+  fallback.value = "";
+  fallback.textContent = "Provider default";
+  select.append(fallback);
+  for (const level of REASONING_LEVELS) {
+    const option = document.createElement("option");
+    option.value = level;
+    option.textContent = level.charAt(0).toUpperCase() + level.slice(1);
+    select.append(option);
+  }
+  select.value = command.reasoning ?? "";
+  select.disabled = !command.reasoningSupported;
+  select.addEventListener("change", () => {
+    void invoke("ai_set_command_reasoning", {
+      command: command.id,
+      reasoning: select.value === "" ? null : select.value,
+    })
+      .then(() => {
+        toast(`${command.title}: reasoning saved`);
+        return renderPane();
+      })
+      .catch((err) => {
+        toast(`Failed to save: ${String(err)}`, "alert");
+        return renderPane();
+      });
+  });
+  return field(
+    "Reasoning effort",
+    select,
+    command.reasoningSupported
+      ? undefined
+      : "This protocol has no reasoning knob: reasoning is a property of the model.",
+  );
+}
+
+/** The temperature: empty = the key is not sent (the only safe default for reasoning models). */
+function temperatureField(command: CommandSettings): HTMLElement {
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "0";
+  input.max = "2";
+  input.step = "0.1";
+  input.placeholder = "Provider default";
+  input.value = command.temperature === null ? "" : String(command.temperature);
+  input.className = `${CONTROL_CLASS} w-32`;
+  input.addEventListener("change", () => {
+    const raw = input.value.trim();
+    void invoke("ai_set_command_temperature", {
+      command: command.id,
+      temperature: raw === "" ? null : Number(raw),
+    })
+      .then(() => {
+        toast(`${command.title}: temperature saved`);
+        return renderPane();
+      })
+      .catch((err) => {
+        toast(`Failed to save: ${String(err)}`, "alert");
+        return renderPane();
+      });
+  });
+  return field("Temperature", input, "Empty = the key is not sent at all.");
 }
 
 // ---- General pane ----
@@ -700,6 +933,7 @@ async function webSearchCard(): Promise<HTMLElement> {
 
 async function renderPane() {
   if (section === "general") await renderGeneral();
+  else if (section === "commands") await renderCommands();
   else await renderAi();
 }
 

@@ -25,7 +25,7 @@ use moe_core::contract::{
 use moe_platform::config::{MoeConfig, Protocol};
 
 use crate::ai::{self, SETUP_MD};
-use crate::ai_client::providers::{self, ActiveProvider};
+use crate::ai_client::providers::{self, CommandRun};
 use crate::ai_client::{ChatRequest, authenticate, completion_text, endpoint_url, request_body};
 
 pub struct AiCommands;
@@ -282,14 +282,11 @@ fn resolve_text(query: Option<&str>, selection: Option<&Selection>) -> Option<St
         .map(str::to_string)
 }
 
-/// One transform request in the shared vocabulary (ADR-0040): system instruction + user text;
-/// the provider supplies the model, its reasoning opt-in and `max_tokens` (testable).
-fn prompt_request(
-    provider: &ActiveProvider,
-    instruction: &str,
-    text: &str,
-    stream: bool,
-) -> ChatRequest {
+/// One transform request in the shared vocabulary (ADR-0040): system instruction + user text; the
+/// provider supplies the model and `max_tokens`, and the command's own run settings (MOE-0062)
+/// supply the reasoning and the temperature (testable).
+fn prompt_request(run: &CommandRun, instruction: &str, text: &str, stream: bool) -> ChatRequest {
+    let provider = &run.provider;
     ChatRequest {
         model: provider.model.clone(),
         messages: vec![
@@ -297,10 +294,11 @@ fn prompt_request(
             serde_json::json!({ "role": "user", "content": text }),
         ],
         stream,
-        reasoning: provider.reasoning,
+        reasoning: run.reasoning,
+        temperature: run.temperature,
         max_tokens: provider.max_tokens,
         tools: Vec::new(),
-        anthropic_thinking: providers::anthropic_thinking(provider),
+        anthropic_thinking: providers::anthropic_thinking(provider, run.reasoning),
     }
 }
 
@@ -397,8 +395,8 @@ impl Extension for AiCommands {
         }
         // A resolution failure (unknown provider, missing model/key) is a setup card, not an error:
         // the message names what is missing and where it belongs.
-        let provider = match providers::resolve(&config) {
-            Ok(provider) => provider,
+        let run = match providers::resolve_command_run(&config, command_id) {
+            Ok(run) => run,
             Err(message) => {
                 return Ok(ActionResult::detail(vec![notice_item(&format!(
                     "## AI setup needed\n\n{message}"
@@ -406,10 +404,15 @@ impl Extension for AiCommands {
             }
         };
         let body = request_body(
-            provider.protocol,
-            &prompt_request(&provider, instruction_for(spec, arguments), &text, false),
+            run.provider.protocol,
+            &prompt_request(&run, instruction_for(spec, arguments), &text, false),
         );
-        match completion_blocking(provider.protocol, &provider.api_url, &provider.key, body) {
+        match completion_blocking(
+            run.provider.protocol,
+            &run.provider.api_url,
+            &run.provider.key,
+            body,
+        ) {
             // The blocking path returns the same review card as the streaming path — never an
             // automatic write-back (ADR-0024 amendment; the panel itself always streams).
             Ok(out) => Ok(ActionResult::detail(vec![transform_item(
@@ -439,8 +442,8 @@ impl Extension for AiCommands {
         if !config.ai.configured() {
             return Ok(ActionResult::detail(vec![notice_item(SETUP_MD)]));
         }
-        let provider = match providers::resolve(&config) {
-            Ok(provider) => provider,
+        let provider = match providers::resolve_command_run(&config, command_id) {
+            Ok(run) => run,
             Err(message) => {
                 return Ok(ActionResult::detail(vec![notice_item(&format!(
                     "## AI setup needed\n\n{message}"
@@ -448,10 +451,11 @@ impl Extension for AiCommands {
             }
         };
         let body = request_body(
-            provider.protocol,
+            provider.provider.protocol,
             &prompt_request(&provider, instruction_for(spec, arguments), &text, true),
         );
-        let model_hint = provider.model_hint();
+        let model_hint = provider.provider.model_hint();
+        let provider = provider.provider;
 
         let stream_key = run_key();
         let item_of: ai::FrameBuilder = {
@@ -527,7 +531,9 @@ impl Extension for AiCommands {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_client::Reasoning;
     use moe_core::contract::{CommandEvent, Extension};
+    use moe_platform::config::ReasoningSetting;
 
     fn selection(text: &str) -> Selection {
         Selection {
@@ -673,14 +679,20 @@ mod tests {
 
     /// The transform request in the shared vocabulary: system instruction first, user text second;
     /// openai-chat passes them through unchanged, stream can be off (the blocking path); the
-    /// provider supplies model / reasoning opt-in / max_tokens (MOE-0027).
+    /// provider supplies the model and `max_tokens`, and the run's own settings (MOE-0062) the
+    /// reasoning and the temperature.
     #[test]
     fn prompt_request_puts_instruction_before_text() {
         let provider = providers::test_provider(Protocol::OpenAiChat, "http://x/v1");
-        let request = prompt_request(&provider, "Only output the translation.", "hello", false);
-        assert!(!request.reasoning);
+        let run = CommandRun {
+            reasoning: Reasoning::resolve(provider.reasoning, None),
+            temperature: None,
+            provider,
+        };
+        let request = prompt_request(&run, "Only output the translation.", "hello", false);
+        assert!(!request.reasoning.is_on());
         assert_eq!(request.model, "test-model");
-        let body = request_body(provider.protocol, &request);
+        let body = request_body(run.provider.protocol, &request);
         assert_eq!(body["stream"], false);
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(
@@ -690,10 +702,29 @@ mod tests {
         assert_eq!(body["messages"][1]["role"], "user");
         assert_eq!(body["messages"][1]["content"], "hello");
         let streaming = request_body(
-            provider.protocol,
-            &prompt_request(&provider, "instruction", "text", true),
+            run.provider.protocol,
+            &prompt_request(&run, "instruction", "text", true),
         );
         assert_eq!(streaming["stream"], true);
+
+        // The command's own run settings reach the wire (MOE-0062): the effort and the temperature;
+        // a run that sets neither sends neither.
+        let hot = CommandRun {
+            provider: providers::test_provider(Protocol::OpenAiResponses, "http://x/v1"),
+            reasoning: Reasoning::Effort(ReasoningSetting::High),
+            temperature: Some(0.2),
+        };
+        let body = request_body(
+            hot.provider.protocol,
+            &prompt_request(&hot, "instruction", "text", false),
+        );
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["temperature"], 0.2);
+        let plain = request_body(
+            run.provider.protocol,
+            &prompt_request(&run, "instruction", "text", false),
+        );
+        assert!(plain.get("temperature").is_none());
     }
 
     /// Result card actions: Apply writes back, ⌥⏎ copies, "{Command} Again" asks for the refine
@@ -784,10 +815,16 @@ mod tests {
         let recorder = Arc::new(Recorder::default());
         let emitter: Arc<dyn Emitter> = recorder.clone();
         let provider = providers::test_provider(Protocol::OpenAiChat, &format!("http://{addr}/v1"));
+        let run = CommandRun {
+            reasoning: Reasoning::resolve(provider.reasoning, None),
+            temperature: None,
+            provider,
+        };
         let body = request_body(
-            provider.protocol,
-            &prompt_request(&provider, "Only output the translation.", "hello", true),
+            run.provider.protocol,
+            &prompt_request(&run, "Only output the translation.", "hello", true),
         );
+        let provider = run.provider;
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         {
             // on_done is a generic run_stream hook; AI commands no longer wire it (Moe decides)

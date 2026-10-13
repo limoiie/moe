@@ -119,7 +119,7 @@ impl Default for SummonConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AiConfig {
     /// Active provider id (ADR-0040): an official (catalog) id or a `[ai.providers.*]` key.
     /// `None` = legacy mode (see `base_url`).
@@ -135,6 +135,10 @@ pub struct AiConfig {
     pub searxng_url: Option<String>,
     /// The `web_fetch` fallback when local extraction fails (MOE-0026).
     pub fetch_fallback: FetchFallback,
+    /// Per-AI-Command run settings (MOE-0062), keyed by command id: the model the command runs on,
+    /// its reasoning effort and its temperature. An id that is absent runs on the active pair with
+    /// the provider's own defaults, so an empty table changes nothing.
+    pub commands: BTreeMap<String, CommandAiConfig>,
 }
 
 /// One `[ai.providers.<id>]` block: official providers use it for overrides; custom providers
@@ -157,6 +161,65 @@ pub struct ProviderConfig {
     /// Override the reasoning opt-in (Anthropic `thinking` / Responses summaries); unset = the
     /// catalogued model's flag (official providers) or off (custom).
     pub reasoning: Option<bool>,
+}
+
+/// One `[ai.commands."<command-id>"]` block (MOE-0062): what one AI Command runs on. Every field
+/// is optional — absent means "the active pair / the provider's own default" — so the settings
+/// window can write one key at a time and removing it restores the default.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CommandAiConfig {
+    /// The provider id this command runs on; `model` must name one of its models. Both or neither:
+    /// a lone provider falls back to the active pair rather than guessing a model.
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    /// Reasoning effort: `off` / `low` / `medium` / `high`. Absent = the provider's own default
+    /// (the catalog/block flag).
+    pub reasoning: Option<ReasoningSetting>,
+    /// Sampling temperature; absent = the protocol's default (the key is not sent at all).
+    pub temperature: Option<f64>,
+}
+
+/// The per-command reasoning setting (MOE-0062): `off`, or an explicit effort the adapters map to
+/// their protocol's own knob (Anthropic's thinking budget, the Responses API's `effort`).
+/// The OpenAI Chat Completions dialect has no request-side knob, so a level is inert there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasoningSetting {
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningSetting {
+    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "off" => Ok(Self::Off),
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            _ => Err(ConfigError::UnknownReasoning(raw.to_string())),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    /// The effort as a 0..1 fraction of the maximum: what the protocol adapters scale their own
+    /// knob by (Anthropic's budget, the Responses API's `effort` ladder).
+    pub fn fraction(self) -> f64 {
+        match self {
+            Self::Off => 0.0,
+            Self::Low => 0.25,
+            Self::Medium => 0.5,
+            Self::High => 1.0,
+        }
+    }
 }
 
 /// The wire protocols Moe speaks (ADR-0040): the OpenAI Chat Completions dialect (today's code;
@@ -197,6 +260,7 @@ impl Default for AiConfig {
             tools: true,
             searxng_url: None,
             fetch_fallback: FetchFallback::Jina,
+            commands: BTreeMap::new(),
         }
     }
 }
@@ -250,7 +314,7 @@ impl AiConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct MoeConfig {
     pub summon: SummonConfig,
     pub ai: AiConfig,
@@ -313,6 +377,17 @@ struct RawAi {
     tools: Option<bool>,
     searxng_url: Option<String>,
     fetch_fallback: Option<String>,
+    #[serde(default)]
+    commands: BTreeMap<String, RawCommandAi>,
+}
+
+/// One `[ai.commands."<command-id>"]` block (MOE-0062), as written in the file.
+#[derive(Deserialize, Default)]
+struct RawCommandAi {
+    provider: Option<String>,
+    model: Option<String>,
+    reasoning: Option<String>,
+    temperature: Option<f64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -366,6 +441,26 @@ impl MoeConfig {
                         ))
                     })
                     .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+                let commands = raw_ai
+                    .commands
+                    .into_iter()
+                    .map(|(id, raw)| {
+                        let reasoning = raw
+                            .reasoning
+                            .as_deref()
+                            .map(ReasoningSetting::parse)
+                            .transpose()?;
+                        Ok((
+                            id,
+                            CommandAiConfig {
+                                provider: raw.provider,
+                                model: raw.model,
+                                reasoning,
+                                temperature: raw.temperature,
+                            },
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
                 AiConfig {
                     provider: raw_ai.provider,
                     model: raw_ai.model,
@@ -379,6 +474,7 @@ impl MoeConfig {
                         .map(FetchFallback::parse)
                         .transpose()?
                         .unwrap_or_default(),
+                    commands,
                 }
             }
             None => AiConfig::default(),
@@ -427,6 +523,7 @@ pub enum ConfigError {
     UnknownTheme(String),
     UnknownFetchFallback(String),
     UnknownProtocol(String),
+    UnknownReasoning(String),
     Toml(String),
 }
 
@@ -452,6 +549,12 @@ impl fmt::Display for ConfigError {
                 f,
                 "unknown protocol: {raw} (expected openai-chat | openai-responses | anthropic)"
             ),
+            Self::UnknownReasoning(raw) => {
+                write!(
+                    f,
+                    "unknown reasoning: {raw} (expected off | low | medium | high)"
+                )
+            }
             Self::Toml(msg) => write!(f, "invalid config.toml: {msg}"),
         }
     }
@@ -715,6 +818,56 @@ pub fn store_provider_hidden_models(provider: &str, hidden: &[String]) -> std::i
     edit_config_file(|text| set_provider_hidden_models_in_toml(text, provider, hidden))
 }
 
+/// Replace (or add, or remove) one `[ai.commands."<id>"]` block (MOE-0062). Every `None` removes
+/// its line, and a block with nothing left goes away entirely — so "Default" in the settings window
+/// really means the key is gone, not written as a value the resolver has to interpret.
+/// Pure, so the surgery is unit-tested.
+pub fn set_command_ai_in_toml(text: &str, command: &str, config: &CommandAiConfig) -> String {
+    let section = format!("ai.commands.{}", toml_string(command));
+    if config == &CommandAiConfig::default() {
+        let mut lines: Vec<String> = if text.is_empty() {
+            Vec::new()
+        } else {
+            text.split('\n').map(str::to_string).collect()
+        };
+        if lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        let mut out = remove_section(lines, &section).join("\n");
+        out.push('\n');
+        return out;
+    }
+    let values: [(&str, Option<String>); 4] = [
+        ("provider", config.provider.as_deref().map(toml_string)),
+        ("model", config.model.as_deref().map(toml_string)),
+        (
+            "reasoning",
+            config.reasoning.map(|effort| toml_string(effort.as_str())),
+        ),
+        ("temperature", config.temperature.map(toml_float)),
+    ];
+    let assignments: Vec<(&str, Option<String>)> = values
+        .iter()
+        .map(|(key, value)| (*key, value.as_ref().map(|value| format!("{key} = {value}"))))
+        .collect();
+    edit_section_opt(text, &section, &assignments)
+}
+
+/// Persist one AI Command's run settings (MOE-0062).
+pub fn store_command_ai(command: &str, config: &CommandAiConfig) -> std::io::Result<()> {
+    edit_config_file(|text| set_command_ai_in_toml(text, command, config))
+}
+
+/// A TOML float that always carries a decimal point (`1.0`, not `1`): the file reads as a float,
+/// and the deserializer never has to coerce an integer into one.
+fn toml_float(value: f64) -> String {
+    let mut text = format!("{value}");
+    if !text.contains('.') && !text.contains('e') {
+        text.push_str(".0");
+    }
+    text
+}
+
 /// Remove one provider from the config text (MOE-0032): its whole `[ai.providers.<id>]` block
 /// goes away, and — when the caller says the selection pointed at it — `[ai] provider` / `model`
 /// are removed too, so the AI surfaces fall back to their setup state (or the legacy `base_url`).
@@ -914,6 +1067,87 @@ mod tests {
         assert_eq!(cfg.ai.fetch_fallback, FetchFallback::None);
 
         assert!(MoeConfig::from_toml("[ai]\nfetch_fallback = \"bogus\"\n").is_err());
+    }
+
+    /// The per-command AI settings (MOE-0062): every key is optional, the reasoning value is
+    /// validated, and an unknown value is a config error rather than a silent default.
+    #[test]
+    fn command_ai_settings_parse_per_command() {
+        let cfg = MoeConfig::from_toml("[ai]\nprovider = \"openai\"\n").unwrap();
+        assert!(cfg.ai.commands.is_empty());
+
+        let cfg = MoeConfig::from_toml(
+            "[ai]\nprovider = \"openai\"\n\
+             [ai.commands.\"aicmd.translate\"]\nprovider = \"anthropic\"\nmodel = \"claude-sonnet-4-5\"\n\
+             reasoning = \"high\"\ntemperature = 0.2\n\
+             [ai.commands.\"aicmd.improve\"]\nreasoning = \"off\"\n",
+        )
+        .unwrap();
+        let translate = cfg.ai.commands.get("aicmd.translate").unwrap();
+        assert_eq!(translate.provider.as_deref(), Some("anthropic"));
+        assert_eq!(translate.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(translate.reasoning, Some(ReasoningSetting::High));
+        assert_eq!(translate.temperature, Some(0.2));
+        let improve = cfg.ai.commands.get("aicmd.improve").unwrap();
+        assert_eq!(improve.reasoning, Some(ReasoningSetting::Off));
+        assert_eq!(improve.provider, None);
+        assert_eq!(improve.temperature, None);
+
+        assert!(MoeConfig::from_toml("[ai.commands.x]\nreasoning = \"sometimes\"\n").is_err());
+    }
+
+    /// The settings window writes one command's block by surgery (MOE-0062): keys are added,
+    /// replaced and removed in place, and a block with nothing left goes away entirely — so
+    /// "Default" in the UI really means the key is gone.
+    #[test]
+    fn command_ai_surgery_adds_replaces_and_removes() {
+        let base = "# mine\n[ai]\nprovider = \"openai\"\n";
+        let written = set_command_ai_in_toml(
+            base,
+            "aicmd.translate",
+            &CommandAiConfig {
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-4-5".into()),
+                reasoning: Some(ReasoningSetting::Low),
+                temperature: Some(1.0),
+            },
+        );
+        assert!(
+            written.contains("[ai.commands.\"aicmd.translate\"]"),
+            "{written}"
+        );
+        assert!(written.contains("reasoning = \"low\""), "{written}");
+        assert!(
+            written.contains("temperature = 1.0"),
+            "a float stays a float: {written}"
+        );
+        // The file round-trips through the parser
+        let parsed = MoeConfig::from_toml(&written).unwrap();
+        let stored = parsed.ai.commands.get("aicmd.translate").unwrap();
+        assert_eq!(stored.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(stored.temperature, Some(1.0));
+
+        // Replacing one key leaves the others alone
+        let replaced = set_command_ai_in_toml(
+            &written,
+            "aicmd.translate",
+            &CommandAiConfig {
+                temperature: None,
+                ..stored.clone()
+            },
+        );
+        assert!(!replaced.contains("temperature"), "{replaced}");
+        assert!(replaced.contains("reasoning = \"low\""), "{replaced}");
+
+        // Everything cleared: the whole block goes, and the rest of the file is byte-identical
+        let cleared =
+            set_command_ai_in_toml(&replaced, "aicmd.translate", &CommandAiConfig::default());
+        assert_eq!(cleared, base);
+        // A command with no block at all is a no-op
+        assert_eq!(
+            set_command_ai_in_toml(base, "aicmd.none", &CommandAiConfig::default()),
+            base
+        );
     }
 
     #[test]

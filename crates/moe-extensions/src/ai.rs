@@ -26,7 +26,7 @@ use moe_platform::db::Db;
 use crate::agent::{AgentTurnRequest, MessageSink, ToolCallView, run_agentic_turn};
 use crate::ai_client::providers::{self, ActiveProvider};
 use crate::ai_client::{
-    ChatRequest, SseLine, ToolCall, ToolCallFragment, authenticate, endpoint_url,
+    ChatRequest, Reasoning, SseLine, ToolCall, ToolCallFragment, authenticate, endpoint_url,
     merge_tool_call_fragments, request_body, sse_line,
 };
 use crate::attachment;
@@ -743,16 +743,19 @@ fn question_with_selection(question: &str, selection: Option<&str>) -> String {
 
 /// The shared request for a chat turn: the stored history ends with the new question
 /// (attachments expanded, ADR-0010); the provider supplies its model, reasoning opt-in and
-/// `max_tokens` (ADR-0040).
+/// `max_tokens` (ADR-0040). The chat runs on the provider's own reasoning default and sends no
+/// temperature — the per-command knobs (MOE-0062) belong to the AI Commands.
 fn chat_request(provider: &ActiveProvider, messages: Vec<Message>, stream: bool) -> ChatRequest {
+    let reasoning = Reasoning::resolve(provider.reasoning, None);
     ChatRequest {
         model: provider.model.clone(),
         messages: messages.iter().map(attachment::expand_message).collect(),
         stream,
-        reasoning: provider.reasoning,
+        reasoning,
+        temperature: None,
         max_tokens: provider.max_tokens,
         tools: Vec::new(),
-        anthropic_thinking: providers::anthropic_thinking(provider),
+        anthropic_thinking: providers::anthropic_thinking(provider, reasoning),
     }
 }
 
@@ -771,7 +774,8 @@ fn spawn_chat_turn(
     emitter: Arc<dyn Emitter>,
 ) {
     let model_hint = provider.model_hint();
-    let anthropic_thinking = providers::anthropic_thinking(&provider);
+    let reasoning = Reasoning::resolve(provider.reasoning, None);
+    let anthropic_thinking = providers::anthropic_thinking(&provider, reasoning);
     if agentic {
         let tool_ctx = tools::ToolContext::new(
             config.ai.searxng_url.clone(),
@@ -805,7 +809,7 @@ fn spawn_chat_turn(
                     key: provider.key,
                     model: provider.model,
                     protocol: provider.protocol,
-                    reasoning: provider.reasoning,
+                    reasoning,
                     max_tokens: provider.max_tokens,
                     anthropic_thinking,
                     record: messages,

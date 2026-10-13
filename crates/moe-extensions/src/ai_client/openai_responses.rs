@@ -22,7 +22,8 @@ pub fn endpoint_url(api_url: &str) -> String {
 /// top-level `instructions` string (joined with blank lines), not into `input`; `user`/`assistant`
 /// turns become `input` items whose parts are `input_text` / `output_text` / `input_image` (the
 /// shared `image_url.url` data URL moves over as is). Always `store: false` (no server-side
-/// copies); a reasoning request adds `reasoning: {"summary":"auto"}`.
+/// copies); a reasoning request adds `reasoning: {"summary":"auto"}`, and an explicit effort
+/// (MOE-0062) joins it as `{"effort":"low|medium|high","summary":"auto"}`.
 pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
     let mut instructions: Vec<&str> = Vec::new();
     let mut input: Vec<serde_json::Value> = Vec::new();
@@ -53,8 +54,15 @@ pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
     if !instructions.is_empty() {
         body["instructions"] = serde_json::Value::String(instructions.join("\n\n"));
     }
-    if request.reasoning {
-        body["reasoning"] = serde_json::json!({ "summary": "auto" });
+    if request.reasoning.is_on() {
+        let mut reasoning = serde_json::json!({ "summary": "auto" });
+        if let Some(effort) = request.reasoning.effort() {
+            reasoning["effort"] = serde_json::json!(effort.as_str());
+        }
+        body["reasoning"] = reasoning;
+    }
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = serde_json::json!(temperature);
     }
     body
 }
@@ -139,13 +147,16 @@ pub fn completion_text(payload: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_client::Reasoning;
+    use moe_platform::config::ReasoningSetting;
 
-    fn request(messages: Vec<serde_json::Value>, reasoning: bool) -> ChatRequest {
+    fn request(messages: Vec<serde_json::Value>, reasoning: Reasoning) -> ChatRequest {
         ChatRequest {
             model: "gpt-5.2".into(),
             messages,
             stream: true,
             reasoning,
+            temperature: None,
             max_tokens: 2048,
             tools: Vec::new(),
             anthropic_thinking: crate::ai_client::AnthropicThinking::Omit,
@@ -234,7 +245,7 @@ mod tests {
                     { "type": "image_url", "image_url": { "url": "data:image/png;base64,AA==" } }
                 ] }),
             ],
-            false,
+            Reasoning::Off,
         ));
         assert_eq!(body["model"], "gpt-5.2");
         assert_eq!(body["stream"], true);
@@ -270,7 +281,7 @@ mod tests {
                 serde_json::json!({ "role": "system", "content": "" }),
                 serde_json::json!({ "role": "user", "content": "hi" }),
             ],
-            true,
+            Reasoning::Default,
         ));
         assert_eq!(reasoning_body["input"].as_array().unwrap().len(), 1);
         assert_eq!(reasoning_body["input"][0]["role"], "user");
@@ -285,9 +296,21 @@ mod tests {
             serde_json::json!({ "summary": "auto" })
         );
 
+        // An explicit effort joins the same object (MOE-0062); the temperature is the key's
+        // presence, and the chat-completions dialect never sends one.
+        let effort = body(&request(
+            vec![serde_json::json!({ "role": "user", "content": "hi" })],
+            Reasoning::Effort(ReasoningSetting::High),
+        ));
+        assert_eq!(
+            effort["reasoning"],
+            serde_json::json!({ "effort": "high", "summary": "auto" })
+        );
+        assert!(effort.get("temperature").is_none());
+
         let plain = body(&request(
             vec![serde_json::json!({ "role": "user", "content": "hi" })],
-            false,
+            Reasoning::Off,
         ));
         assert!(
             plain.get("reasoning").is_none(),

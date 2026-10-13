@@ -113,8 +113,7 @@ pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
         }
     }
     match request.anthropic_thinking {
-        AnthropicThinking::EnabledBudget => {
-            let budget = (request.max_tokens / 2).clamp(1024, 4096);
+        AnthropicThinking::EnabledBudget(budget) => {
             if budget < request.max_tokens {
                 body["thinking"] =
                     serde_json::json!({ "type": "enabled", "budget_tokens": budget });
@@ -124,6 +123,11 @@ pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
             body["thinking"] = serde_json::json!({ "type": "adaptive" });
         }
         AnthropicThinking::Omit => {}
+    }
+    // Only when the run asks for one (MOE-0062): an unset temperature is the key's absence, which
+    // is the only safe default — several reasoning models reject an explicit value.
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = serde_json::json!(temperature);
     }
     body
 }
@@ -343,6 +347,7 @@ pub fn completion_text(payload: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_client::Reasoning;
 
     /// The endpoint join (MOE-0031): Anthropic's bare host gets `/v1/messages`; a base that
     /// already carries the version root (MiniMax's Anthropic-compatible surface) gains only
@@ -521,7 +526,8 @@ mod tests {
                 serde_json::json!({ "role": "user", "content": "" }),
             ],
             stream: true,
-            reasoning: false,
+            reasoning: Reasoning::Off,
+            temperature: None,
             max_tokens: 8192,
             tools: Vec::new(),
             anthropic_thinking: AnthropicThinking::Omit,
@@ -531,7 +537,8 @@ mod tests {
             model: "m".into(),
             messages: vec![serde_json::json!({ "role": "user", "content": "hi" })],
             stream: false,
-            reasoning: false,
+            reasoning: Reasoning::Off,
+            temperature: None,
             max_tokens: 4096,
             tools: Vec::new(),
             anthropic_thinking: AnthropicThinking::Omit,
@@ -590,7 +597,8 @@ mod tests {
                 serde_json::json!({ "role": "user", "content": "thanks" }),
             ],
             stream: true,
-            reasoning: true,
+            reasoning: Reasoning::Default,
+            temperature: None,
             max_tokens: 8192,
             tools: vec![serde_json::json!({ "type": "function", "function": {
                 "name": "web_search",
@@ -606,7 +614,10 @@ mod tests {
         assert_eq!(translated["tools"][0]["input_schema"]["type"], "object");
         assert!(translated["tools"][0].get("function").is_none());
         // MiniMax's dialect: adaptive, never enabled+budget, never disabled
-        assert_eq!(translated["thinking"], serde_json::json!({ "type": "adaptive" }));
+        assert_eq!(
+            translated["thinking"],
+            serde_json::json!({ "type": "adaptive" })
+        );
         // The assistant round: thinking(+signature) first, then both tool_use blocks
         let assistant = &translated["messages"][1];
         assert_eq!(assistant["role"], "assistant");
@@ -649,7 +660,8 @@ mod tests {
                 serde_json::json!({ "role": "user", "content": "continue?" }),
             ],
             stream: true,
-            reasoning: false,
+            reasoning: Reasoning::Off,
+            temperature: None,
             max_tokens: 4096,
             tools: Vec::new(),
             anthropic_thinking: AnthropicThinking::Omit,
@@ -678,7 +690,8 @@ mod tests {
                 { "type": "image_url", "image_url": { "url": "data:image/png,not-base64" } },
             ] })],
             stream: false,
-            reasoning: false,
+            reasoning: Reasoning::Off,
+            temperature: None,
             max_tokens: 4096,
             tools: Vec::new(),
             anthropic_thinking: AnthropicThinking::Omit,
@@ -706,30 +719,31 @@ mod tests {
         );
     }
 
-    /// The reasoning opt-in per dialect (MOE-0035): `EnabledBudget` keeps the legacy rule —
-    /// `thinking.budget_tokens` is half of `max_tokens` clamped to `1024..=4096`, strictly below
-    /// `max_tokens`, omitted when both cannot hold; `Adaptive` (MiniMax) always sends its bare
-    /// key; `Omit` never sends one.
+    /// The reasoning opt-in per dialect (MOE-0035): `EnabledBudget` sends the budget the resolver
+    /// computed (MOE-0062 moved the arithmetic into `providers::anthropic_thinking`) strictly below
+    /// `max_tokens`, omitted when both cannot hold; `Adaptive` (MiniMax) always sends its bare key;
+    /// `Omit` never sends one. A temperature rides the body only when the run asks for one.
     #[test]
     fn opts_into_thinking_when_the_budget_fits() {
         let request = |thinking: AnthropicThinking, max_tokens: u64| ChatRequest {
             model: "claude-opus-4-1".into(),
             messages: vec![serde_json::json!({ "role": "user", "content": "hi" })],
             stream: true,
-            reasoning: false,
+            reasoning: Reasoning::Off,
+            temperature: None,
             max_tokens,
             tools: Vec::new(),
             anthropic_thinking: thinking,
         };
-        let enabled = body(&request(AnthropicThinking::EnabledBudget, 8192));
+        let enabled = body(&request(AnthropicThinking::EnabledBudget(4096), 8192));
         assert_eq!(
             enabled["thinking"],
             serde_json::json!({ "type": "enabled", "budget_tokens": 4096 })
         );
-        let halved = body(&request(AnthropicThinking::EnabledBudget, 3000));
+        let halved = body(&request(AnthropicThinking::EnabledBudget(1500), 3000));
         assert_eq!(halved["thinking"]["budget_tokens"], 1500);
         // 1024 is the floor *and* must stay below `max_tokens`: too small a request → omitted
-        let too_small = body(&request(AnthropicThinking::EnabledBudget, 1024));
+        let too_small = body(&request(AnthropicThinking::EnabledBudget(1024), 1024));
         assert!(too_small.get("thinking").is_none());
         let off = body(&request(AnthropicThinking::Omit, 8192));
         assert!(off.get("thinking").is_none());
@@ -739,6 +753,13 @@ mod tests {
             adaptive["thinking"],
             serde_json::json!({ "type": "adaptive" })
         );
+        // The temperature is the key's presence or absence, never a default (MOE-0062)
+        assert!(enabled.get("temperature").is_none());
+        let warm = body(&ChatRequest {
+            temperature: Some(0.2),
+            ..request(AnthropicThinking::Omit, 8192)
+        });
+        assert_eq!(warm["temperature"], 0.2);
     }
 
     /// The blocking path reads the Anthropic `content[]` blocks: every `text` block is

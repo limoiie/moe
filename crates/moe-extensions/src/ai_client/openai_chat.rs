@@ -50,14 +50,20 @@ pub fn chat_body_with_tools(
 }
 
 /// The shared request → this protocol's body: `chat_body_with_stream` plus the tools passthrough
-/// when the request advertises any (an empty tool list keeps MOE-0026's wire byte-identical).
+/// when the request advertises any (an empty tool list keeps MOE-0026's wire byte-identical) and
+/// the run's temperature when it asks for one (MOE-0062). Reasoning has no request-side knob on
+/// this dialect — it is a property of the model, so `Off` and an effort both leave the wire alone.
 pub(super) fn body(request: &ChatRequest) -> serde_json::Value {
-    chat_body_with_tools(
+    let mut body = chat_body_with_tools(
         &request.model,
         request.messages.clone(),
         &request.tools,
         request.stream,
-    )
+    );
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = serde_json::json!(temperature);
+    }
+    body
 }
 
 /// Outcome of processing one SSE line.

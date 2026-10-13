@@ -10,6 +10,8 @@ use moe_platform::config::{MoeConfig, Protocol};
 use moe_platform::keychain;
 use moe_platform::model_catalog::{Catalog, Provider as CatalogProvider};
 
+use super::Reasoning;
+
 /// The `max_tokens` Moe asks for when the protocol requires one (Anthropic); clamped to the
 /// catalogued output limit when the model carries one.
 const DEFAULT_MAX_TOKENS: u64 = 8192;
@@ -211,16 +213,27 @@ impl ActiveProvider {
 /// The Anthropic adapter's thinking dialect for one provider (MOE-0035): MiniMax's surface
 /// whitelists only `disabled|adaptive` — and M3.1 rejects even `disabled`, so reasoning-off must
 /// *omit* the key — while legacy Anthropic models want `enabled` + `budget_tokens`.
-pub fn anthropic_thinking(provider: &ActiveProvider) -> super::AnthropicThinking {
+pub fn anthropic_thinking(
+    provider: &ActiveProvider,
+    reasoning: Reasoning,
+) -> super::AnthropicThinking {
     use super::AnthropicThinking;
-    if !provider.reasoning {
+    use moe_platform::config::ReasoningSetting;
+    if !reasoning.is_on() {
         return AnthropicThinking::Omit;
     }
     if provider.id.starts_with("minimax") {
-        AnthropicThinking::Adaptive
-    } else {
-        AnthropicThinking::EnabledBudget
+        // MiniMax's surface has exactly one on-state; an effort cannot be expressed there.
+        return AnthropicThinking::Adaptive;
     }
+    let budget = match reasoning.effort() {
+        Some(ReasoningSetting::Low) => 1024,
+        Some(ReasoningSetting::Medium) => 2048,
+        Some(ReasoningSetting::High) => 4096,
+        // The provider's own default: half the output budget, clamped as before (MOE-0035).
+        _ => (provider.max_tokens / 2).clamp(1024, 4096),
+    };
+    AnthropicThinking::EnabledBudget(budget)
 }
 
 pub fn resolve(config: &MoeConfig) -> Result<ActiveProvider, String> {
@@ -235,12 +248,35 @@ pub fn resolve_with(
     catalog: &Catalog,
     key: impl Fn(&str, &[String]) -> Option<String>,
 ) -> Result<ActiveProvider, String> {
+    resolve_pair_with(config, catalog, key, None, None)
+}
+
+/// Resolve one provider/model pair, optionally overriding the configured active pair (MOE-0062: an
+/// AI Command's own model). The overrides travel together: a lone provider without a model falls
+/// back to the active pair rather than guessing which of its models was meant.
+pub fn resolve_pair_with(
+    config: &MoeConfig,
+    catalog: &Catalog,
+    key: impl Fn(&str, &[String]) -> Option<String>,
+    provider_override: Option<&str>,
+    model_override: Option<&str>,
+) -> Result<ActiveProvider, String> {
     let ai = &config.ai;
-    let selected = ai
-        .provider
-        .as_deref()
+    // A pair is both halves or neither; half an override is no override.
+    let override_pair = provider_override
         .map(str::trim)
-        .filter(|id| !id.is_empty());
+        .filter(|id| !id.is_empty())
+        .zip(
+            model_override
+                .map(str::trim)
+                .filter(|model| !model.is_empty()),
+        );
+    let selected = override_pair.map(|(provider, _)| provider).or_else(|| {
+        ai.provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+    });
     // Legacy mode (ADR-0005): no provider selected — the implicit `default` provider on its
     // `base_url`; a `[ai.providers.default]` block may still override it like any other provider.
     let legacy = selected.is_none();
@@ -304,12 +340,15 @@ pub fn resolve_with(
     let models: Vec<String> = block
         .and_then(|b| b.models.clone())
         .unwrap_or_else(|| model_ids(catalog_provider));
-    let model = ai
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .map(str::to_string)
+    let model = override_pair
+        .map(|(_, model)| model.to_string())
+        .or_else(|| {
+            ai.model
+                .as_deref()
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .map(str::to_string)
+        })
         .or_else(|| legacy.then(|| ai.model_or_default().to_string()))
         .ok_or_else(|| {
             format!(
@@ -353,6 +392,61 @@ pub fn resolve_with(
         max_tokens,
         models,
     })
+}
+
+/// One AI Command's resolved run (MOE-0062): the provider it runs on — its own configured pair when
+/// the command overrides one, else the active pair — plus the reasoning and temperature it asks for.
+pub struct CommandRun {
+    pub provider: ActiveProvider,
+    pub reasoning: Reasoning,
+    pub temperature: Option<f64>,
+}
+
+/// Resolve an AI Command's run from `[ai.commands."<id>"]` (MOE-0062). A command with no block runs
+/// exactly like the chat does: the active pair, the provider's own reasoning default, and no
+/// temperature key on the wire.
+pub fn resolve_command_run(config: &MoeConfig, command_id: &str) -> Result<CommandRun, String> {
+    resolve_command_run_with(
+        config,
+        &moe_platform::model_catalog::load(),
+        keychain::ai_api_key_for,
+        command_id,
+    )
+}
+
+/// Resolve with injected catalog and key lookup (tests use the embedded snapshot and a fake key).
+pub fn resolve_command_run_with(
+    config: &MoeConfig,
+    catalog: &Catalog,
+    key: impl Fn(&str, &[String]) -> Option<String>,
+    command_id: &str,
+) -> Result<CommandRun, String> {
+    let command = config.ai.commands.get(command_id);
+    let provider = resolve_pair_with(
+        config,
+        catalog,
+        key,
+        command.and_then(|c| c.provider.as_deref()),
+        command.and_then(|c| c.model.as_deref()),
+    )?;
+    Ok(CommandRun {
+        reasoning: Reasoning::resolve(provider.reasoning, command.and_then(|c| c.reasoning)),
+        temperature: command.and_then(|c| c.temperature),
+        provider,
+    })
+}
+
+/// The protocol a provider speaks, in the same order the resolver reads it (the block's override,
+/// then the checked-in table). `None` = an unknown provider: the caller must not promise anything
+/// about it (MOE-0062's reasoning-support check reads this).
+pub fn protocol_of(config: &MoeConfig, provider_id: &str) -> Option<Protocol> {
+    let id = provider_id.trim();
+    config
+        .ai
+        .providers
+        .get(id)
+        .and_then(|block| block.protocol)
+        .or_else(|| default_of(id).map(|table| table.protocol))
 }
 
 fn model_ids(provider: Option<&CatalogProvider>) -> Vec<String> {
@@ -402,6 +496,8 @@ pub(crate) fn test_provider(protocol: Protocol, api_url: &str) -> ActiveProvider
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_client::AnthropicThinking;
+    use moe_platform::config::ReasoningSetting;
     use moe_platform::model_catalog;
 
     fn key_ok(_id: &str, _env: &[String]) -> Option<String> {
@@ -411,6 +507,110 @@ mod tests {
     fn resolve_toml(toml: &str) -> Result<ActiveProvider, String> {
         let config = MoeConfig::from_toml(toml).expect("config parses");
         resolve_with(&config, model_catalog::embedded(), key_ok)
+    }
+
+    fn run_toml(toml: &str, command: &str) -> Result<CommandRun, String> {
+        let config = MoeConfig::from_toml(toml).expect("config parses");
+        resolve_command_run_with(&config, model_catalog::embedded(), key_ok, command)
+    }
+
+    /// One AI Command's own pair overrides the active one (MOE-0062); with no block it resolves to
+    /// exactly the active pair, the provider's reasoning default and no temperature key.
+    #[test]
+    fn command_runs_resolve_their_own_pair_or_the_active_one() {
+        let toml = "[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-flash\"\n\
+                    [ai.commands.\"aicmd.translate\"]\nprovider = \"openai\"\nmodel = \"gpt-5.2\"\n";
+        let own = run_toml(toml, "aicmd.translate").expect("resolves");
+        assert_eq!(own.provider.id, "openai");
+        assert_eq!(own.provider.model, "gpt-5.2");
+        // No override: the active pair, and the provider's own reasoning default
+        let inherited = run_toml(toml, "aicmd.improve").expect("resolves");
+        assert_eq!(inherited.provider.id, "deepseek");
+        assert_eq!(inherited.provider.model, "deepseek-flash");
+        assert_eq!(inherited.reasoning, Reasoning::Default);
+        assert_eq!(inherited.temperature, None);
+
+        // Half a pair is no pair: a lone provider falls back to the active pair rather than
+        // guessing which of its models was meant.
+        let lone = run_toml(
+            "[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-flash\"\n\
+             [ai.commands.\"aicmd.translate\"]\nprovider = \"openai\"\n",
+            "aicmd.translate",
+        )
+        .expect("resolves");
+        assert_eq!(lone.provider.id, "deepseek");
+    }
+
+    /// The reasoning setting (MOE-0062): off and an effort both beat the provider's default, and
+    /// the temperature rides through as written (or stays absent).
+    #[test]
+    fn command_runs_resolve_reasoning_and_temperature() {
+        let toml = "[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-flash\"\n\
+                    [ai.commands.\"aicmd.translate\"]\nreasoning = \"off\"\ntemperature = 0.2\n";
+        let off = run_toml(toml, "aicmd.translate").expect("resolves");
+        assert_eq!(off.reasoning, Reasoning::Off);
+        assert!(!off.reasoning.is_on());
+        assert_eq!(off.temperature, Some(0.2));
+
+        let high = run_toml(
+            "[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-flash\"\n\
+             [ai.commands.\"aicmd.translate\"]\nreasoning = \"high\"\n",
+            "aicmd.translate",
+        )
+        .expect("resolves");
+        assert_eq!(high.reasoning, Reasoning::Effort(ReasoningSetting::High));
+        assert_eq!(high.reasoning.effort(), Some(ReasoningSetting::High));
+
+        // A command that declares nothing keeps the provider's default: this one reasons in the
+        // snapshot, so the run asks for the dialect's own default rather than an effort.
+        let inherited = run_toml(
+            "[ai]\nprovider = \"deepseek\"\nmodel = \"deepseek-flash\"\n",
+            "aicmd.translate",
+        )
+        .expect("resolves");
+        assert_eq!(inherited.reasoning, Reasoning::Default);
+    }
+
+    /// The Anthropic dialect the resolver picks (MOE-0035/0062): the default keeps the old
+    /// half-of-`max_tokens` formula, an effort names its own budget, MiniMax has one on-state, and
+    /// off omits the key entirely.
+    #[test]
+    fn anthropic_thinking_follows_the_effort() {
+        let provider =
+            resolve_toml("[ai]\nprovider = \"anthropic\"\nmodel = \"claude-sonnet-4-5\"\n")
+                .expect("resolves");
+        assert!(provider.reasoning, "Claude models reason in the snapshot");
+        assert_eq!(
+            anthropic_thinking(&provider, Reasoning::Default),
+            AnthropicThinking::EnabledBudget(provider.max_tokens / 2)
+        );
+        for (effort, budget) in [
+            (ReasoningSetting::Low, 1024),
+            (ReasoningSetting::Medium, 2048),
+            (ReasoningSetting::High, 4096),
+        ] {
+            assert_eq!(
+                anthropic_thinking(&provider, Reasoning::Effort(effort)),
+                AnthropicThinking::EnabledBudget(budget),
+                "{effort:?}"
+            );
+        }
+        assert_eq!(
+            anthropic_thinking(&provider, Reasoning::Off),
+            AnthropicThinking::Omit
+        );
+
+        let minimax = resolve_toml("[ai]\nprovider = \"minimax\"\nmodel = \"MiniMax-M2.5\"\n")
+            .expect("resolves");
+        // MiniMax's surface has one on-state; an effort cannot be expressed there
+        assert_eq!(
+            anthropic_thinking(&minimax, Reasoning::Effort(ReasoningSetting::High)),
+            AnthropicThinking::Adaptive
+        );
+        assert_eq!(
+            anthropic_thinking(&minimax, Reasoning::Off),
+            AnthropicThinking::Omit
+        );
     }
 
     /// Every table entry is a real catalog id or a known local provider (the table must not drift
