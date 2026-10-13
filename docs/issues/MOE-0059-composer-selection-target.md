@@ -19,10 +19,13 @@ the answer.
 ## Decision
 
 - **Above the composer row, not inside it.** The chip sits in its own row between the message log and
-  the composer pill, left-aligned with the add button. Inside the capsule it would eat the draft's width
-  and compete with the attach button; above, it reads as *context for the message about to be sent*,
-  which is what it is. It wears the Input Bar chips' own material (house glass, chip shadow) at the
-  composer's scale, so the three chips in the app are one family.
+  the composer pill, its left edge on the **input capsule's** — the add button's column plus the
+  composer row's own gap — so it reads as context for the message the capsule will send rather than as
+  a sibling of the attach button. Inside the capsule it would eat the draft's width and compete with
+  the attach button; above, with the same 8px under it as the composer has below it, it reads as
+  *context for the message about to be sent*, which is what it is. It wears the Input Bar chips' own
+  material (house glass, chip shadow) at the composer's scale, so the three chips in the app are one
+  family.
 - **Armed only while the conversation is blank.** ADR-0019/0021 give the captured context to the
   conversation's **first message only**, so the chip lives on a blank page with no send in flight: the
   first send consumes it, a rolled-back send returns it (the selection never made it into a message),
@@ -73,3 +76,9 @@ the answer.
   characters (`SELECTION_LIMIT`) with a note inside the message, while the peek shows the whole text.
   The card says what the message carries, not what the model finally reads; if that gap matters, the
   caption is where to say so, and the limit belongs to the Extension, not to the platform's payload.
+- 2026-10-13 (owner, from use): the chip must align with the **input**, not the add-attachment button,
+  and the space between chip and input must equal the space under the input. Both are now structural
+  rather than eyeballed: a slot of the button's own column (`--moe-row-h`) plus the composer row's gap
+  puts the chip's left edge on the capsule's, and the row's 8px matches the card's `pb-2` below the
+  composer. The row is `flex` for the same reason — a block row would add its line box's descender to
+  that 8px.

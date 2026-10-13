@@ -80,8 +80,12 @@
         <!-- The page's target (MOE-0059): the captured selection the next message will carry, shown
              only while the conversation is still blank — once the first message goes out, the
              selection is already inside it (ADR-0019/0021). Hovering the chip peeks the captured
-             text in the card below it. -->
-        <div id="chat-target-row" class="relative mb-1 hidden">
+             text in the card above it. The slot is the add button's own column and the gap is the
+             composer row's, so the chip starts where the input capsule starts; the 8px under it is
+             the composer's own bottom space (the card's pb-2), so the chip sits on the composer
+             rather than floating above it. -->
+        <div id="chat-target-row" class="moe-chat-target-row relative mb-2 hidden flex items-center gap-2">
+          <div class="moe-chat-target-slot" aria-hidden="true"></div>
           <span id="chat-target" class="moe-chat-target"></span>
           <div id="chat-target-peek" class="moe-peek-card hidden"></div>
         </div>

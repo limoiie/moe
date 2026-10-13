@@ -1060,6 +1060,18 @@ body.moe-pointer-inside .moe-titlebar-title {
   flex: none;
   color: var(--moe-fg-subtle);
 }
+/* The target row's slot (MOE-0059): the add button's own column, so the chip starts where the input
+   capsule starts rather than where the button does. `--moe-row-h` is the token the button's
+   min-width uses and the row's gap-2 is the composer row's gap — the same construction #query-row
+   uses to line the Input Bar up with the list rows. */
+.moe-chat-target-slot {
+  flex: none;
+  width: var(--moe-row-h);
+}
+/* Unlayered, so it beats the row's own `flex` (same trick as `.moe-filter-control.hidden`) */
+.moe-chat-target-row.hidden {
+  display: none;
+}
 /* Unlayered, so it beats this rule's own display (same trick as `.moe-filter-control.hidden`) */
 .moe-peek-card.hidden {
   display: none;

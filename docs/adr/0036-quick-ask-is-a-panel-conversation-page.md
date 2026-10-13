@@ -197,7 +197,10 @@ the page now says *what* it is about to carry, in the one place where the questi
 composer, and only while the conversation is still blank.
 
 **The target chip.** A chip in the house glass (the Input Bar chips' material, ADR-0043/0034) sits
-above the composer row, left-aligned with the add button, showing `Selection` and its size ("1,234
+above the composer row, its left edge on the **input capsule's** (the add button's column plus the
+row's own gap), so the chip reads as part of the message the capsule will send rather than as a
+sibling of the attach button. The space under it is the composer's own bottom space (8px), so it sits
+on the composer instead of floating above it. It shows `Selection` and its size ("1,234
 characters", or the file count when only Finder files were captured). It is armed only on a blank
 conversation with no send in flight: the first send consumes the target, a failed send returns it (the
 selection never made it into a message), and a started or reopened conversation never shows it. No
