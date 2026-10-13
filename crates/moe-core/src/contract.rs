@@ -1,6 +1,7 @@
 //! Command contract: input kinds × streaming Item output; write-back is performed centrally by the platform (ADR-0006).
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -397,6 +398,9 @@ pub struct CommandMeta {
     /// Filled by the Registry from `Extension::command_kind`; None renders as "Command".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// Input Bar arguments this Command declares (ADR-0045), in display order; empty = none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub arguments: Vec<CommandArgument>,
 }
 
 /// One group of command palette search results (Raycast-style section, ADR-0020):
@@ -505,18 +509,70 @@ impl Emitter for NoopEmitter {
     fn emit(&self, _event: CommandEvent) {}
 }
 
+/// One option of a Command argument (ADR-0045): the bounded set of values the panel offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArgumentOption {
+    /// Stable id: what the Extension sees in `ArgumentValues` on invoke.
+    pub id: String,
+    /// The option's name, on the argument chip and in the picker.
+    pub title: String,
+}
+
+/// One argument a Command declares (ADR-0045): a positional control in the Input Bar, before the
+/// query text. The panel renders the chip and the picker and hands the chosen value back on invoke;
+/// the Extension only declares the choice list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandArgument {
+    /// Stable id within the command: the key in `ArgumentValues`.
+    pub id: String,
+    /// The argument's name ("Language"): the picker's section header.
+    pub title: String,
+    /// The option id selected before the user picks (absent = the first option).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// The choice list, in display order. An empty list is a declaration error: the panel shows no
+    /// chip for it (a control with nothing to choose would be a control that lies).
+    pub options: Vec<ArgumentOption>,
+}
+
+/// The argument values the panel collected for one invocation (ADR-0045), keyed by argument id.
+/// Empty = a command that declares none, or a caller that passed none — the Extension applies its
+/// own default then, so a direct invocation (a re-run, another surface) never depends on the panel.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ArgumentValues(BTreeMap<String, String>);
+
+impl ArgumentValues {
+    /// The value of an argument; None when the caller sent none for it.
+    pub fn get(&self, id: &str) -> Option<&str> {
+        self.0.get(id).map(String::as_str)
+    }
+
+    pub fn insert(&mut self, id: impl Into<String>, value: impl Into<String>) {
+        self.0.insert(id.into(), value.into());
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 pub trait Extension: Send + Sync {
     /// Namespace key (ADR-0003): storage and history are isolated beneath it.
     fn id(&self) -> &str;
     fn title(&self) -> &str;
     fn commands(&self) -> Vec<CommandMeta>;
 
-    /// Apply a Command in the command palette.
+    /// Apply a Command in the command palette. `arguments` carries the values the panel collected
+    /// for the Command's declared arguments (ADR-0045); empty for a command that declares none.
     fn invoke(
         &self,
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        arguments: &ArgumentValues,
     ) -> Result<ActionResult, MoeError>;
 
     /// Execution entry with incremental events; falls back to [`Extension::invoke`] by default (non-streaming extensions need not implement it).
@@ -525,9 +581,10 @@ pub trait Extension: Send + Sync {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        arguments: &ArgumentValues,
         _emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
-        self.invoke(command_id, query, selection)
+        self.invoke(command_id, query, selection, arguments)
     }
 
     /// The "catch-all" command offered when search has no matches (e.g. AI: Ask "…"); none by default.

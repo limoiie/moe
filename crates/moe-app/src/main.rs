@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use moe_core::contract::Emitter as CommandEmitter;
 use moe_core::contract::{
-    Action, ActionResult, CommandEvent, CommandMeta, CommandSection, EntryKind, ExtensionMeta,
-    Item, Selection,
+    Action, ActionResult, ArgumentValues, CommandEvent, CommandMeta, CommandSection, EntryKind,
+    ExtensionMeta, Item, Selection,
 };
 use moe_core::frecency::Frecency;
 use moe_core::keymap::SystemKey;
@@ -817,15 +817,25 @@ fn invoke_command(
     command_id: String,
     query: Option<String>,
     record: Option<bool>,
+    arguments: Option<ArgumentValues>,
 ) -> Result<ActionResult, String> {
     let selection = state.selection.lock().expect("selection poisoned").clone();
+    // The panel sends the values it collected for the command's declared arguments (ADR-0045); a
+    // caller that declares none (a direct invocation, the tray) simply sends none.
+    let arguments = arguments.unwrap_or_default();
     let emitter: std::sync::Arc<dyn CommandEmitter> =
         std::sync::Arc::new(TauriEventEmitter(app.clone()));
     let result = state
         .registry
         .lock()
         .expect("registry poisoned")
-        .invoke_streaming(&command_id, query.as_deref(), selection.as_ref(), emitter)
+        .invoke_streaming(
+            &command_id,
+            query.as_deref(),
+            selection.as_ref(),
+            &arguments,
+            emitter,
+        )
         .map_err(|e| e.to_string())?;
 
     // Re-running a Live list as input changes is not a "launch" (frecency semantics, IIE4AD-360).
@@ -879,6 +889,7 @@ fn run_item_action(
     command_id: String,
     item: Item,
     action: Action,
+    arguments: Option<ArgumentValues>,
 ) -> Result<ActionResult, String> {
     let result = state
         .registry
@@ -888,15 +899,18 @@ fn run_item_action(
         .map_err(|e| e.to_string())?;
     // The refine loop (ADR-0024 amendment): the Extension asks for a re-run with the item's text as
     // the input; the platform owns that invocation (fresh emitter, no captured Selection, no frecency)
-    // and hands the inner result — the new streaming card — back to the UI.
+    // and hands the inner result — the new streaming card — back to the UI. The panel's argument
+    // values ride along (ADR-0045): "Translate to Chinese Again" must not fall back to auto and
+    // translate the Chinese result back into English.
     if let ActionResult::Rerun { text } = &result {
+        let arguments = arguments.unwrap_or_default();
         let emitter: std::sync::Arc<dyn CommandEmitter> =
             std::sync::Arc::new(TauriEventEmitter(app.clone()));
         let rerun = state
             .registry
             .lock()
             .expect("registry poisoned")
-            .invoke_streaming(&command_id, Some(text), None, emitter)
+            .invoke_streaming(&command_id, Some(text), None, &arguments, emitter)
             .map_err(|e| e.to_string())?;
         apply_result_effects(&app, &rerun)?;
         return Ok(rerun);

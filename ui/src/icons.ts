@@ -38,6 +38,7 @@ import {
   PenLine,
   Plus,
   Quote,
+  Replace,
   RotateCw,
   Search,
   Send,
@@ -78,6 +79,7 @@ const ICONS: Record<string, IconNode> = {
   quote: Quote,
   // AI Commands (ADR-0024)
   "wand-2": Wand2,
+  replace: Replace,
   "spell-check": SpellCheck,
   shrink: Shrink,
   expand: Expand,

@@ -14,8 +14,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
-    Accessory, Action, ActionKind, ActionResult, CommandEvent, CommandMeta, Emitter, EmptyView,
-    Extension, Filter, InputKind, Item, Metadata, MetadataTag, MoeError, NoopEmitter, Selection,
+    Accessory, Action, ActionKind, ActionResult, ArgumentValues, CommandEvent, CommandMeta,
+    Emitter, EmptyView, Extension, Filter, InputKind, Item, Metadata, MetadataTag, MoeError,
+    NoopEmitter, Selection,
 };
 use moe_core::conversation::{AttachmentRef, Conversation, Message, Role};
 use moe_core::keymap::{SystemKey, display_of};
@@ -1136,6 +1137,7 @@ impl Extension for AiShell {
                 keybinding: display_of(SystemKey::QuickAsk).map(str::to_string),
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             },
             CommandMeta {
                 id: "ai.search-history".into(),
@@ -1148,6 +1150,7 @@ impl Extension for AiShell {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             },
 
             CommandMeta {
@@ -1161,6 +1164,7 @@ impl Extension for AiShell {
                 keybinding: display_of(SystemKey::OpenSideChat).map(str::to_string),
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             },
             CommandMeta {
                 id: "ai.choose-model".into(),
@@ -1176,6 +1180,7 @@ impl Extension for AiShell {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             },
         ]
     }
@@ -1185,6 +1190,7 @@ impl Extension for AiShell {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        _arguments: &ArgumentValues,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
             "ai.quick-ask" => self.quick_ask(query, selection, None),
@@ -1224,11 +1230,12 @@ impl Extension for AiShell {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        arguments: &ArgumentValues,
         emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
             "ai.quick-ask" => self.quick_ask(query, selection, Some(emitter)),
-            _ => self.invoke(command_id, query, None),
+            _ => self.invoke(command_id, query, None, arguments),
         }
     }
 
@@ -1267,6 +1274,7 @@ impl Extension for AiShell {
             keybinding: None,
             extension_title: None,
             kind: None,
+            arguments: Vec::new(),
         })
     }
 
@@ -2083,7 +2091,12 @@ This is a test case, do you know?"#;
             }
         );
         // The same shape through the command path (Apply from the command list)
-        assert_eq!(AiShell.invoke("ai.quick-ask", None, None).unwrap(), result);
+        assert_eq!(
+            AiShell
+                .invoke("ai.quick-ask", None, None, &ArgumentValues::default())
+                .unwrap(),
+            result
+        );
     }
 
     /// Panel continuation (ADR-0036): the composer path refuses empty messages before touching the
@@ -2228,7 +2241,12 @@ This is a test case, do you know?"#;
     #[test]
     fn choose_model_is_routable_and_lists_the_catalog() {
         let result = AiShell
-            .invoke("ai.choose-model", Some("deepseek"), None)
+            .invoke(
+                "ai.choose-model",
+                Some("deepseek"),
+                None,
+                &ArgumentValues::default(),
+            )
             .expect("ai.choose-model is routable");
         let items = match result {
             ActionResult::List {
@@ -2355,7 +2373,7 @@ This is a test case, do you know?"#;
         let new = AiShell.new_command().expect("AI declares its New entry");
         assert_eq!(new.id, "ai.quick-ask", "New resolves to Quick Ask");
         let result = AiShell
-            .invoke(&new.id, None, None)
+            .invoke(&new.id, None, None, &ArgumentValues::default())
             .expect("ai.quick-ask is routable");
         assert_eq!(
             result,
@@ -2398,7 +2416,9 @@ This is a test case, do you know?"#;
             "the Kbd comes from the keymap table"
         );
         assert_eq!(
-            AiShell.invoke("ai.side-chat", None, None).unwrap(),
+            AiShell
+                .invoke("ai.side-chat", None, None, &ArgumentValues::default())
+                .unwrap(),
             ActionResult::OpenSideView {
                 payload: serde_json::json!({})
             }

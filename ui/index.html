@@ -21,6 +21,11 @@
     >
       <div id="query-row" class="relative flex items-center gap-2.5 px-5 pt-4 pb-3">
         <span id="input-icon" class="moe-input-icon text-fg-subtle"></span>
+        <!-- Argument chips (ADR-0045): the focused command's declared arguments, in display order,
+             before the text — the values ⏎ will run with. Tab focuses them (the first, then around);
+             a click or Tab opens the picker card. The container is hidden when there are none, so
+             the row's gap never counts an empty slot and the text's x stays put (ADR-0034). -->
+        <span id="argument-chips" class="moe-argument-chips hidden"></span>
         <div class="flex min-w-0 flex-1 flex-col">
           <input
             id="query"
@@ -148,6 +153,22 @@
           id="action-search"
           class="w-full border-t border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
           placeholder="Filter actions…"
+          spellcheck="false"
+        />
+      </div>
+
+      <!-- Argument Card (ADR-0045): the argument chip's picker — the argument's options, the input
+           at the bottom edge like every other menu card. The cards are peers: opening one closes the
+           others. The input keeps what is typed even when nothing matches, like the Filter Card. -->
+      <div
+        id="argument-card"
+        class="moe-filter-card absolute left-2 top-14 z-30 hidden w-64 overflow-hidden rounded-2xl bg-surface-overlay"
+      >
+        <ul id="argument-list" class="max-h-72 overflow-y-auto p-1"></ul>
+        <input
+          id="argument-search"
+          class="w-full border-t border-line bg-transparent px-3 py-2 text-sm text-fg caret-accent placeholder-fg-subtle outline-none"
+          placeholder="Filter options…"
           spellcheck="false"
         />
       </div>

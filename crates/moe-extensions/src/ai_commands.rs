@@ -1,9 +1,15 @@
 //! AI Commands (ADR-0024): batch text-transform commands — Improve Writing / Fix Spelling &
 //! Grammar / Make Shorter / Make Longer / Simplify Language / Summarize / Translate / Tone /
-//! Extract Key Ideas / Continue Writing, with Raycast Pro-style semantics.
+//! Extract Key Ideas / Continue Writing / Rewrite Writing, with Raycast Pro-style semantics.
+//!
+//! The two writing commands are complementary and say so in their own prompts (MOE-0061): Improve
+//! Writing polishes near-final prose at the sentence level, Rewrite Writing restructures rough
+//! drafts at the document level — each names the other to define the boundary.
 //!
 //! Input = the text selected before opening the palette (the panel never treats the search text as
-//! content, ADR-0036); when there is no selection, a guidance card is shown.
+//! content, ADR-0036); when there is no selection, a guidance card is shown. Translate declares a
+//! language argument (ADR-0045) whose default translates between Chinese and English by detecting
+//! the text's own language.
 //! Streaming output goes to a result card in the panel that **stays for review**: nothing is written
 //! back automatically (ADR-0024 amendment) — Apply (⏎) writes back, ⌥⏎ copies, "{Command} Again"
 //! re-runs the transform on the result, Esc discards. When stopped, only the generated part is kept.
@@ -13,8 +19,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moe_core::contract::{
-    Action, ActionKind, ActionResult, CommandMeta, Emitter, Extension, InputKind, Item, MoeError,
-    Selection,
+    Action, ActionKind, ActionResult, ArgumentOption, ArgumentValues, CommandArgument, CommandMeta,
+    Emitter, Extension, InputKind, Item, MoeError, Selection,
 };
 use moe_platform::config::{MoeConfig, Protocol};
 
@@ -24,14 +30,39 @@ use crate::ai_client::{ChatRequest, authenticate, completion_text, endpoint_url,
 
 pub struct AiCommands;
 
-/// Spec of one AI command: id / presentation / system instruction.
+/// Spec of one AI command: id / presentation / system instruction / declared arguments.
 struct Spec {
     id: &'static str,
     title: &'static str,
     subtitle: &'static str,
     icon: &'static str,
+    /// The default instruction; a declared argument may refine it (translate's language).
     instruction: &'static str,
+    /// The Input Bar arguments this command declares (ADR-0045), in display order.
+    arguments: &'static [ArgumentSpec],
 }
+
+/// One declared argument in const form (ADR-0045): `commands()` builds the contract's
+/// `CommandArgument` from it, so the SPECS table stays a table.
+struct ArgumentSpec {
+    id: &'static str,
+    title: &'static str,
+    default: &'static str,
+    /// (option id, option title), in display order.
+    options: &'static [(&'static str, &'static str)],
+}
+
+/// Translate's language argument (ADR-0045): the value the panel sends, and the auto direction it
+/// defaults to. Anything the extension does not recognize reads as auto — the safe direction, since
+/// a wrong explicit target would translate a text into its own language.
+const LANGUAGE_ARG: &str = "language";
+const LANGUAGE_AUTO: &str = "auto";
+
+/// The three translate instructions: the auto one detects the text's own language, the other two are
+/// the explicit directions the argument can pick.
+const TRANSLATE_AUTO: &str = "Translate the text below between Chinese and English: detect the language the text is written in and translate it into the other one, keeping the meaning and tone. Only output the transformed text.";
+const TRANSLATE_EN: &str = "Translate the text below into English, keeping the meaning and tone. Only output the transformed text.";
+const TRANSLATE_ZH: &str = "Translate the text below into Chinese, keeping the meaning and tone. Only output the transformed text.";
 
 /// Guidance card when the command has neither a selection to transform (the search text is not content, ADR-0036).
 const NO_TEXT_HINT: &str = "First select the text to transform, then run this command again.";
@@ -42,7 +73,16 @@ const SPECS: [Spec; 12] = [
         title: "Improve Writing",
         subtitle: "Clearer, smoother wording without changing the meaning",
         icon: "wand-2",
-        instruction: "Improve the writing: make it clearer, smoother, and more professional, keeping the meaning and all information intact. Only output the transformed text.",
+        instruction: "Improve the writing at the sentence level: word choice, sentence length, and a natural, native register. The text is the user's own near-final prose — keep its meaning, its structure, and every piece of information. Do not reorder or merge paragraphs and do not add or remove sections; restructuring a rough draft is Rewrite Writing's job, not yours. Output the improved prose only, unless the user asks for a summary of the changes.",
+        arguments: &[],
+    },
+    Spec {
+        id: "aicmd.rewrite",
+        title: "Rewrite Writing",
+        subtitle: "Restructure rough drafts into organized prose",
+        icon: "replace",
+        instruction: "Rewrite rough input into organized prose. The input is a draft: fragments, bullet notes, spoken-style text, broken grammar, ideas out of order. Restructure at the document and argument level — reorder sections and points for logical flow, group related ideas, merge duplicates, split overloaded paragraphs, add topic sentences and transitions, turn fragments and notes into full prose — and fix grammar and register as you go. Do not invent facts, examples, or claims; do not change the user's intent or position; do not drop substantive points; do not pad with filler; do not over-formalize beyond the user's voice. If the input is too ambiguous to restructure, ask one clarifying question instead of guessing. Polishing near-final prose at the sentence level is Improve Writing's job, not yours. Output the prose only, unless the user asks for a summary of the changes.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.fix-grammar",
@@ -50,6 +90,7 @@ const SPECS: [Spec; 12] = [
         subtitle: "Fix spelling and grammar errors",
         icon: "spell-check",
         instruction: "Fix spelling, grammar, and punctuation errors in the text, keeping the meaning and style unchanged. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.shorten",
@@ -57,6 +98,7 @@ const SPECS: [Spec; 12] = [
         subtitle: "Remove redundancy, keep the key points",
         icon: "shrink",
         instruction: "Condense the text: remove redundancy and repetition, keep the core information and key details, and introduce no new information. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.lengthen",
@@ -64,6 +106,7 @@ const SPECS: [Spec; 12] = [
         subtitle: "Add details and arguments for more substance",
         icon: "expand",
         instruction: "Expand the text: add necessary details, examples, and arguments to make it more complete, keeping the meaning and style. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.simplify",
@@ -71,6 +114,7 @@ const SPECS: [Spec; 12] = [
         subtitle: "Rewrite in simpler language",
         icon: "pen-line",
         instruction: "Rewrite the text in simpler, plainer language to make it easier to read, keeping the meaning. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.summarize",
@@ -78,20 +122,24 @@ const SPECS: [Spec; 12] = [
         subtitle: "Condense the core points",
         icon: "list-checks",
         instruction: "Summarize this text: extract the core information, clearly structured and well organized. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
-        id: "aicmd.translate-en",
-        title: "Translate to English",
-        subtitle: "Keep the meaning and tone",
+        id: "aicmd.translate",
+        title: "Translate",
+        subtitle: "Chinese and English, auto-detected",
         icon: "languages",
-        instruction: "Translate the text below into English, keeping the meaning and tone. Only output the transformed text.",
-    },
-    Spec {
-        id: "aicmd.translate-zh",
-        title: "Translate to Chinese",
-        subtitle: "Keep the meaning and tone",
-        icon: "languages",
-        instruction: "Translate the text below into Chinese, keeping the meaning and tone. Only output the transformed text.",
+        instruction: TRANSLATE_AUTO,
+        arguments: &[ArgumentSpec {
+            id: LANGUAGE_ARG,
+            title: "Language",
+            default: LANGUAGE_AUTO,
+            options: &[
+                (LANGUAGE_AUTO, "Zh ↔ En"),
+                ("en", "English"),
+                ("zh", "Chinese"),
+            ],
+        }],
     },
     Spec {
         id: "aicmd.tone-professional",
@@ -99,6 +147,7 @@ const SPECS: [Spec; 12] = [
         subtitle: "Formal and objective, for work settings",
         icon: "briefcase",
         instruction: "Rewrite it to be more formal, professional, and objective, suitable for work and business contexts, keeping the meaning. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.tone-friendly",
@@ -106,6 +155,7 @@ const SPECS: [Spec; 12] = [
         subtitle: "Warm and approachable, natural tone",
         icon: "smile",
         instruction: "Rewrite it to be friendlier, warmer, and more approachable, with a natural tone, keeping the meaning. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.key-ideas",
@@ -113,6 +163,7 @@ const SPECS: [Spec; 12] = [
         subtitle: "List the key points as bullets",
         icon: "lightbulb",
         instruction: "Extract the key points of this text and list them as concise bullets. Only output the transformed text.",
+        arguments: &[],
     },
     Spec {
         id: "aicmd.continue-writing",
@@ -120,11 +171,46 @@ const SPECS: [Spec; 12] = [
         subtitle: "Keep writing naturally from this text",
         icon: "arrow-right",
         instruction: "Continue writing naturally from this text, keeping the style and tone consistent. Only output the transformed text.",
+        arguments: &[],
     },
 ];
 
 fn spec_of(command_id: &str) -> Option<&'static Spec> {
     SPECS.iter().find(|spec| spec.id == command_id)
+}
+
+/// The contract's argument declarations built from the const table (ADR-0045).
+fn arguments_of(spec: &Spec) -> Vec<CommandArgument> {
+    spec.arguments
+        .iter()
+        .map(|argument| CommandArgument {
+            id: argument.id.into(),
+            title: argument.title.into(),
+            default: Some(argument.default.into()),
+            options: argument
+                .options
+                .iter()
+                .map(|(id, title)| ArgumentOption {
+                    id: (*id).into(),
+                    title: (*title).into(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// The system instruction one run gets: the spec's own, except where a declared argument refines it
+/// (translate's target language). Anything the extension does not recognize reads as auto — the safe
+/// direction, since a wrong explicit target would translate a text into its own language.
+fn instruction_for(spec: &Spec, arguments: &ArgumentValues) -> &'static str {
+    if spec.id != "aicmd.translate" {
+        return spec.instruction;
+    }
+    match arguments.get(LANGUAGE_ARG) {
+        Some("en") => TRANSLATE_EN,
+        Some("zh") => TRANSLATE_ZH,
+        _ => spec.instruction,
+    }
 }
 
 /// Result card (streaming placeholder / final text): Apply = write back, ⌥⏎ = copy, and the refine
@@ -287,6 +373,7 @@ impl Extension for AiCommands {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: arguments_of(spec),
             })
             .collect()
     }
@@ -296,6 +383,7 @@ impl Extension for AiCommands {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        arguments: &ArgumentValues,
     ) -> Result<ActionResult, MoeError> {
         let Some(spec) = spec_of(command_id) else {
             return Err(MoeError::NotFound);
@@ -319,7 +407,7 @@ impl Extension for AiCommands {
         };
         let body = request_body(
             provider.protocol,
-            &prompt_request(&provider, spec.instruction, &text, false),
+            &prompt_request(&provider, instruction_for(spec, arguments), &text, false),
         );
         match completion_blocking(provider.protocol, &provider.api_url, &provider.key, body) {
             // The blocking path returns the same review card as the streaming path — never an
@@ -338,6 +426,7 @@ impl Extension for AiCommands {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        arguments: &ArgumentValues,
         emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         let Some(spec) = spec_of(command_id) else {
@@ -360,7 +449,7 @@ impl Extension for AiCommands {
         };
         let body = request_body(
             provider.protocol,
-            &prompt_request(&provider, spec.instruction, &text, true),
+            &prompt_request(&provider, instruction_for(spec, arguments), &text, true),
         );
         let model_hint = provider.model_hint();
 
@@ -464,6 +553,100 @@ mod tests {
             "commands must be a substantial set: {}",
             ids.len()
         );
+    }
+
+    /// Command arguments (ADR-0045): Translate declares one, its default is the auto direction, and
+    /// every option is named. No other command declares any — an argument is a promise the panel has
+    /// to render, so a command that does not need one must not make it.
+    #[test]
+    fn only_translate_declares_a_language_argument() {
+        for command in AiCommands.commands() {
+            if command.id == "aicmd.translate" {
+                assert_eq!(command.arguments.len(), 1);
+                let argument = &command.arguments[0];
+                assert_eq!(argument.id, LANGUAGE_ARG);
+                assert_eq!(argument.title, "Language");
+                assert_eq!(argument.default.as_deref(), Some(LANGUAGE_AUTO));
+                assert_eq!(argument.options.len(), 3);
+                assert_eq!(
+                    argument.options[0].title, "Zh ↔ En",
+                    "auto reads as the pair"
+                );
+                assert!(argument.options.iter().any(|option| option.id == "en"));
+                assert!(argument.options.iter().any(|option| option.id == "zh"));
+            } else {
+                assert!(
+                    command.arguments.is_empty(),
+                    "{} declares an argument the panel would have to render",
+                    command.id
+                );
+            }
+        }
+    }
+
+    /// The instruction a run gets (ADR-0045): the panel's value picks the direction, and anything
+    /// else — nothing sent, an unknown value — reads as auto. A wrong explicit target would
+    /// translate a text into its own language, so auto is the safe reading.
+    #[test]
+    fn translate_instruction_follows_the_language_argument() {
+        let translate = spec_of("aicmd.translate").expect("registered");
+        assert_eq!(
+            instruction_for(translate, &ArgumentValues::default()),
+            TRANSLATE_AUTO,
+            "no value sent = auto"
+        );
+        let mut values = ArgumentValues::default();
+        values.insert(LANGUAGE_ARG, "en");
+        assert_eq!(instruction_for(translate, &values), TRANSLATE_EN);
+        values.insert(LANGUAGE_ARG, "zh");
+        assert_eq!(instruction_for(translate, &values), TRANSLATE_ZH);
+        values.insert(LANGUAGE_ARG, "klingon");
+        assert_eq!(instruction_for(translate, &values), TRANSLATE_AUTO);
+        // Every other command ignores the argument entirely.
+        let improve = spec_of("aicmd.improve").expect("registered");
+        assert_eq!(instruction_for(improve, &values), improve.instruction);
+        assert!(
+            TRANSLATE_AUTO.contains("detect"),
+            "auto detects the direction"
+        );
+    }
+
+    /// The two writing commands are complementary, and the boundary lives in the prompts: each names
+    /// the other, states its own scope, and asks for prose only (MOE-0061).
+    #[test]
+    fn the_writing_commands_name_each_other_and_keep_to_their_scope() {
+        let improve = spec_of("aicmd.improve").expect("registered");
+        let rewrite = spec_of("aicmd.rewrite").expect("registered");
+        assert!(
+            improve.instruction.contains("Rewrite Writing"),
+            "Improve Writing must name the heavier command"
+        );
+        assert!(
+            rewrite.instruction.contains("Improve Writing"),
+            "Rewrite Writing must name the lighter command"
+        );
+        assert!(improve.instruction.contains("sentence level"));
+        assert!(
+            improve
+                .instruction
+                .contains("Do not reorder or merge paragraphs")
+        );
+        assert!(rewrite.instruction.contains("document and argument level"));
+        assert!(rewrite.instruction.contains("clarifying question"));
+        assert!(rewrite.instruction.contains("Do not invent facts"));
+        assert!(
+            rewrite
+                .instruction
+                .contains("do not drop substantive points")
+        );
+        for spec in [improve, rewrite] {
+            assert!(
+                spec.instruction
+                    .contains("unless the user asks for a summary"),
+                "{}: commentary only on request",
+                spec.id
+            );
+        }
     }
 
     /// Input resolution: selection first; then a query passed by an invocation (the panel itself

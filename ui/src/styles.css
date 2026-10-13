@@ -756,6 +756,64 @@ html[data-platform="macos"] .moe-window-card {
   display: none;
 }
 
+/* The argument chips (ADR-0045): the Input Bar's *leading* controls, one per argument the focused
+   command declares, before the text — the values ⏎ will run with. House glass like the trailing
+   chips and the same `align-self: stretch` height rule, so the row band (and the measured panel
+   height) cannot move; the row's own gap is repeated inside the container, so a second chip reads as
+   a peer rather than as a group of its own. */
+.moe-argument-chips {
+  display: flex;
+  align-items: center;
+  /* The container stretches to the row's content box so the chips inside stretch with it — a
+     centred container would be as tall as the chip's own 12px content, not the input. */
+  align-self: stretch;
+  gap: 10px;
+  flex: none;
+}
+/* Unlayered, so it beats this rule's own display (same trick as `.moe-filter-control.hidden`).
+   Hidden rather than empty matters: an empty flex item would still take the row's gap. */
+.moe-argument-chips.hidden {
+  display: none;
+}
+.moe-argument-chip {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 5px;
+  flex: none;
+  max-width: 12rem;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--moe-surface-float);
+  background-image: var(--moe-glass-sheen);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  color: var(--moe-fg-muted);
+  font-size: var(--moe-text-secondary);
+  line-height: 1;
+  box-shadow: var(--moe-shadow-chip);
+  transition: background-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+[data-pointer="live"] .moe-argument-chip:hover {
+  background: var(--moe-surface-hover);
+  color: var(--moe-fg);
+}
+/* While its picker is open the chip wears the accent hairline — the same "this is the live control"
+   language the composer capsule uses for focus, since the card's input, not the chip, holds focus. */
+.moe-argument-chip[data-open="true"] {
+  color: var(--moe-fg);
+  box-shadow:
+    var(--moe-shadow-chip),
+    0 0 0 1px var(--moe-accent-line);
+}
+.moe-argument-chip .moe-argument-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The input row's leading slot (one grid column with the item-row icons): the square-m mark on
    the root page, a clickable back arrow on nested pages. The slot keeps the item-icon column
    (16px) while the glyph renders bigger/bolder from its own tokens, so the icon's center and the

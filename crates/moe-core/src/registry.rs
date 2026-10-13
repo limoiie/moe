@@ -1,6 +1,6 @@
 use crate::contract::{
-    Action, ActionResult, CommandMeta, CommandSection, Emitter, EntryKind, Extension,
-    ExtensionMeta, Item, MoeError, NoopEmitter, Selection,
+    Action, ActionResult, ArgumentValues, CommandMeta, CommandSection, Emitter, EntryKind,
+    Extension, ExtensionMeta, Item, MoeError, NoopEmitter, Selection,
 };
 use crate::favorites::Favorites;
 use crate::frecency::FrecencyLookup;
@@ -350,8 +350,15 @@ impl Registry {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        arguments: &ArgumentValues,
     ) -> Result<ActionResult, MoeError> {
-        self.invoke_streaming(command_id, query, selection, Arc::new(NoopEmitter))
+        self.invoke_streaming(
+            command_id,
+            query,
+            selection,
+            arguments,
+            Arc::new(NoopEmitter),
+        )
     }
 
     pub fn invoke_streaming(
@@ -359,11 +366,12 @@ impl Registry {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        arguments: &ArgumentValues,
         emitter: Arc<dyn Emitter>,
     ) -> Result<ActionResult, MoeError> {
         self.find(command_id)
             .ok_or(MoeError::NotFound)?
-            .invoke_streaming(command_id, query, selection, emitter)
+            .invoke_streaming(command_id, query, selection, arguments, emitter)
     }
 
     pub fn run_item_action(
@@ -433,6 +441,7 @@ mod tests {
                     keybinding: None,
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 },
                 CommandMeta {
                     id: "toy.hello".into(),
@@ -445,6 +454,7 @@ mod tests {
                     keybinding: None,
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 },
             ]
         }
@@ -453,6 +463,7 @@ mod tests {
             command_id: &str,
             _query: Option<&str>,
             _selection: Option<&Selection>,
+            _arguments: &ArgumentValues,
         ) -> Result<ActionResult, MoeError> {
             match command_id {
                 "toy.list" => Ok(ActionResult::list(vec![Item {
@@ -519,6 +530,7 @@ mod tests {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             }]
         }
         fn invoke(
@@ -526,6 +538,7 @@ mod tests {
             _command_id: &str,
             _query: Option<&str>,
             _selection: Option<&Selection>,
+            _arguments: &ArgumentValues,
         ) -> Result<ActionResult, MoeError> {
             // invoke_streaming is overridden, so the default path should not be reached
             Err(MoeError::Internal(
@@ -537,6 +550,7 @@ mod tests {
             command_id: &str,
             _query: Option<&str>,
             _selection: Option<&Selection>,
+            _arguments: &ArgumentValues,
             emitter: Arc<dyn Emitter>,
         ) -> Result<ActionResult, MoeError> {
             let item = Item {
@@ -578,7 +592,13 @@ mod tests {
         let events = Arc::clone(&recorder.0);
 
         let result = r
-            .invoke_streaming("stream.ask", Some("q"), None, Arc::new(recorder))
+            .invoke_streaming(
+                "stream.ask",
+                Some("q"),
+                None,
+                &ArgumentValues::default(),
+                Arc::new(recorder),
+            )
             .unwrap();
         assert!(matches!(result, ActionResult::List { .. }));
 
@@ -597,7 +617,13 @@ mod tests {
     fn non_streaming_extensions_fall_back_to_invoke() {
         let recorder = RecordingEmitter::default();
         let result = registry()
-            .invoke_streaming("toy.hello", None, None, Arc::new(recorder))
+            .invoke_streaming(
+                "toy.hello",
+                None,
+                None,
+                &ArgumentValues::default(),
+                Arc::new(recorder),
+            )
             .unwrap();
         assert_eq!(result, ActionResult::WriteBack { text: "hi".into() });
     }
@@ -622,6 +648,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -706,6 +733,7 @@ mod tests {
                     keybinding: None,
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 }]
             }
             fn invoke(
@@ -713,6 +741,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -775,6 +804,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -807,6 +837,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -826,6 +857,7 @@ mod tests {
                     keybinding: None,
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 })
             }
         }
@@ -868,6 +900,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -888,6 +921,7 @@ mod tests {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             }
         }
 
@@ -938,6 +972,7 @@ mod tests {
                     keybinding: None,
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 }]
             }
             fn invoke(
@@ -945,6 +980,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -996,6 +1032,7 @@ mod tests {
                     keybinding: None,
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 }]
             }
             fn invoke(
@@ -1003,6 +1040,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -1084,6 +1122,7 @@ mod tests {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             }]
         }
         fn invoke(
@@ -1091,6 +1130,7 @@ mod tests {
             _command_id: &str,
             _query: Option<&str>,
             _selection: Option<&Selection>,
+            _arguments: &ArgumentValues,
         ) -> Result<ActionResult, MoeError> {
             Err(MoeError::NotFound)
         }
@@ -1198,6 +1238,7 @@ mod tests {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             }]
         }
         fn invoke(
@@ -1205,6 +1246,7 @@ mod tests {
             _command_id: &str,
             _query: Option<&str>,
             _selection: Option<&Selection>,
+            _arguments: &ArgumentValues,
         ) -> Result<ActionResult, MoeError> {
             Err(MoeError::NotFound)
         }
@@ -1437,6 +1479,7 @@ mod tests {
                     keybinding: Some("⌘,".into()),
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 }]
             }
             fn invoke(
@@ -1444,6 +1487,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -1551,6 +1595,7 @@ mod tests {
                     keybinding: None,
                     extension_title: None,
                     kind: None,
+                    arguments: Vec::new(),
                 }]
             }
             fn invoke(
@@ -1558,6 +1603,7 @@ mod tests {
                 _command_id: &str,
                 _query: Option<&str>,
                 _selection: Option<&Selection>,
+                _arguments: &ArgumentValues,
             ) -> Result<ActionResult, MoeError> {
                 Err(MoeError::NotFound)
             }
@@ -1589,7 +1635,10 @@ mod tests {
     #[test]
     fn item_stream_composes_to_write_back() {
         let r = registry();
-        let ActionResult::List { items, .. } = r.invoke("toy.list", None, None).unwrap() else {
+        let ActionResult::List { items, .. } = r
+            .invoke("toy.list", None, None, &ArgumentValues::default())
+            .unwrap()
+        else {
             panic!("expected list");
         };
         let item = &items[0];
@@ -1607,7 +1656,7 @@ mod tests {
     #[test]
     fn unknown_command_is_not_found() {
         assert!(matches!(
-            registry().invoke("toy.nope", None, None),
+            registry().invoke("toy.nope", None, None, &ArgumentValues::default()),
             Err(MoeError::NotFound)
         ));
     }

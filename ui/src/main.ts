@@ -5,6 +5,7 @@ import { marked } from "marked";
 import "./styles.css";
 import { appendMention, humanBytes, validatePath } from "./attachment";
 import { createActionPlan, type ActionRow, type PageContext } from "./actions";
+import { argumentValues, declaredArguments, effectiveOption } from "./arguments";
 import { createCard, type CardSection } from "./card";
 import { createComposer } from "./composer";
 import { rowAccessories } from "./accessories";
@@ -53,6 +54,7 @@ import { initTheme, themePreference, type ThemePreference } from "./theme";
 import type {
   Action,
   ActionResult,
+  CommandArgument,
   CommandEventPayload,
   CommandMeta,
   CommandSection,
@@ -115,6 +117,10 @@ const q = document.querySelector<HTMLInputElement>("#query")!;
 const queryRowEl = document.querySelector<HTMLDivElement>("#query-row")!;
 const querySubtitleEl = document.querySelector<HTMLSpanElement>("#query-subtitle")!;
 const chatComposerHostEl = document.querySelector<HTMLElement>("#chat-composer")!;
+const argumentChipsEl = document.querySelector<HTMLSpanElement>("#argument-chips")!;
+const argumentCardEl = document.querySelector<HTMLDivElement>("#argument-card")!;
+const argumentListEl = document.querySelector<HTMLUListElement>("#argument-list")!;
+const argumentSearchEl = document.querySelector<HTMLInputElement>("#argument-search")!;
 const chatTargetRowEl = document.querySelector<HTMLDivElement>("#chat-target-row")!;
 const chatTargetEl = document.querySelector<HTMLSpanElement>("#chat-target")!;
 const chatTargetPeekEl = document.querySelector<HTMLDivElement>("#chat-target-peek")!;
@@ -263,6 +269,156 @@ function openFilterCard() {
 
 function closeFilterCard() {
   filterCard.close();
+}
+
+/**
+ * The Argument Card (ADR-0045): the argument chip's picker — the argument's options, the house card
+ * language and key discipline (ADR-0044). Single-select, so choosing closes it; the cards are peers,
+ * so opening one closes the others. The input keeps what is typed even when nothing matches
+ * (`createCard`'s filtered-empty line), which is what makes a short list searchable without losing
+ * the query — and the query the panel's search box carries is never touched by this card.
+ */
+const argumentCard = createCard({
+  cardEl: argumentCardEl,
+  listEl: argumentListEl,
+  inputEl: argumentSearchEl,
+  emptyText: "This argument has no options",
+  filteredEmptyText: "No matching options",
+  onClose: () => {
+    openArgument = null;
+    renderArgumentChips();
+    draftEl().focus();
+  },
+});
+
+/** The argument whose picker is open (null = none): Tab cycles through the focused command's. */
+let openArgument: { command: CommandMeta; argument: CommandArgument } | null = null;
+
+/**
+ * The argument values chosen this session, keyed by command id then argument id — a session cache
+ * like the filter's memory, never disk: the declaration is the authority whenever nothing is chosen,
+ * so a restart simply shows the declared defaults again.
+ */
+const argumentMemory = new Map<string, Map<string, string>>();
+
+function rememberedArgument(commandId: string, argumentId: string): string | undefined {
+  return argumentMemory.get(commandId)?.get(argumentId);
+}
+
+function setArgumentValue(commandId: string, argumentId: string, optionId: string) {
+  const remembered = argumentMemory.get(commandId) ?? new Map<string, string>();
+  remembered.set(argumentId, optionId);
+  argumentMemory.set(commandId, remembered);
+  renderArgumentChips();
+}
+
+/** The focused command on the command layer: the only row that can be applied with arguments. */
+function focusedCommand(): CommandMeta | undefined {
+  const v = view.get();
+  return v.mode === "commands" ? v.commands[v.focus] : undefined;
+}
+
+/** The command a result page belongs to (a re-run's item action carries its arguments, ADR-0045). */
+function pageCommand(): CommandMeta | undefined {
+  const v = view.get();
+  return v.commands.find((c) => c.id === v.sourceCommandId);
+}
+
+/** The values one invocation carries for a command (ADR-0045); {} for a command that declares none. */
+function argumentValuesFor(command: CommandMeta | undefined): Record<string, string> {
+  return argumentValues(command, rememberedArgument);
+}
+
+/**
+ * The argument chips (ADR-0045): the focused command's declared arguments, in the Input Bar before
+ * the text — the values ⏎ will run with. Only the command layer shows them: a result page already
+ * ran with its values, and the command layer is where they can still change.
+ */
+function renderArgumentChips() {
+  const command = focusedCommand();
+  const declared = declaredArguments(command);
+  argumentChipsEl.classList.toggle("hidden", declared.length === 0);
+  // The picker belongs to the row that opened it: another row (or no row at all) closes it, so a
+  // menu can never outlive the command whose argument it edits.
+  if (argumentCard.isOpen() && openArgument?.command.id !== command?.id) {
+    closeArgumentCard();
+    return;
+  }
+  if (!command || declared.length === 0) return;
+  argumentChipsEl.replaceChildren(
+    ...declared.map((argument) => argumentChipEl(command, argument)),
+  );
+}
+
+/** One chip: the argument's effective value plus the picker's chevron. */
+function argumentChipEl(command: CommandMeta, argument: CommandArgument): HTMLButtonElement {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "moe-argument-chip";
+  const open = argumentCard.isOpen() && openArgument?.argument.id === argument.id;
+  chip.dataset.open = open ? "true" : "false";
+  chip.title = `${argument.title} — press Tab to choose`;
+  const label = document.createElement("span");
+  label.className = "moe-argument-label";
+  label.textContent =
+    effectiveOption(argument, rememberedArgument(command.id, argument.id))?.title ?? argument.title;
+  chip.append(label, iconEl("chevron-down", { size: 12, className: "shrink-0" }));
+  // A click must not take focus from the Input Bar: the card's own input takes it instead.
+  chip.addEventListener("mousedown", (e) => e.preventDefault());
+  chip.addEventListener("click", () => {
+    if (open) closeArgumentCard();
+    else openArgumentCard(command, argument);
+  });
+  return chip;
+}
+
+/** Open the picker for one argument (the cards are peers: the others close). */
+function openArgumentCard(command: CommandMeta, argument: CommandArgument) {
+  closeActionsCard();
+  closeAboutCard();
+  closeFilterCard();
+  openArgument = { command, argument };
+  const effective = effectiveOption(argument, rememberedArgument(command.id, argument.id))?.id;
+  argumentSearchEl.placeholder = `Filter ${argument.title.toLowerCase()}…`;
+  argumentCard.open([
+    {
+      title: argument.title,
+      rows: argument.options.map((option) => ({
+        title: option.title,
+        checked: option.id === effective,
+        run: () => {
+          setArgumentValue(command.id, argument.id, option.id);
+          draftEl().focus();
+        },
+      })),
+    },
+  ]);
+  renderArgumentChips();
+}
+
+function closeArgumentCard() {
+  // `onClose` clears `openArgument` and re-renders the chips, so the accent ring goes with the card.
+  argumentCard.close();
+}
+
+/**
+ * Tab (ADR-0045): focuses the focused command's first argument, then around — the key Raycast uses
+ * for arguments, and the reason the chips are the one Input Bar element the pointer never has to
+ * reach for. False = nothing to focus, so the key keeps whatever meaning it had.
+ */
+function focusArgument(): boolean {
+  const command = focusedCommand();
+  const declared = declaredArguments(command);
+  if (!command || declared.length === 0) return false;
+  const index = openArgument
+    ? declared.findIndex((argument) => argument.id === openArgument?.argument.id)
+    : -1;
+  const next = declared[(index + 1) % declared.length];
+  // One declared argument means Tab lands on the picker that is already open: keep it (and what the
+  // user typed into it) instead of reopening — Tab must never clear the filter.
+  if (index !== -1 && next.id === openArgument?.argument.id) return true;
+  openArgumentCard(command, next);
+  return true;
 }
 
 // The Filter Control is the card's trigger, so a click on it toggles rather than counting as "outside"
@@ -803,6 +959,8 @@ function render() {
   renderFilterControl();
   // The Selection Indicator follows the focused command's input kind (MOE-0057)
   renderSelectionState();
+  // The argument chips follow the focused command's declared arguments (ADR-0045)
+  renderArgumentChips();
   // The composer's target chip follows the page and its conversation (MOE-0059)
   renderSelectionTarget();
   // Page shape decides window size (ADR-0018): split pages are wider and taller, others use the default size.
@@ -1704,6 +1862,9 @@ async function applyCommand(cmd: CommandMeta) {
     const res = await invoke<ActionResult>("invoke_command", {
       commandId: cmd.id,
       query,
+      // The values the command will run with (ADR-0045): the panel owns them for the session, so
+      // even the declared default travels explicitly.
+      arguments: argumentValuesFor(cmd),
     });
     if (cmd.live || cmd.input !== "query") q.value = "";
     applyResult(res, cmd.id, cmd.live, cmd.icon, cmd.title);
@@ -1731,6 +1892,9 @@ async function applyFocused(alt: boolean) {
         commandId: v.sourceCommandId,
         item,
         action,
+        // A re-run keeps the page's arguments (ADR-0045): "Translate to Chinese Again" must not
+        // fall back to auto and translate the Chinese result back into English.
+        arguments: argumentValuesFor(pageCommand()),
       });
       if (action.id === "copy") toast("Copied");
       applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
@@ -2016,6 +2180,7 @@ async function runItemAction(item: Item, action: Action) {
       commandId: v.sourceCommandId,
       item,
       action,
+      arguments: argumentValuesFor(pageCommand()),
     });
     if (action.id === "copy") toast("Copied");
     applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
@@ -2304,6 +2469,7 @@ async function rerunLive(query: string) {
       commandId: v.sourceCommandId,
       query: query || null,
       record: false, // a re-run is not a launch (frecency semantics)
+      arguments: argumentValuesFor(pageCommand()),
     });
     applyResult(res, v.sourceCommandId, true, v.sourceIcon, v.sourceTitle);
   } catch (err) {
@@ -2338,6 +2504,7 @@ async function deleteFocused(all: boolean) {
         commandId: v.sourceCommandId,
         query: null,
         record: false,
+        arguments: argumentValuesFor(pageCommand()),
       });
       applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
     }
@@ -2624,6 +2791,15 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
+  // Tab focuses the focused command's argument chip (ADR-0045) — the panel's own use for the key.
+  // It runs before the general actions so a future Tab binding cannot shadow it, and it covers the
+  // picker's own input too: the card never stops propagation for Tab, so this listener sees it.
+  if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (focusArgument()) {
+      e.preventDefault();
+      return;
+    }
+  }
   // The about card is an overlay owned by the chip (ADR-0026). Its input handles its own keys; Esc
   // with the focus elsewhere falls through to `back()`, which pops the layer stack (ADR-0044) — so
   // this no longer needs a card-specific check, and every layer gets the behaviour, not just this one.
@@ -2799,6 +2975,10 @@ document.addEventListener("mousedown", (e) => {
   // The Filter Card closes on a click outside it or the control that owns it (ADR-0043)
   if (filterCard.isOpen() && !filterCardEl.contains(target) && !filterControlEl.contains(target)) {
     closeFilterCard();
+  }
+  // The Argument Card closes on a click outside it or the chip that owns it (ADR-0045)
+  if (argumentCard.isOpen() && !argumentCardEl.contains(target) && !argumentChipsEl.contains(target)) {
+    closeArgumentCard();
   }
 });
 

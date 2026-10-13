@@ -1,7 +1,8 @@
 //! Echo: living documentation of the Command contract — how an Extension produces WriteBack and Item streams.
 
 use moe_core::contract::{
-    Action, ActionKind, ActionResult, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
+    Action, ActionKind, ActionResult, ArgumentValues, CommandMeta, Extension, InputKind, Item,
+    MoeError, Selection,
 };
 
 pub struct Echo;
@@ -27,6 +28,7 @@ fn meta(id: &str, title: &str, subtitle: &str, icon: &str, input: InputKind) -> 
         keybinding: None,
         extension_title: None,
         kind: None,
+        arguments: Vec::new(),
     }
 }
 
@@ -70,6 +72,7 @@ impl Extension for Echo {
         command_id: &str,
         query: Option<&str>,
         selection: Option<&Selection>,
+        _arguments: &ArgumentValues,
     ) -> Result<ActionResult, MoeError> {
         let text = query.unwrap_or_default().to_string();
         match command_id {
@@ -147,7 +150,9 @@ mod tests {
         let ext = Echo;
         let ActionResult::List {
             items, detail_full, ..
-        } = ext.invoke("echo.items", None, None).unwrap()
+        } = ext
+            .invoke("echo.items", None, None, &ArgumentValues::default())
+            .unwrap()
         else {
             panic!("expected list");
         };

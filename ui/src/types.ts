@@ -115,6 +115,31 @@ export interface Filter {
   values?: string[];
 }
 
+/**
+ * One option of a Command argument (ADR-0045): the bounded set of values the panel offers. `id` is
+ * what the Extension sees on invoke; `title` is what the chip and the picker show.
+ */
+export interface ArgumentOption {
+  id: string;
+  title: string;
+}
+
+/**
+ * One argument a Command declares (ADR-0045): a positional control in the Input Bar, before the
+ * query text. The panel renders the chip and the picker and sends the chosen value on invoke; the
+ * Extension only declares the choice list. Omitted when the command declares none.
+ */
+export interface CommandArgument {
+  /** Stable id within the command: the key in the values the panel sends. */
+  id: string;
+  /** The argument's name ("Language"): the picker's section header. */
+  title: string;
+  /** The option id selected before the user picks (absent = the first option). */
+  default?: string;
+  /** The choice list, in display order. Empty = a declaration error; the panel shows no chip. */
+  options: ArgumentOption[];
+}
+
 export interface CommandMeta {
   id: string;
   extensionId: string;
@@ -132,6 +157,12 @@ export interface CommandMeta {
   extensionTitle?: string | null;
   /** The kind of thing this row represents ("AI Command", later "File"…); absent renders as "Command". */
   kind?: string | null;
+  /**
+   * Input Bar arguments this command declares (ADR-0045), in display order. The Rust side omits an
+   * empty vector, so absent must read as none — a required field over an omittable one is a type
+   * that lies.
+   */
+  arguments?: CommandArgument[];
 }
 
 /** One group in the command palette results (ADR-0020): source = section, header = extension title. */

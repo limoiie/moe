@@ -6,7 +6,7 @@
 //! - `key <your-key>` (capturing fallback): stores the API key in a local key file (0600), never echoed
 
 use moe_core::contract::{
-    ActionResult, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
+    ActionResult, ArgumentValues, CommandMeta, Extension, InputKind, Item, MoeError, Selection,
 };
 use moe_core::keymap::{SystemKey, display_of};
 use moe_platform::keychain;
@@ -68,6 +68,7 @@ impl Extension for Moe {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             },
             CommandMeta {
                 id: "moe.open-config".into(),
@@ -81,6 +82,7 @@ impl Extension for Moe {
                 keybinding: display_of(SystemKey::OpenConfig).map(str::to_string),
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             },
             CommandMeta {
                 id: "moe.set-ai-key".into(),
@@ -95,6 +97,7 @@ impl Extension for Moe {
                 keybinding: None,
                 extension_title: None,
                 kind: None,
+                arguments: Vec::new(),
             },
         ]
     }
@@ -104,6 +107,7 @@ impl Extension for Moe {
         command_id: &str,
         query: Option<&str>,
         _selection: Option<&Selection>,
+        _arguments: &ArgumentValues,
     ) -> Result<ActionResult, MoeError> {
         match command_id {
             "moe.open-settings" => Ok(ActionResult::OpenSettings {}),
@@ -145,6 +149,7 @@ impl Extension for Moe {
             keybinding: None,
             extension_title: None,
             kind: None,
+            arguments: Vec::new(),
         })
     }
 }
