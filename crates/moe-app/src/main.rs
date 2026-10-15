@@ -197,6 +197,11 @@ struct AppState {
     favorites: Mutex<moe_core::favorites::Favorites>,
     /// When the panel was last shown (blur-to-dismiss must ignore the showing transient).
     last_shown: Mutex<Option<std::time::Instant>>,
+    /// Whether the configured summon combo registered with the global-shortcut plugin (always
+    /// false for a double-tap key, where the listener owns summoning instead). The listener cannot
+    /// answer this: a combo maps to `UnsupportedSummon` by design, so its status says nothing about
+    /// whether the chord works (MOE-0064).
+    summon_registered: AtomicBool,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -208,6 +213,10 @@ struct SummonStatusPayload {
     double_tap_ms: u64,
     /// Accessibility permission (for selection/write-back; always true off macOS).
     accessibility: bool,
+    /// True when the summon key is a combo the global-shortcut plugin owns: the listener's status
+    /// then describes nothing the user cares about, and `unsupported` means only that the plugin
+    /// could not register the chord (MOE-0064).
+    combo: bool,
 }
 
 /// The captured selection's *shape*, for the Input Bar's Selection Indicator (MOE-0057). Shape only:
@@ -1150,10 +1159,23 @@ fn panel_send(
 
 #[tauri::command]
 fn summon_status(state: State<'_, AppState>) -> SummonStatusPayload {
-    let status = match state.listener.lock().expect("listener poisoned").status() {
-        SummonStatus::Ready => "ready",
-        SummonStatus::NeedsPermission => "needsPermission",
-        SummonStatus::Unsupported => "unsupported",
+    // A combo is the global-shortcut plugin's to hold, not the listener's: the listener is
+    // `UnsupportedSummon` for combos by design, and forward that naively and the panel would show
+    // the "cannot intercept the keyboard" guidance to someone whose chord was registered a line
+    // earlier (MOE-0064). So the combo's own registration outcome is the only status there is.
+    let combo = matches!(state.config.summon.key, SummonKey::Combo { .. });
+    let status = if combo {
+        if state.summon_registered.load(Ordering::SeqCst) {
+            "ready"
+        } else {
+            "unsupported"
+        }
+    } else {
+        match state.listener.lock().expect("listener poisoned").status() {
+            SummonStatus::Ready => "ready",
+            SummonStatus::NeedsPermission => "needsPermission",
+            SummonStatus::Unsupported => "unsupported",
+        }
     };
     #[cfg(target_os = "macos")]
     let accessibility = moe_platform::mac::is_accessibility_trusted();
@@ -1164,6 +1186,7 @@ fn summon_status(state: State<'_, AppState>) -> SummonStatusPayload {
         key: key_label(&state.config.summon.key),
         double_tap_ms: state.config.summon.double_tap_ms,
         accessibility,
+        combo,
     }
 }
 
@@ -1540,6 +1563,7 @@ fn main() {
             frecency: Mutex::new(moe_platform::store::load_frecency()),
             favorites: Mutex::new(moe_platform::store::load_favorites()),
             last_shown: Mutex::new(None),
+            summon_registered: AtomicBool::new(false),
         });
 
     // NSPanel support (macOS): must be registered before to_panel
@@ -1553,10 +1577,19 @@ fn main() {
             {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-                if let Some(accel) = accelerator
-                    && let Err(err) = app.global_shortcut().register(accel.as_str())
-                {
-                    eprintln!("moe: failed to register summon combo {accel}: {err}");
+                if let Some(accel) = accelerator {
+                    // The registration outcome is the combo's only status (MOE-0064): a combo has no
+                    // listener to ask, and on macOS a chord another system shortcut owns still
+                    // registers `Ok` here — the failure that case shows is the key never firing.
+                    match app.global_shortcut().register(accel.as_str()) {
+                        Ok(()) => handle
+                            .state::<AppState>()
+                            .summon_registered
+                            .store(true, Ordering::SeqCst),
+                        Err(err) => {
+                            eprintln!("moe: failed to register summon combo {accel}: {err}")
+                        }
+                    }
                 }
                 // The AI surfaces' launch keys (ADR-0036 amendment): global, so Quick Ask and the
                 // side chat start without summoning the panel first. A chord another app owns

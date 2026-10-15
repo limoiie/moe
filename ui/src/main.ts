@@ -3011,6 +3011,8 @@ interface SummonStatus {
   key: string;
   doubleTapMs: number;
   accessibility: boolean;
+  /** The key is a combo the global-shortcut plugin owns; the listener's status is not its story. */
+  combo: boolean;
 }
 
 const KEY_LABELS: Record<string, string> = {
@@ -3031,15 +3033,21 @@ function hideBanner() {
 
 async function refreshBanner() {
   const status = await invoke<SummonStatus>("summon_status");
+  const key = KEY_LABELS[status.key] ?? status.key;
   if (status.status === "needsPermission") {
-    const key = KEY_LABELS[status.key] ?? status.key;
     bannerTextEl.textContent = `${key} to summon needs Input Monitoring permission (System Settings → Privacy & Security → Input Monitoring); it takes effect automatically once granted, though some macOS versions require restarting Moe once.`;
     bannerActionEl.textContent = "Open Input Monitoring Settings";
     bannerActionEl.dataset.action = "input-monitoring";
     showBanner();
+  } else if (status.status === "unsupported" && status.combo) {
+    // A combo is registered by the global-shortcut plugin, so `unsupported` means only that the
+    // registration failed (MOE-0064) — never the double-tap interception story below.
+    bannerTextEl.textContent = `${key} could not be registered as a global shortcut: another app owns the chord, or this session does not support global shortcuts. Pick another combo in config.toml, or bind \`moe --toggle\` in your WM.`;
+    bannerActionEl.textContent = "Open Config File";
+    bannerActionEl.dataset.action = "config";
+    showBanner();
   } else if (status.status === "unsupported") {
     // Sessions that cannot globally intercept the keyboard (Linux/Wayland etc., IIE4AD-350): offer the alternative paths
-    const key = KEY_LABELS[status.key] ?? status.key;
     bannerTextEl.textContent = `${key} to summon is unavailable in this session (Wayland and similar cannot globally intercept the keyboard): set [summon] key in config.toml to a combo, or bind \`moe --toggle\` in your WM.`;
     bannerActionEl.textContent = "Open Config File";
     bannerActionEl.dataset.action = "config";
