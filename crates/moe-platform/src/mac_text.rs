@@ -11,7 +11,7 @@ use objc2_foundation::{NSData, NSString};
 
 use crate::PlatformError;
 use crate::mac::is_accessibility_trusted;
-use crate::text_target::{Ax, Clipboard, HybridTextTarget};
+use crate::text_target::{Ax, AxSelection, Clipboard, HybridTextTarget};
 
 type AXUIElementRef = *const std::ffi::c_void;
 
@@ -103,9 +103,9 @@ fn focused_element() -> Result<Option<AXUIElementRef>, PlatformError> {
 pub struct MacAx;
 
 impl Ax for MacAx {
-    fn selected_text(&self) -> Result<Option<String>, PlatformError> {
+    fn selected_text(&self) -> Result<AxSelection, PlatformError> {
         let Some(focused) = focused_element()? else {
-            return Ok(None);
+            return Ok(AxSelection::Opaque);
         };
         // SAFETY: focused comes from the copy rule; the value read is also copy rule, taken over with the create rule.
         unsafe {
@@ -125,7 +125,7 @@ impl Ax for MacAx {
                         AX_READ_BUDGET.as_millis()
                     );
                     CFRelease(element);
-                    return Ok(None);
+                    return Ok(AxSelection::Opaque);
                 }
                 let mut value: CFTypeRef = std::ptr::null();
                 let err = AXUIElementCopyAttributeValue(
@@ -140,10 +140,12 @@ impl Ax for MacAx {
                         if depth > 0 {
                             eprintln!("moe: AXSelectedText hit at ancestor level {depth}");
                         }
-                        return Ok(Some(text));
+                        return Ok(AxSelection::Text(text));
                     }
-                    eprintln!("moe: AXSelectedText exists but is empty (level {depth})");
-                    return Ok(None);
+                    // Present but empty: the app is telling us it has a text element with nothing
+                    // selected. That is a caret — not the same fact as "no answer" (MOE-0066).
+                    eprintln!("moe: AXSelectedText exists but is empty (level {depth}) — a caret");
+                    return Ok(AxSelection::Cursor);
                 }
                 eprintln!("moe: AXSelectedText failed at level {depth} (AXError {err})");
                 let mut up: CFTypeRef = std::ptr::null();
@@ -151,13 +153,13 @@ impl Ax for MacAx {
                     AXUIElementCopyAttributeValue(element, parent.as_concrete_TypeRef(), &mut up);
                 CFRelease(element);
                 if err != 0 || up.is_null() {
-                    return Ok(None);
+                    return Ok(AxSelection::Opaque);
                 }
                 element = up as AXUIElementRef;
                 bound_message_timeout(element);
             }
             CFRelease(element);
-            Ok(None)
+            Ok(AxSelection::Opaque)
         }
     }
 

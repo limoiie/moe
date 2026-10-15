@@ -19,16 +19,36 @@ use crate::{Capture, PendingCapture, PlatformError, TextTarget};
 /// grace also gives the synthesized ⌘C time to be dispatched to the host app before the panel
 /// takes key.
 const FALLBACK_GRACE: Duration = Duration::from_millis(20);
-/// Total observation budget for the fallback copy, grace included: "nothing selected" can only be
-/// proven at its end. Expiring the grace hands the remaining wait to the background finisher.
-const FALLBACK_BUDGET: Duration = Duration::from_millis(100);
+/// Total observation budget for the fallback copy, grace included. Unlike the grace, this window runs
+/// **after** the panel is up (the finisher owns it), so it is not a latency budget — it is how long a
+/// slow app gets to publish its selection. A copy that lands inside it is captured *and* its snapshot
+/// restored; a copy that lands after it never was: the 100 ms window of MOE-0013 left the pasteboard
+/// holding the selection with no one left to restore, and the next attempt then read its own leftovers
+/// (MOE-0066). 500 ms costs nothing visible and covers editors that answer ⌘C through their own frame
+/// loop.
+const FALLBACK_BUDGET: Duration = Duration::from_millis(500);
 /// Pasteboard polling interval while observing the fallback copy.
 const COPY_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
+/// What an AX read of the focused element's selection told us (MOE-0066). "There is text", "there is
+/// a text element with nothing selected", and "we could not find out" are three different facts, and
+/// collapsing the last two — which a single `Ok(None)` did — is what left a caret and an AX-opaque
+/// selection indistinguishable to the strategy.
+pub enum AxSelection {
+    /// The selected text.
+    Text(String),
+    /// A text element whose selection is empty (a caret): the app answered, and a copy would copy
+    /// nothing — the fallback is skipped (the summon-path latency rule of MOE-0013).
+    Cursor,
+    /// No answer — no focused element, no `AXSelectedText` at any level of the walk, a walk that ran
+    /// out of budget, or denied permission. A selection may still exist; only the clipboard can tell.
+    Opaque,
+}
+
 /// Boundary for reading/writing the focused element's selection via system Accessibility.
 pub trait Ax: Send + Sync {
-    /// The focused element's selected text; `Ok(None)` when there is no selection (cursor mode).
-    fn selected_text(&self) -> Result<Option<String>, PlatformError>;
+    /// What AX can say about the focused element's selection (see [`AxSelection`]).
+    fn selected_text(&self) -> Result<AxSelection, PlatformError>;
 
     /// Current selection/cursor range `(location, length)` (UTF-16 code units);
     /// `None` when the app doesn't support it (skip "select after write back" in that case).
@@ -88,24 +108,25 @@ impl<A: Ax, C: Clipboard> HybridTextTarget<A, C> {
 
 impl<A: Ax, C: Clipboard + 'static> TextTarget for HybridTextTarget<A, C> {
     fn capture_selection(&self) -> Capture {
-        if let Ok(Some(text)) = self.ax.selected_text() {
-            return Capture::Done(Some(text));
-        }
-        // AX handed over no text: either nothing is selected, or a selection exists whose text the
-        // app doesn't expose. An explicit empty range is a cursor and nothing more — the ⌘C round
-        // trip below would burn its wait budget for nothing (and fire a stray copy into the host
-        // app), so skip it. A missing range keeps the fallback: that is the case the fallback is
-        // for (e.g. Zed doesn't expose AXSelectedText).
-        if matches!(self.ax.selected_text_range(), Some((_, length)) if length <= 0) {
-            return Capture::Done(None);
+        match self.ax.selected_text() {
+            Ok(AxSelection::Text(text)) => return Capture::Done(Some(text)),
+            // A caret — but only when the app's own range agrees. A stale `AXSelectedText` sitting next
+            // to a real range is a contradiction the copy can settle, so it goes to the fallback below
+            // rather than being reported as "no selection" (MOE-0066).
+            Ok(AxSelection::Cursor) if !matches!(self.ax.selected_text_range(), Some((_, length)) if length > 0) =>
+            {
+                return Capture::Done(None);
+            }
+            // `Opaque`, or the contradiction above: the clipboard is the only witness left. Trusting a
+            // reported range here was the other half of the bug — an app that exposes a range but
+            // reports it empty (a stale value in a custom-drawn editor) used to skip the fallback and
+            // answer "no selection" while text was selected.
+            Ok(_) | Err(_) => {}
         }
         // AX can't read it (e.g. Zed doesn't expose AXSelectedText): fall back to clipboard copy.
         // The ⌘C must fire now, while the host app still has focus — that is the one part of the
         // fallback that cannot run after the panel becomes key.
-        // Compare the clipboard before and after ⌘C: no change = the app has no selection (avoid
-        // treating the old clipboard as the selection).
         let snapshot = self.clipboard.snapshot();
-        let before = self.clipboard.read_text();
         let mut watch = self.clipboard.copy_begin();
         let started = Instant::now();
         let grace_deadline = started + FALLBACK_GRACE;
@@ -115,7 +136,7 @@ impl<A: Ax, C: Clipboard + 'static> TextTarget for HybridTextTarget<A, C> {
                 if !self.clipboard.changed_since_copied(&watch) {
                     self.clipboard.restore(snapshot);
                 }
-                return Capture::Done(filter_selection(after, before));
+                return Capture::Done(accept_copied(after));
             }
             if Instant::now() >= grace_deadline {
                 break;
@@ -128,7 +149,6 @@ impl<A: Ax, C: Clipboard + 'static> TextTarget for HybridTextTarget<A, C> {
         Capture::Pending(Box::new(PendingFallback {
             clipboard: self.clipboard.clone(),
             snapshot,
-            before,
             watch,
             deadline: started + FALLBACK_BUDGET,
         }))
@@ -162,7 +182,6 @@ struct PendingFallback<C: Clipboard> {
     /// A clone of the strategy's clipboard handle (the original stays with the caller).
     clipboard: C,
     snapshot: C::Snapshot,
-    before: Option<String>,
     watch: C::CopyWatch,
     /// When the observation ends, shared with the pre-show grace (the total budget).
     deadline: Instant,
@@ -173,7 +192,6 @@ impl<C: Clipboard + 'static> PendingCapture for PendingFallback<C> {
         let Self {
             clipboard,
             snapshot,
-            before,
             mut watch,
             deadline,
         } = *self;
@@ -183,7 +201,7 @@ impl<C: Clipboard + 'static> PendingCapture for PendingFallback<C> {
                 if !clipboard.changed_since_copied(&watch) {
                     clipboard.restore(snapshot);
                 }
-                return filter_selection(after, before);
+                return accept_copied(after);
             }
             if Instant::now() >= deadline {
                 // No write ever landed: the clipboard was never touched — nothing to read back and
@@ -195,10 +213,19 @@ impl<C: Clipboard + 'static> PendingCapture for PendingFallback<C> {
     }
 }
 
-/// The fallback's verdict: keep the post-copy clipboard text unless it is empty/whitespace-only
-/// or identical to the pre-copy clipboard (then nothing was copied).
-fn filter_selection(after: Option<String>, before: Option<String>) -> Option<String> {
-    after.filter(|text| !text.trim().is_empty() && Some(text.as_str()) != before.as_deref())
+/// The fallback's verdict: the pasteboard's text after our ⌘C, unless it is empty or whitespace-only
+/// (an app that had nothing to copy either wrote nothing — the landing check caught it above — or
+/// wrote an empty string).
+///
+/// It deliberately does **not** compare against the pre-copy clipboard. That comparison was meant to
+/// catch "the app wrote something that is not a text selection", but it cannot tell that apart from
+/// the app copying text identical to what the clipboard already held — which is exactly what a
+/// re-selection looks like. It made the failure sticky: one selection left on the pasteboard (see
+/// [`FALLBACK_BUDGET`]) and every later attempt at the same text read as "nothing was copied"
+/// (MOE-0066). A landing plus non-empty text is a selection; the landing is `changeCount`, and an
+/// app with nothing to copy does not write.
+fn accept_copied(after: Option<String>) -> Option<String> {
+    after.filter(|text| !text.trim().is_empty())
 }
 
 /// AX ranges count UTF-16 code units (an emoji takes two units).
@@ -213,7 +240,11 @@ mod tests {
 
     enum AxRead {
         Text(&'static str),
-        NoSelection,
+        /// A text element with nothing selected (an explicit empty AXSelectedText).
+        Cursor,
+        /// AX has no answer: no focused element, no attribute, denied. Same as `Denied`'s outcome
+        /// for the strategy, kept apart because the two states are genuinely different upstream.
+        Opaque,
         Denied,
     }
 
@@ -230,10 +261,11 @@ mod tests {
     }
 
     impl Ax for FakeAx {
-        fn selected_text(&self) -> Result<Option<String>, PlatformError> {
+        fn selected_text(&self) -> Result<AxSelection, PlatformError> {
             match self.read {
-                AxRead::Text(t) => Ok(Some(t.to_string())),
-                AxRead::NoSelection => Ok(None),
+                AxRead::Text(t) => Ok(AxSelection::Text(t.to_string())),
+                AxRead::Cursor => Ok(AxSelection::Cursor),
+                AxRead::Opaque => Ok(AxSelection::Opaque),
                 AxRead::Denied => Err(PlatformError::PermissionRequired),
             }
         }
@@ -378,118 +410,48 @@ mod tests {
         assert!(clip_log.lock().unwrap().is_empty());
     }
 
-    /// An empty AX range is a cursor and nothing more: the fallback must not run at all — no wait
-    /// budget spent, no stray ⌘C fired into the host app (the summon-path latency fix).
+    /// A caret is a cursor and nothing more: the app answered "empty selection", so the fallback
+    /// must not run at all — no wait budget spent, no stray ⌘C fired into the host app (the
+    /// summon-path latency fix of MOE-0013).
     #[test]
-    fn empty_ax_range_skips_the_clipboard_fallback() {
-        let (t, clip_log, _) = target(AxRead::NoSelection, AxWrite::Ok, Some((12, 0)));
+    fn cursor_skips_the_clipboard_fallback() {
+        let (t, clip_log, _) = target(AxRead::Cursor, AxWrite::Ok, Some((12, 0)));
         assert_eq!(finish(t.capture_selection()), None);
         assert!(clip_log.lock().unwrap().is_empty());
     }
 
-    /// A copy that lands within the grace completes before the panel would show: read, restore,
-    /// done — the pre-show behavior as it always was for a real selection.
+    /// The bug of MOE-0066: an app that never answers AXSelectedText (a custom-drawn editor) used to
+    /// be judged by its *range* reading, so a stale empty range skipped the fallback and a real
+    /// selection came back as "no selection". No answer means the copy decides.
     #[test]
-    fn copy_landing_within_the_grace_captures_and_restores() {
-        let clip = FakeClip::landing_now(vec![
-            Some("old clipboard".into()),
-            Some("selected text".into()),
-        ]);
-        let (target, log) = target_with_clip(AxRead::NoSelection, clip);
-        let capture = target.capture_selection();
-        assert!(matches!(capture, Capture::Done(_)));
-        assert_eq!(finish(capture), Some("selected text".to_string()));
-        assert_eq!(
-            *log.lock().unwrap(),
-            ["snapshot", "read", "copy", "read", "restore:SNAP"]
-        );
-    }
-
-    /// The pasteboard version moved but the text did not: the app wrote something that is not a
-    /// text selection — the old clipboard must not be treated as the selection.
-    #[test]
-    fn landed_copy_without_new_text_is_not_a_selection() {
-        let clip = FakeClip::landing_now(vec![
-            Some("old clipboard".into()),
-            Some("old clipboard".into()),
-        ]);
-        let (target, _) = target_with_clip(AxRead::NoSelection, clip);
-        assert_eq!(finish(target.capture_selection()), None);
-    }
-
-    /// When AX is denied (unauthorized), also fall back to copy: use it if the copy succeeds, else None.
-    #[test]
-    fn read_selection_falls_back_when_ax_is_denied() {
-        let clip = FakeClip::landing_now(vec![None, Some("copied".into())]);
-        let (target, _) = target_with_clip(AxRead::Denied, clip);
-        assert_eq!(finish(target.capture_selection()), Some("copied".into()));
-    }
-
-    /// Nothing selected in an AX-opaque app: the grace expires without a pasteboard write, the
-    /// capture goes pending, and the finisher concludes "none" without ever reading or rewriting
-    /// the clipboard (the never-landed path has no churn).
-    #[test]
-    fn never_landing_copy_goes_pending_and_finishes_without_churn() {
-        let clip = FakeClip::with_reads(vec![Some("old clipboard".into())]);
-        let (target, log) = target_with_clip(AxRead::NoSelection, clip);
-        let capture = target.capture_selection();
-        assert!(matches!(capture, Capture::Pending(_)));
-        assert_eq!(finish(capture), None);
-        assert_eq!(*log.lock().unwrap(), ["snapshot", "read", "copy"]);
-    }
-
-    /// A copy can land after the grace: the finisher still captures it — off the main thread (the
-    /// pending tail is Send by contract).
-    #[test]
-    fn copy_landing_after_the_grace_is_captured_by_the_finisher() {
-        let clip = FakeClip::with_reads(vec![
-            Some("old clipboard".into()),
-            Some("selected text".into()),
-        ]);
-        let landing = clip.landing();
-        let (target, log) = target_with_clip(AxRead::NoSelection, clip);
-        let Capture::Pending(pending) = target.capture_selection() else {
-            panic!("expected a pending capture");
+    fn opaque_ax_with_a_zero_range_still_falls_back() {
+        let clip = FakeClip::landing_now(vec![Some("selected text".into())]);
+        let log = Arc::clone(&clip.log);
+        let ax = FakeAx {
+            read: AxRead::Opaque,
+            write: AxWrite::Ok,
+            range: Some((0, 0)),
+            log: Arc::new(Mutex::new(Vec::new())),
         };
-        // The write lands now (after the grace expired, before the finisher's first check).
-        *landing.lock().unwrap() = true;
-        let text = std::thread::spawn(move || pending.finish()).join().unwrap();
-        assert_eq!(text, Some("selected text".to_string()));
-        assert_eq!(
-            *log.lock().unwrap(),
-            ["snapshot", "read", "copy", "read", "restore:SNAP"]
-        );
-    }
-
-    /// The snapshot must not clobber a write that happened after our copy landed (e.g. the user
-    /// copied a result from the panel while the fallback was still pending): the text is still
-    /// captured, the restore is skipped.
-    #[test]
-    fn restore_is_skipped_when_the_pasteboard_moved_on() {
-        let clip = FakeClip::landing_now(vec![
-            Some("old clipboard".into()),
-            Some("selected text".into()),
-        ]);
-        clip.moved_on();
-        let (target, log) = target_with_clip(AxRead::NoSelection, clip);
+        let target = HybridTextTarget::new(ax, clip);
         assert_eq!(
             finish(target.capture_selection()),
             Some("selected text".to_string())
         );
-        assert_eq!(*log.lock().unwrap(), ["snapshot", "read", "copy", "read"]);
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["snapshot", "copy", "read", "restore:SNAP"]
+        );
     }
 
-    /// A non-empty AX range means a selection exists whose text the app doesn't expose: the
-    /// clipboard fallback still reads it.
+    /// AX saying "cursor" while its own range claims a selection is a contradiction: the copy is the
+    /// tiebreaker rather than an immediate "no selection".
     #[test]
-    fn nonempty_ax_range_still_falls_back_to_copy() {
-        let clip = FakeClip::landing_now(vec![
-            Some("old clipboard".into()),
-            Some("selected text".into()),
-        ]);
+    fn cursor_with_a_nonempty_range_still_falls_back() {
+        let clip = FakeClip::landing_now(vec![Some("selected text".into())]);
         let log = Arc::clone(&clip.log);
         let ax = FakeAx {
-            read: AxRead::NoSelection,
+            read: AxRead::Cursor,
             write: AxWrite::Ok,
             range: Some((3, 5)),
             log: Arc::new(Mutex::new(Vec::new())),
@@ -501,20 +463,132 @@ mod tests {
         );
         assert_eq!(
             *log.lock().unwrap(),
-            ["snapshot", "read", "copy", "read", "restore:SNAP"]
+            ["snapshot", "copy", "read", "restore:SNAP"]
+        );
+    }
+
+    /// A copy that lands within the grace completes before the panel would show: read, restore,
+    /// done — the pre-show behavior as it always was for a real selection.
+    #[test]
+    fn copy_landing_within_the_grace_captures_and_restores() {
+        let clip = FakeClip::landing_now(vec![Some("selected text".into())]);
+        let (target, log) = target_with_clip(AxRead::Opaque, clip);
+        let capture = target.capture_selection();
+        assert!(matches!(capture, Capture::Done(_)));
+        assert_eq!(finish(capture), Some("selected text".to_string()));
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["snapshot", "copy", "read", "restore:SNAP"]
+        );
+    }
+
+    /// The pasteboard version moved and the text is the same string it already held: the app copied
+    /// **the same selection again**, which is what re-selecting text looks like. Reading that as
+    /// "nothing was copied" is the sticky failure of MOE-0066 — every retry after a selection was
+    /// left on the pasteboard failed for as long as the user kept selecting that same text.
+    #[test]
+    fn landed_copy_of_the_same_text_is_the_selection() {
+        let clip = FakeClip::landing_now(vec![Some("the same text".into())]);
+        let (target, log) = target_with_clip(AxRead::Opaque, clip);
+        assert_eq!(
+            finish(target.capture_selection()),
+            Some("the same text".to_string())
+        );
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["snapshot", "copy", "read", "restore:SNAP"]
+        );
+    }
+
+    /// When AX is denied (unauthorized), also fall back to copy: use it if the copy succeeds, else None.
+    #[test]
+    fn read_selection_falls_back_when_ax_is_denied() {
+        let clip = FakeClip::landing_now(vec![Some("copied".into())]);
+        let (target, _) = target_with_clip(AxRead::Denied, clip);
+        assert_eq!(finish(target.capture_selection()), Some("copied".into()));
+    }
+
+    /// Nothing selected in an AX-opaque app: the grace expires without a pasteboard write, the
+    /// capture goes pending, and the finisher concludes "none" without ever reading or rewriting
+    /// the clipboard (the never-landed path has no churn).
+    #[test]
+    fn never_landing_copy_goes_pending_and_finishes_without_churn() {
+        let clip = FakeClip::default();
+        let (target, log) = target_with_clip(AxRead::Opaque, clip);
+        let capture = target.capture_selection();
+        assert!(matches!(capture, Capture::Pending(_)));
+        assert_eq!(finish(capture), None);
+        assert_eq!(*log.lock().unwrap(), ["snapshot", "copy"]);
+    }
+
+    /// A copy can land after the grace: the finisher still captures it — off the main thread (the
+    /// pending tail is Send by contract).
+    #[test]
+    fn copy_landing_after_the_grace_is_captured_by_the_finisher() {
+        let clip = FakeClip::with_reads(vec![Some("selected text".into())]);
+        let landing = clip.landing();
+        let (target, log) = target_with_clip(AxRead::Opaque, clip);
+        let Capture::Pending(pending) = target.capture_selection() else {
+            panic!("expected a pending capture");
+        };
+        // The write lands now (after the grace expired, before the finisher's first check).
+        *landing.lock().unwrap() = true;
+        let text = std::thread::spawn(move || pending.finish()).join().unwrap();
+        assert_eq!(text, Some("selected text".to_string()));
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["snapshot", "copy", "read", "restore:SNAP"]
+        );
+    }
+
+    /// The snapshot must not clobber a write that happened after our copy landed (e.g. the user
+    /// copied a result from the panel while the fallback was still pending): the text is still
+    /// captured, the restore is skipped.
+    #[test]
+    fn restore_is_skipped_when_the_pasteboard_moved_on() {
+        let clip = FakeClip::landing_now(vec![Some("selected text".into())]);
+        clip.moved_on();
+        let (target, log) = target_with_clip(AxRead::Opaque, clip);
+        assert_eq!(
+            finish(target.capture_selection()),
+            Some("selected text".to_string())
+        );
+        assert_eq!(*log.lock().unwrap(), ["snapshot", "copy", "read"]);
+    }
+
+    /// A non-empty AX range means a selection exists whose text the app doesn't expose: the
+    /// clipboard fallback still reads it.
+    #[test]
+    fn nonempty_ax_range_still_falls_back_to_copy() {
+        let clip = FakeClip::landing_now(vec![Some("selected text".into())]);
+        let log = Arc::clone(&clip.log);
+        let ax = FakeAx {
+            read: AxRead::Opaque,
+            write: AxWrite::Ok,
+            range: Some((3, 5)),
+            log: Arc::new(Mutex::new(Vec::new())),
+        };
+        let target = HybridTextTarget::new(ax, clip);
+        assert_eq!(
+            finish(target.capture_selection()),
+            Some("selected text".to_string())
+        );
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["snapshot", "copy", "read", "restore:SNAP"]
         );
     }
 
     #[test]
     fn ax_write_success_never_touches_clipboard() {
-        let (t, clip_log, _) = target(AxRead::NoSelection, AxWrite::Ok, None);
+        let (t, clip_log, _) = target(AxRead::Opaque, AxWrite::Ok, None);
         assert!(t.write_text("HELLO").is_ok());
         assert!(clip_log.lock().unwrap().is_empty());
     }
 
     #[test]
     fn ax_write_failure_falls_back_to_clipboard_paste() {
-        let (t, clip_log, ax_log) = target(AxRead::NoSelection, AxWrite::Denied, None);
+        let (t, clip_log, ax_log) = target(AxRead::Opaque, AxWrite::Denied, None);
         // A successful fallback still counts as a successful write back
         assert!(t.write_text("HELLO").is_ok());
         assert_eq!(
@@ -528,7 +602,7 @@ mod tests {
     #[test]
     fn ax_write_selects_inserted_text_using_utf16_length() {
         // The selection is at position 7 before writing; "a😀" is 3 UTF-16 units long (emoji takes two code units)
-        let (t, clip_log, ax_log) = target(AxRead::NoSelection, AxWrite::Ok, Some((7, 3)));
+        let (t, clip_log, ax_log) = target(AxRead::Opaque, AxWrite::Ok, Some((7, 3)));
         assert!(t.write_text("a😀").is_ok());
         assert_eq!(*ax_log.lock().unwrap(), ["range:7:3"]);
         assert!(clip_log.lock().unwrap().is_empty());
@@ -536,7 +610,7 @@ mod tests {
 
     #[test]
     fn no_range_info_skips_selection() {
-        let (t, _, ax_log) = target(AxRead::NoSelection, AxWrite::Ok, None);
+        let (t, _, ax_log) = target(AxRead::Opaque, AxWrite::Ok, None);
         assert!(t.write_text("hi").is_ok());
         assert!(ax_log.lock().unwrap().is_empty());
     }
