@@ -322,6 +322,12 @@ pub enum ActionResult {
     /// Opens the settings window (MOE-0029): the platform shows it and dismisses the panel — the
     /// settings surface is a window of its own, never a panel page (ADR-0009 amendment).
     OpenSettings {},
+    /// The action **delivered the outcome outside the panel** — the clipboard today (ADR-0002
+    /// amendment's Copy) — and the user's errand is therefore over: the platform dismisses the panel
+    /// and returns it to a fresh root page, exactly like ⌘W (ADR-0047). Distinct from [`Self::Silent`],
+    /// which changes nothing for the user and keeps the page: a copy that only reported "no UI work"
+    /// left the panel open with the result still selected, which is not what Copy means (MOE-0065).
+    Delivered,
     Silent,
 }
 

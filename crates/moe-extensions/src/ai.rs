@@ -1297,12 +1297,14 @@ impl Extension for AiShell {
             "write-back" => Ok(ActionResult::WriteBack {
                 text: item.detail.clone().unwrap_or_else(|| item.title.clone()),
             }),
-            // ⌥⏎ copy: writes to the system clipboard (a platform capability), does not write back into the host app
+            // ⌥⏎ copy: writes to the system clipboard (a platform capability), does not write back into the host app.
+            // `Delivered` (not `Silent`): the outcome left the panel, so the errand is over — the platform
+            // dismisses and forgets the page (ADR-0047).
             "copy" => {
                 let text = item.detail.clone().unwrap_or_else(|| item.title.clone());
                 moe_platform::clipboard::copy(&text)
                     .map_err(|err| MoeError::Internal(err.to_string()))?;
-                Ok(ActionResult::Silent)
+                Ok(ActionResult::Delivered)
             }
             // Open the side view: the payload goes to the platform's chat window as-is.
             "materialize" => Ok(ActionResult::OpenSideView {

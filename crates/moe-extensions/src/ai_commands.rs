@@ -506,7 +506,8 @@ impl Extension for AiCommands {
                 let text = item.detail.clone().unwrap_or_else(|| item.title.clone());
                 moe_platform::clipboard::copy(&text)
                     .map_err(|err| MoeError::Internal(err.to_string()))?;
-                Ok(ActionResult::Silent)
+                // The clipboard has the result and the errand is over: dismiss and forget (ADR-0047).
+                Ok(ActionResult::Delivered)
             }
             // The refine loop (ADR-0024 amendment): the platform re-invokes this command with the
             // result as its input. A click while the card is mid-stream is a no-op (one stream per card).

@@ -1383,6 +1383,79 @@ fn open_accessibility_settings() {
     }
 }
 
+/// The macOS app menu (ADR-0047): Tauri's default minus both Close items.
+///
+/// The default menu carries **two** predefined Close items (File ▸ Close and Window ▸ Close, both
+/// ⌘W) whose action is AppKit's `performClose:`. On the panel — borderless and non-closable — that
+/// dead-ends (nothing happens, possibly a beep), and while the app is active the menu consumes the
+/// chord before the key window's webview ever sees it. Dropping them frees ⌘W for the view layer,
+/// which owns the platform's Close semantic (`SystemKey::Close`): the panel forgets its page and
+/// hides, the Settings window hides. Everything else (App / Edit / View / Window / Help) is the
+/// default set, so ⌘C/⌘V/⌘Z/⌘Q/⌘H keep their expected behavior — only the band where Moe's own
+/// surfaces are behind it changes.
+#[cfg(target_os = "macos")]
+fn install_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
+
+    let pkg = app.package_info();
+    let about = AboutMetadata {
+        name: Some(pkg.name.clone()),
+        version: Some(pkg.version.to_string()),
+        ..Default::default()
+    };
+    let app_menu = Submenu::with_items(
+        app,
+        pkg.name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, Some(about))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    let view_menu = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[&PredefinedMenuItem::fullscreen(app, None)?],
+    )?;
+    let window_menu = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+        ],
+    )?;
+    let help_menu = Submenu::with_id(app, "Help", "Help", true)?;
+    let menu = Menu::with_items(
+        app,
+        &[&app_menu, &edit_menu, &view_menu, &window_menu, &help_menu],
+    )?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
 /// Menu bar resident: tray icon + menu (Show Panel / AI Chat / Settings / Launch at Login / Open Config File / Quit).
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -1614,6 +1687,10 @@ fn main() {
                     }
                 }));
             }
+
+            // ⌘W belongs to Moe's own surfaces, not to AppKit's Close items (ADR-0047)
+            #[cfg(target_os = "macos")]
+            install_app_menu(&handle)?;
 
             // macOS: convert the window in place into an NSPanel. A normal NSWindow gets pulled
             // back to its own Space by the system when the app is activated; an NSPanel

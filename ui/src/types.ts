@@ -171,7 +171,7 @@ export interface CommandSection {
   items: CommandMeta[];
 }
 
-// Externally tagged enum: unit variants (silent) serialize to a bare string;
+// Externally tagged enum: unit variants (silent, delivered) serialize to a bare string;
 // payload variants like openSideView/writeBack become objects (the backend opens the Side View).
 export type ActionResult =
   | string

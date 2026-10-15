@@ -38,6 +38,10 @@ pub enum SystemKey {
     OpenConfig,
     /// Esc: layered back (with input → clear; on a result layer → back up one layer; otherwise close the panel).
     Back,
+    /// Close: dismiss the panel **and forget the page** — the next summon lands on a fresh root with
+    /// an empty Input Bar, unlike Back, which keeps the page across summons. Default ⌘W, the macOS
+    /// close-window convention (ADR-0047).
+    Close,
     /// Materialize: turn into the Extension's Side View. Default ⌘J (ADR-0014 amendment).
     Materialize,
     /// Attach: add attachments to the current question (AI semantic: `@path` mention, ADR-0010).
@@ -71,6 +75,7 @@ pub fn default_keymap() -> Vec<(&'static str, SystemKey)> {
         ("⌘⇧F", K::Favorite),
         ("⌘,", K::OpenConfig),
         ("Esc", K::Back),
+        ("⌘W", K::Close),
         ("⌘J", K::Materialize),
         ("⌘⇧A", K::Attach),
         ("⌘'", K::QuickAsk),
@@ -108,7 +113,7 @@ mod tests {
         }
         assert_eq!(
             seen.len(),
-            18,
+            19,
             "keep the Hints Bar grouping in sync when adding semantics"
         );
     }
@@ -180,6 +185,17 @@ mod tests {
     fn display_of_reads_the_table() {
         assert_eq!(display_of(SystemKey::OpenConfig), Some("⌘,"));
         assert_eq!(display_of(SystemKey::Favorite), Some("⌘⇧F"));
+    }
+
+    /// Close is a platform semantic too: ⌘W dismisses the panel and forgets the page (ADR-0047).
+    #[test]
+    fn close_keeps_the_window_convention() {
+        let table = default_keymap();
+        let display = table
+            .iter()
+            .find(|(_, k)| *k == SystemKey::Close)
+            .map(|(d, _)| *d);
+        assert_eq!(display, Some("⌘W"));
     }
 
     /// Change Model is a chat-surface semantic: ⌥M opens the model switcher (MOE-0033).

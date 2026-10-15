@@ -56,6 +56,15 @@ void getCurrentWindow().onCloseRequested((event) => {
   event.preventDefault();
   void getCurrentWindow().hide();
 });
+// ⌘W is not a menu key equivalent any more — the app menu drops AppKit's Close items because the
+// panel owns that chord (ADR-0047, crates/moe-app/src/main.rs), so this window binds it the same
+// way: hide, exactly like the traffic light above.
+window.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
+    e.preventDefault();
+    void getCurrentWindow().hide();
+  }
+});
 
 const toastEl = document.createElement("div");
 toastEl.className =

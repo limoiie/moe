@@ -497,7 +497,7 @@ mod tests {
                 "write-back" => Ok(ActionResult::WriteBack {
                     text: item.title.clone(),
                 }),
-                "copy" => Ok(ActionResult::Silent),
+                "copy" => Ok(ActionResult::Delivered),
                 _ => Err(MoeError::NotFound),
             }
         }

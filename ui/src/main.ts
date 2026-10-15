@@ -1624,7 +1624,6 @@ async function runChatAnswerAction(actionId: "copy" | "write-back", title: strin
       item,
       action: { id: actionId, title, kind: actionId === "copy" ? "secondary" : "primary" },
     });
-    if (actionId === "copy") toast("Copied");
     applyResult(res, commandId, false, view.get().sourceIcon, view.get().sourceTitle);
   } catch (err) {
     setChatError(String(err));
@@ -1738,11 +1737,15 @@ function applyResult(
   title?: string,
 ) {
   if (typeof res === "string") {
-    // silent: no UI action needed (the backend already opened the side view window)
+    // A unit result. `silent`: nothing for the UI to do. `delivered`: the outcome left the panel
+    // (the clipboard) — the errand is over, so this ends like ⌘W: dismiss and forget the page (ADR-0047).
+    if (res === "delivered") void closePanelToRoot();
     return;
   }
   if ("writeBack" in res) {
-    // Write-back is done by the backend (dismiss panel → AX / clipboard fallback delivery); the panel is already hidden by now
+    // Write-back is done by the backend (dismiss panel → AX / clipboard fallback delivery); the panel is already hidden by now.
+    // The page that produced the text is still lived-in state, and the errand is over: forget it (ADR-0047).
+    void resetToRoot();
     return;
   }
   if ("rerun" in res) {
@@ -1896,7 +1899,6 @@ async function applyFocused(alt: boolean) {
         // fall back to auto and translate the Chinese result back into English.
         arguments: argumentValuesFor(pageCommand()),
       });
-      if (action.id === "copy") toast("Copied");
       applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
     } catch (err) {
       showMessage(`Failed to run: ${String(err)}`);
@@ -2182,7 +2184,6 @@ async function runItemAction(item: Item, action: Action) {
       action,
       arguments: argumentValuesFor(pageCommand()),
     });
-    if (action.id === "copy") toast("Copied");
     applyResult(res, v.sourceCommandId, v.sourceLive, v.sourceIcon, v.sourceTitle);
   } catch (err) {
     showMessage(`Failed to run: ${String(err)}`);
@@ -2546,6 +2547,65 @@ async function clearSuggestions() {
   }
 }
 
+/**
+ * Return the panel to a fresh root page (ADR-0047). This is the **forgetting** exit — the contrast
+ * to `back()`, whose root exit hides the panel and keeps the page for the next summon. Everything the
+ * page owned is dropped: the modal layers, attachment mode, the Input Bar text, the chat page's
+ * conversation, the detail pane and the result set are not. The argument values and the per-command
+ * filter memory are session state, not on-screen state — they stay. The root is re-searched so
+ * Suggestions and Favorites are current.
+ */
+async function resetToRoot() {
+  closeConfirm();
+  cancelAttach();
+  hideTargetPeek();
+  closeActionsCard();
+  closeAboutCard();
+  closeFilterCard();
+  closeArgumentCard();
+  modelSwitcher.close();
+  chatComposer.closeAttach();
+  chatComposer.input.value = "";
+  chatConversationId = null;
+  chatTitle = null;
+  chatPair = null;
+  chatConversations = [];
+  setChatGenerating(false);
+  clearDetail();
+  q.value = "";
+  view.update((s) => ({
+    ...s,
+    mode: "commands",
+    focus: 0,
+    sections: [],
+    commands: [],
+    suggestionsStart: -1,
+    suggestionsCount: 0,
+    items: [],
+    allItems: [],
+    filter: undefined,
+    filterValues: [],
+    filterValue: undefined,
+    sourceCommandId: undefined,
+    sourceIcon: undefined,
+    sourceTitle: undefined,
+    sourceLive: undefined,
+    detailFull: false,
+    empty: undefined,
+  }));
+  await refresh("");
+}
+
+/**
+ * Close (ADR-0047): the window goes away **and the page is forgotten** — ⌘W, or an action that
+ * delivered the outcome (WriteBack is hidden by the backend itself, which resets through
+ * `applyResult`). Esc's page-keeping hide is `back()`.
+ */
+async function closePanelToRoot() {
+  await resetToRoot();
+  await invoke("hide_panel");
+}
+
 // Esc / empty-input Backspace layered back: confirm dialog → stop generation → actions card → result page → clear input → (may close panel)
 // Empty Backspace passes quit:false: the root layer stays in place and does not close the panel (closing the panel belongs to Esc alone)
 async function back(options: { quit?: boolean } = {}) {
@@ -2755,6 +2815,15 @@ async function submitAttach() {
 // ---- Global keyboard events (keyboard-first: every capability is reachable, the mouse is only redundant) ----
 
 window.addEventListener("keydown", (e) => {
+  // ⌘W (ADR-0047): close the panel and forget the page — the modal layers below are page state, so
+  // this wins over them all. It is the deliberate discard gesture (the next summon lands on a fresh
+  // root); Esc keeps its layered, page-keeping exit, and a live generation is not stopped (stop is
+  // explicit: ⏎ / the Stop row).
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
+    e.preventDefault();
+    void closePanelToRoot();
+    return;
+  }
   // Back while an answer streams asks first (ADR-0036/0038): the dialog is the front-most layer and
   // owns every key — including the attachment toggle below (a modal must not open another mode).
   if (confirmOpen) {

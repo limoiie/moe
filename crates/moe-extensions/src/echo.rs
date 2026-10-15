@@ -129,11 +129,12 @@ impl Extension for Echo {
             "write-back" => Ok(ActionResult::WriteBack {
                 text: item.title.clone(),
             }),
-            // Same semantics as the AI answer: only write to the clipboard, leave the host app alone (ADR-0002 amendment)
+            // Same semantics as the AI answer: only write to the clipboard, leave the host app alone (ADR-0002
+            // amendment), and end the interaction — the copy is the whole errand (ADR-0047).
             "copy" => {
                 moe_platform::clipboard::copy(&item.title)
                     .map_err(|err| MoeError::Internal(err.to_string()))?;
-                Ok(ActionResult::Silent)
+                Ok(ActionResult::Delivered)
             }
             _ => Err(MoeError::NotFound),
         }
