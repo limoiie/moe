@@ -471,6 +471,18 @@ fn reset_side_view_activation(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Tell the panel whether its window is on screen. The panel is hidden and re-shown — never
+/// reloaded — so the view layer uses this to arm its entrance fade while hidden and play it on
+/// show (`ui/src/main.ts`); the system's own orderFront animation is suppressed
+/// (`moe_platform::mac::suppress_window_animation`).
+fn emit_panel_visibility(app: &tauri::AppHandle, visible: bool) {
+    let _ = app.emit_to(
+        "panel",
+        "panel-visibility",
+        serde_json::json!({ "visible": visible }),
+    );
+}
+
 /// Must be called on the main thread: capture the selection first, then position and show the panel.
 fn show_panel_blocking(window: &tauri::WebviewWindow) {
     if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -582,11 +594,14 @@ fn show_panel_blocking(window: &tauri::WebviewWindow) {
         // NSPanel: no app activation, no Space switch; directly becomes the key window to receive input
         panel.show_and_make_key();
         eprintln!("moe: panel shown (NSPanel)");
+        // After the window is up: the view layer plays the entrance fade it armed while hidden.
+        emit_panel_visibility(window.app_handle(), true);
         return;
     }
     let _ = window.show();
     let _ = window.set_focus();
     eprintln!("moe: panel shown");
+    emit_panel_visibility(window.app_handle(), true);
 }
 
 /// Must be called on the main thread.
@@ -595,12 +610,15 @@ fn hide_panel_blocking(app: &AppHandle) {
     if let Ok(panel) = app.get_webview_panel("panel") {
         panel.hide();
         eprintln!("moe: panel hidden (NSPanel)");
+        // After the window is ordered out: re-arm the entrance fade so the next show starts at zero.
+        emit_panel_visibility(app, false);
         return;
     }
     if let Some(window) = app.get_webview_window("panel") {
         let _ = window.hide();
         eprintln!("moe: panel hidden");
     }
+    emit_panel_visibility(app, false);
 }
 
 fn toggle_panel_blocking(app: &AppHandle) {
@@ -1586,6 +1604,13 @@ fn main() {
                         }
                         // NSPanels hide on deactivation by default; visibility is controlled by the summon key
                         panel.set_hides_on_deactivate(false);
+                        // The entrance is ours, not AppKit's inferred orderFront animation (the
+                        // palette's most frequent view): a short, deterministic fade in the view layer.
+                        if let Ok(ns_window) = window.ns_window() {
+                            // SAFETY: the pointer comes from Tauri's window handle and its lifetime
+                            // follows the window; this runs on the main thread at setup.
+                            unsafe { moe_platform::mac::suppress_window_animation(ns_window) };
+                        }
                     }
                     Err(err) => eprintln!("moe: failed to convert to NSPanel (falling back to a normal window): {err}"),
                 }

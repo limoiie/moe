@@ -3153,6 +3153,13 @@ void listen<SelectionState>("selection-changed", (event) => {
 void listen<{ visible?: boolean }>("quick-ask-toggle", (event) => {
   void toggleQuickAsk(event.payload?.visible === true);
 });
+// The palette's entrance (styles.css `.moe-panel-entrance`): the panel is hidden and re-shown — never
+// reloaded — so the fade is armed while hidden and played once the window is up. Armed here at boot
+// too, because the first summon must not flash the card before fading it in.
+rootEl.classList.add("moe-panel-entrance", "moe-panel-dormant");
+void listen<{ visible?: boolean }>("panel-visibility", (event) => {
+  rootEl.classList.toggle("moe-panel-dormant", event.payload?.visible !== true);
+});
 
 // Keep the previous input and results across summons (the user may add input after hiding);
 // only refresh the permission guidance (the user may have just granted it in System Settings); unfinished attachment input is not kept across summons.

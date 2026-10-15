@@ -329,6 +329,21 @@ html[data-platform="macos"] .moe-window-card {
   -webkit-backdrop-filter: none;
 }
 
+/* The palette's entrance (the highest-frequency surface, so the motion is ours and it is short).
+   The system's inferred orderFront animation is suppressed for the panel
+   (moe-platform::mac::suppress_window_animation); this is the whole entrance instead: 20ms of
+   opacity, no scale, no bounce. `.moe-panel-dormant` is the hidden rest state, which the view
+   layer arms on every hide so the first frame the window server composites is already
+   transparent — no opaque flash before the fade — and the fade is what the eye reads as the panel
+   appearing. Reduced motion collapses the transition to nothing (the global rule below). */
+.moe-panel-entrance {
+  transition: opacity 20ms ease-out;
+}
+.moe-panel-entrance.moe-panel-dormant {
+  opacity: 0;
+  transition: none;
+}
+
 /* Actions card (⌘K / ⌘⇧P), About card and Filter card: floating cards above the results (shadow stays within the 8px padding, unclipped by the window) */
 .moe-actions-card,
 .moe-about-card,

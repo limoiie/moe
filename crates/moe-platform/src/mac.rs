@@ -90,6 +90,28 @@ pub unsafe fn refresh_window_shadow(ns_window: *mut std::ffi::c_void) {
     }
 }
 
+/// Suppress AppKit's automatic orderFront/orderOut animation for a window.
+///
+/// AppKit animates every ordered-in window by inference (`NSWindowAnimationBehaviorDefault`), and on
+/// a floating panel that inference is what the eye reads as the palette's open animation. Its curve
+/// and duration are system-owned, so they cannot be tuned to the tens of milliseconds the palette —
+/// the highest-frequency surface — wants, and they ignore `prefers-reduced-motion`. Setting
+/// `NSWindowAnimationBehaviorNone` hands the entrance to the view layer, which owns a deterministic,
+/// short fade (`ui/src/styles.css`, `.moe-panel-entrance`).
+///
+/// # Safety
+/// `ns_window` must be a valid `NSWindow` pointer (Tauri's `Window::ns_window()`).
+pub unsafe fn suppress_window_animation(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    let window: &objc2::runtime::AnyObject = unsafe { &*ns_window.cast() };
+    // NSWindowAnimationBehaviorNone = 2 (NSWindow.h): "Suppress inferred animations (don't animate)".
+    unsafe {
+        let _: () = objc2::msg_send![window, setAnimationBehavior: 2isize];
+    }
+}
+
 /// The Side View card's inset and corner radius in points — must match ui/chat.html (`m-2`, 8px)
 /// and styles.css (`rounded-2xl`, 16px).
 const SIDE_VIEW_MATERIAL_INSET: f64 = 8.0;
